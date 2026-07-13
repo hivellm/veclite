@@ -11,15 +11,28 @@ categories = ["database", "data-structures"]
 
 [features]
 default = ["simd"]
-# Enables the vendored SIMD distance kernels once they land in phase1b
-# (ADR-0001: vendored from hivellm/vectorizer, no external dependency).
+# Selects the vendored SIMD distance kernels (ADR-0001: vendored from
+# hivellm/vectorizer, no external dependency). Phase1b vendors the scalar
+# backend only; with or without this feature the engine resolves to the
+# scalar oracle until the ISA backends land (follow-up task).
 simd = []
+# Product quantization (vendored, off by default). Not wired into the public
+# Quantization enum yet; kept byte-identical for future interop.
+pq = []
 
 [dependencies]
 thiserror.workspace = true
 dashmap.workspace = true
 parking_lot.workspace = true
+serde = { workspace = true }
 serde_json.workspace = true
+
+# Native-only: hnsw_rs (and its rayon/mmap/cpu-time deps) cannot build on
+# wasm32; the index module is cfg-gated off wasm32 to keep CORE-004 green
+# (ADR-0002).
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+hnsw_rs = { workspace = true }
+rayon = { workspace = true }
 
 [dev-dependencies]
 proptest.workspace = true

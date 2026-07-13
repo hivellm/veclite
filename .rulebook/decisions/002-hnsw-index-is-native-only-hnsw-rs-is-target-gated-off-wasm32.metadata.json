@@ -1,0 +1,13 @@
+{
+  "id": 2,
+  "slug": "hnsw-index-is-native-only-hnsw-rs-is-target-gated-off-wasm32",
+  "title": "HNSW index is native-only; hnsw_rs is target-gated off wasm32",
+  "status": "proposed",
+  "date": "2026-07-13",
+  "relatedTasks": [
+    "phase1b_hnsw-quantization",
+    "phase1c_search-query-api",
+    "phase5b_wasm-package"
+  ],
+  "supersededBy": null
+}

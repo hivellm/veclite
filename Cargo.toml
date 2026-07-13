@@ -14,7 +14,12 @@ repository = "https://github.com/hivellm/veclite"
 thiserror = "2.0"
 dashmap = "6.1"
 parking_lot = "0.12"
+serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+# ANN index: exact pin — hnsw_rs graph serialization stability is not
+# guaranteed upstream (SPEC-001 CORE-030). Native-only (ADR-0002).
+hnsw_rs = "=0.3.4"
+rayon = "1.10"
 proptest = "1.6"
 
 [workspace.lints.clippy]
