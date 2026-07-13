@@ -17,7 +17,10 @@ No server. No ports. No configuration. One file.
 
 ## Status
 
-🚧 **Planning phase** — no code yet. The design contract lives in [`docs/vectorizer-lite/`](docs/vectorizer-lite/README.md):
+🚧 **Specification phase** — no code yet.
+
+- **Implementation contract**: [`docs/specs/`](docs/specs/README.md) — [PRD](docs/PRD.md) (requirements & release criteria), [DAG](docs/DAG.md) (task dependency graph), and SPEC-001…016 (normative component specs).
+- **Design rationale**: [`docs/vectorizer-lite/`](docs/vectorizer-lite/README.md), the original planning set:
 
 1. [Vision and scope](docs/vectorizer-lite/01-vision-and-scope.md) — what's in, what's out, feature matrix vs Vectorizer
 2. [Architecture](docs/vectorizer-lite/02-architecture.md) — crate layout, reuse of `vectorizer-core`, design decisions
