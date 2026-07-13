@@ -1,0 +1,13 @@
+{
+  "id": 1,
+  "slug": "vendor-engine-code-from-vectorizer-instead-of-depending-on-vectorizer-core",
+  "title": "Vendor engine code from Vectorizer instead of depending on vectorizer-core",
+  "status": "proposed",
+  "date": "2026-07-13",
+  "relatedTasks": [
+    "phase0a_bootstrap-workspace",
+    "phase1b_hnsw-quantization",
+    "phase2a_pager-segments"
+  ],
+  "supersededBy": null
+}

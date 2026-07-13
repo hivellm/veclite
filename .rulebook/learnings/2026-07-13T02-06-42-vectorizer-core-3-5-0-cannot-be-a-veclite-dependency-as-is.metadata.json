@@ -1,0 +1,15 @@
+{
+  "id": "2026-07-13T02-06-42-vectorizer-core-3-5-0-cannot-be-a-veclite-dependency-as-is",
+  "title": "vectorizer-core 3.5.0 cannot be a VecLite dependency as-is",
+  "content": "Planning assumption in docs/vectorizer-lite/02-architecture.md (\"vectorizer-core has no tokio, no axum, no server dependency\") is factually wrong for the real crate at e:/HiveLLM/Vectorizer/crates/vectorizer-core (v3.5.0): its MANDATORY dependencies include axum 0.8, tonic 0.14, rmcp 2.1, and umicp-core (http2/websocket features) because the wire-protocol error mappings (From<&VectorizerError> for axum/tonic/rmcp errors) live unconditionally next to the error type. It is also NOT published on crates.io (cargo search returns nothing; the GitHub repo is reachable).\n\nConsequence: adding it as a dependency violates VecLite NFR-08 (no network crates in the default build) by construction, and REL-003 (crates.io only) is impossible today.\n\nUnblock path (recommended): upstream PR in hivellm/vectorizer feature-gating the wire-error mappings (e.g. a default-on \"wire-errors\" feature the server keeps enabled), so VecLite can use default-features=false + simd; then either publish to crates.io or use a git dependency pinned to a rev as interim. Only after that can DAG T0.2/T1.x consume the quantization/SIMD/compression code. Also: vectorizer-core declares no rust-version — VecLite pins provisional MSRV 1.85 (edition-2024 floor) until upstream declares one.",
+  "source": "manual",
+  "relatedTask": "phase0a_bootstrap-workspace",
+  "tags": [
+    "vectorizer-core",
+    "dependencies",
+    "nfr-08",
+    "phase0",
+    "blocker"
+  ],
+  "createdAt": "2026-07-13T02:06:42.204Z"
+}
