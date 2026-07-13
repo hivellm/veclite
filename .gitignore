@@ -28,3 +28,8 @@ CLAUDE.local.md
 .rulebook/backup/
 .rulebook/handoff/_pending.md
 .rulebook/handoff/.urgent
+
+# Rust
+/target/
+**/*.rs.bk
+*.pdb

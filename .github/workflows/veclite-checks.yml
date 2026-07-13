@@ -1,0 +1,72 @@
+name: VecLite Checks
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ '**' ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  wasm32-build:
+    name: wasm32-unknown-unknown build (CORE-004)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install stable with wasm32 target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: wasm32
+
+      - name: Build for wasm32
+        run: cargo build --workspace --target wasm32-unknown-unknown
+
+  dependency-deny-list:
+    name: No network crates in default build (NFR-08)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Check default-build dependency tree
+        shell: bash
+        run: |
+          DENY='tokio|hyper|reqwest|axum|tonic|rustls|native-tls|openssl|ureq|curl'
+          TREE=$(cargo tree -p veclite -e normal --prefix none | awk '{print $1}' | sort -u)
+          echo "$TREE"
+          if echo "$TREE" | grep -Ex "($DENY)" ; then
+            echo "::error::Network crate found in the default build (NFR-08)"
+            exit 1
+          fi
+
+  msrv:
+    name: MSRV build (REL-002)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Read rust-version from workspace
+        id: msrv
+        shell: bash
+        run: echo "msrv=$(grep -m1 'rust-version' Cargo.toml | sed 's/.*"\(.*\)".*/\1/')" >> "$GITHUB_OUTPUT"
+
+      - name: Install MSRV toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.msrv.outputs.msrv }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: msrv
+
+      - name: Build with MSRV
+        run: cargo build --workspace

@@ -1,7 +1,7 @@
 # Proposal: phase4b_python-binding
 
 ## Why
-DAG T4.3: Python is the highest-volume ecosystem for the target personas (RAG, agents, notebooks). The binding must hit the SQLite bar — pip install with no Rust toolchain — with NumPy zero-copy as the headline perf feature (FR-61).
+DAG T4.3: Python is the highest-volume ecosystem for the target personas (RAG, agents, notebooks). The binding must install via pip with no Rust toolchain, with NumPy zero-copy as the headline perf feature (FR-61).
 
 ## What Changes
 - crates/veclite-py: PyO3 direct binding (not over the C ABI), abi3 wheels via maturin, Python >= 3.9 (PY-001)

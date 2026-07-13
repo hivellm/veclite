@@ -1,7 +1,7 @@
 # Proposal: phase4d_conformance-packaging
 
 ## Why
-DAG T4.5 + T4.6 close gate G4: one YAML corpus executed by every binding guarantees behavioral parity, and the packaging CI proves the SQLite bar — pip/npm install on clean machines with no Rust toolchain (FR-65, FR-66).
+DAG T4.5 + T4.6 close gate G4: one YAML corpus executed by every binding guarantees behavioral parity, and the packaging CI proves the no-toolchain bar — pip/npm install on clean machines with no Rust toolchain (FR-65, FR-66).
 
 ## What Changes
 - Conformance YAML corpus in tests/conformance/: defaults, every error variant, CRUD/scroll, filters, hybrid rankings, auto-embed reopen, chunker, memory==file (TST-020..023)

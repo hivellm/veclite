@@ -1,0 +1,23 @@
+[package]
+name = "veclite"
+description = "Embedded, single-file, in-process vector database."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords = ["vector-database", "embeddings", "search", "embedded", "hnsw"]
+categories = ["database", "data-structures"]
+
+[features]
+default = ["simd"]
+# Forwards to vectorizer-core's SIMD kernels once that dependency lands.
+# Blocked: vectorizer-core 3.5.0 is unpublished and its mandatory axum/tonic/
+# rmcp/umicp deps violate NFR-08 — see .rulebook/tasks/phase0a_bootstrap-workspace.
+simd = []
+
+[dependencies]
+thiserror.workspace = true
+
+[lints]
+workspace = true

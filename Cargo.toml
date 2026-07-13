@@ -1,0 +1,19 @@
+[workspace]
+resolver = "2"
+members = ["crates/veclite"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+# Provisional MSRV: vectorizer-core declares no rust-version; its edition 2024
+# imposes 1.85 as the floor, so we pin that until upstream declares one (REL-002).
+rust-version = "1.85"
+license = "Apache-2.0"
+repository = "https://github.com/hivellm/veclite"
+
+[workspace.dependencies]
+thiserror = "2.0"
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"

@@ -1,6 +1,8 @@
 # VecLite
 
-**Embedded vector database — the SQLite of semantic search.**
+**Embedded, single-file, in-process vector database.**
+
+> Reference point: VecLite follows the embedded-database philosophy popularized by SQLite — one linked library, one file, zero configuration.
 
 VecLite is the in-process, single-file distribution of the [Vectorizer](https://github.com/hivellm/vectorizer) engine: HNSW search, quantization, hybrid dense+sparse retrieval, and payload filtering — as a library you link, not a server you run.
 
@@ -17,7 +19,18 @@ No server. No ports. No configuration. One file.
 
 ## Status
 
-🚧 **Specification phase** — no code yet.
+🚧 **Phase 0 — bootstrap.** The workspace, foundation types (`VecLiteError`, options with server-parity defaults), and CI gates exist; the engine lands phase by phase per the [DAG](docs/DAG.md).
+
+### Development
+
+```bash
+cargo check --workspace                                        # diagnostics first
+cargo fmt --all && cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test --workspace --all-features                          # unit + doc tests
+cargo build --workspace --target wasm32-unknown-unknown        # wasm32 gate (CORE-004)
+```
+
+Task backlog lives in `.rulebook/tasks/` (one task per context cycle, `phase0a…phase6c`); the implementation contract is below.
 
 - **Implementation contract**: [`docs/specs/`](docs/specs/README.md) — [PRD](docs/PRD.md) (requirements & release criteria), [DAG](docs/DAG.md) (task dependency graph), and SPEC-001…016 (normative component specs).
 - **Design rationale**: [`docs/vectorizer-lite/`](docs/vectorizer-lite/README.md), the original planning set:

@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Product** | VecLite — embedded, in-process vector database ("SQLite for semantic search") |
+| **Product** | VecLite — embedded, in-process, single-file vector database |
 | **Status** | Approved for implementation (derived from the planning set in [`docs/vectorizer-lite/`](vectorizer-lite/README.md)) |
 | **Version** | 1.0 of this document, targeting product release 1.0.0 |
 | **Date** | 2026-07-12 |
@@ -24,7 +24,7 @@ Today the smallest possible Vectorizer deployment is: server binary + config fil
 
 ## 2. Product vision
 
-**VecLite is to Vectorizer what SQLite is to client-server databases**: the same engine — HNSW search, quantization, hybrid dense+sparse retrieval, payload filtering — delivered as a library you link, storing everything in one file you own.
+**VecLite is the embedded distribution of Vectorizer**: the same engine — HNSW search, quantization, hybrid dense+sparse retrieval, payload filtering — delivered as a library you link, storing everything in one file you own.
 
 ```python
 import veclite
@@ -61,7 +61,7 @@ No server. No ports. No configuration. One file.
 | Non-goal | Rationale |
 |---|---|
 | Server features: REST/gRPC/MCP/GraphQL, dashboard, remote access | Transport is the server's job; VecLite is a function call |
-| Multi-process shared writes | Like SQLite: one writer process (advisory lock), multi-threaded within it |
+| Multi-process shared writes | One writer process (advisory lock), multi-threaded within it |
 | Auth, API keys, RBAC, multi-tenancy, quotas | Process boundary is the security boundary |
 | Replication, Raft, sharding, HA | Distributed concerns belong to Vectorizer |
 | Ingestion platform: file watchers, workspace discovery, document conversion | VecLite ships a minimal text chunker utility only |

@@ -20,7 +20,7 @@ Write-ahead logging with in-memory apply:
 
 ## 2. WAL file
 
-- **WAL-001** Sidecar file `<db>.veclite-wal` in the same directory (SQLite naming convention). Created lazily on first write; deleted (or truncated to the 16-byte WAL header) on clean close after checkpoint.
+- **WAL-001** Sidecar file `<db>.veclite-wal` in the same directory as the database file. Created lazily on first write; deleted (or truncated to the 16-byte WAL header) on clean close after checkpoint.
 - **WAL-002** WAL header (16 bytes): magic `VLWL` (4) · `format_version u32` (=1) · `file_uuid_prefix [8]` = first 8 bytes of the main file's UUID. On open, a WAL whose uuid prefix does not match the main file MUST be ignored and reported via the warning callback (stale sidecar from a copied database).
 - **WAL-003** In-memory databases (`VecLite::memory()`) have no WAL and no durability; all `Durability` settings are no-ops there.
 

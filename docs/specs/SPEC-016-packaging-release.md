@@ -34,7 +34,7 @@ Requirement IDs `REL-xxx`.
 | GitHub releases | `libveclite.{a,so,dylib}`/`veclite.dll` + `veclite.h`, CLI binaries | same matrix |
 | Heavy ONNX | `veclite-onnx` wheel, `@veclite/onnx`, `VecLite.Onnx`, Go tag artifact | same matrix minus wasm |
 
-- **REL-020** **The SQLite bar**: installing any package on a clean machine never requires a Rust toolchain (FR-66). Enforced by clean-container/VM install jobs per ecosystem in the release workflow (gate G4/G5).
+- **REL-020** **The no-toolchain bar**: installing any package on a clean machine never requires a Rust toolchain (FR-66). Enforced by clean-container/VM install jobs per ecosystem in the release workflow (gate G4/G5).
 - **REL-021** Base artifacts never depend on ONNX artifacts; heavy packages declare a dependency on the exact-version base package.
 
 ## 4. Versioning & compatibility policy
