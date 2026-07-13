@@ -1,0 +1,16 @@
+# phase1c search API: brute-force fallback resolves DotProduct + wasm; distance→score mapping
+**Source**: manual
+**Date**: 2026-07-13
+**Related Task**: phase1c_search-query-api
+**Tags**: rust, search, hnsw, query-builder, brute-force, phase1c
+Public search API (SPEC-004 §4-5) design in VecLite:
+
+1. execute_query is the single search path behind Collection::search() and QueryBuilder::run(). It dispatches: HNSW index when present (Cosine/Euclidean native), else EXACT BRUTE FORCE. This one fallback cleanly resolves TWO deferrals at once — DotProduct (no index, DistDot would panic) and wasm32 (no index at all, CORE-004). Brute force iterates live slots (slot live iff id_to_slot[ids[slot]]==slot) computing the same score the index path would.
+
+2. Score = the metric quantity (CORE-035): Cosine → cosine similarity (index DistCosine returns 1-cos, so score = 1-distance; brute-force = simd::cosine_similarity on normalized query+stored), DotProduct → dot product (simd::dot_product), Euclidean → L2 distance (index DistL2 already returns sqrt'd L2; brute-force = simd::euclidean_distance). Sort descending for Cosine/DotProduct (similarity), ascending for Euclidean (distance). Because DistCosine/DistL2 are monotonic in the score, the HNSW candidate order already equals the final order, but re-sorting the truncated <=limit set makes CORE-035 exact and unifies both paths.
+
+3. Query is normalized for Cosine at search time (CORE-014, f64 norm matching ingest); DotProduct/Euclidean use the raw query. Over-fetch by tombstones.len() then filter liveness (same as phase1b) so deletes/replacements never leak.
+
+4. QueryBuilder holds &Collection + &[f32] + params, no lock until run() (API-030). Filter is a declared opaque type with NO public constructor (phase3a adds construction+eval), so the .filter() slot exists but is inert — no silent wrong results. Validation: limit==0 → InvalidArgument (API-031); limit>live returns all live; dim mismatch → DimensionMismatch; non-finite query → InvalidArgument; ef_search bounds 1..=4096 enforced in execute_query for BOTH paths (brute-force too, for a consistent contract even though it ignores ef_search).
+
+5. This supersedes the phase1b pub(crate) search_internal stub (removed); recall.rs was updated to drive the public query() builder. Public search()/query()/Hit means phase1c tests are integration tests (tests/search.rs) exercising the real API.

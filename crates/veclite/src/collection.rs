@@ -15,9 +15,11 @@ use crate::error::{Result, VecLiteError};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::index::HnswIndex;
 use crate::options::{CollectionOptions, Metric, Quantization};
-use crate::point::{Point, SparseVector, validate_id};
+use crate::point::{Hit, Point, SparseVector, validate_id};
 use crate::quantization::traits::{QuantizationMethod, QuantizationParams};
 use crate::quantization::{BinaryQuantization, ScalarQuantization};
+use crate::query::{Filter, QueryBuilder};
+use crate::simd::{cosine_similarity, dot_product, euclidean_distance};
 
 /// Shared state behind every [`Collection`] handle for one collection.
 pub(crate) struct CollectionInner {
@@ -94,6 +96,11 @@ impl CollectionData {
 /// Not a hard cap — hnsw_rs reallocates past it (SPEC-001 CORE-030).
 #[cfg(not(target_arch = "wasm32"))]
 const INITIAL_INDEX_CAPACITY: usize = 1024;
+
+/// Per-query candidate-list bounds (SPEC-001 CORE-031). Enforced in
+/// `execute_query` so the brute-force/wasm path rejects out-of-range
+/// `ef_search` the same way the index path does.
+const EF_SEARCH_BOUNDS: std::ops::RangeInclusive<usize> = 1..=4096;
 
 impl CollectionInner {
     /// Build a new collection's shared state, including its HNSW index
@@ -313,41 +320,183 @@ impl Collection {
         Ok(())
     }
 
-    /// Query the native HNSW index and filter out tombstoned slots,
-    /// over-fetching to compensate for hnsw_rs having no delete API. Returns
-    /// raw hnsw distances with no score transformation — ordering and `Hit`
-    /// mapping are the public `search`'s job (phase1c, CORE-035).
-    // Not yet called: the public `search`/`Hit` API lands in phase1c, which
-    // consumes this. Allowed dead-code until then, same as the other
-    // not-yet-wired internals in this crate (see lib.rs `index`/`quantization`).
-    #[cfg(not(target_arch = "wasm32"))]
-    #[allow(dead_code)]
-    pub(crate) fn search_internal(
+    /// k-NN search over the dense index, ordered per metric (CORE-035):
+    /// descending similarity for Cosine/DotProduct, ascending distance for
+    /// Euclidean. Payload is included, the stored vector is not (SPEC-004 §4
+    /// defaults); use [`query`](Self::query) to override.
+    pub fn search(&self, vector: &[f32], limit: usize) -> Result<Vec<Hit>> {
+        self.execute_query(vector, limit, None, true, false, None)
+    }
+
+    /// Start a fluent query with per-query overrides (SPEC-004 §5). The builder
+    /// holds no lock until `run` (API-030).
+    pub fn query<'a>(&'a self, vector: &'a [f32]) -> QueryBuilder<'a> {
+        QueryBuilder::new(self, vector)
+    }
+
+    /// Shared search behind `search` and `QueryBuilder::run`. Validates inputs,
+    /// normalizes the query for Cosine (CORE-014), gathers candidates from the
+    /// HNSW index when present (over-fetching past tombstones) or by exact
+    /// brute force otherwise (DotProduct, or any metric on wasm32), scores and
+    /// orders per CORE-035, and projects to `Hit`.
+    pub(crate) fn execute_query(
         &self,
         query: &[f32],
-        k: usize,
-        ef_search: usize,
-    ) -> Result<Vec<(String, f32)>> {
+        limit: usize,
+        ef_search: Option<usize>,
+        with_payload: bool,
+        with_vector: bool,
+        filter: Option<&Filter>,
+    ) -> Result<Vec<Hit>> {
         self.guard()?;
-        let data = self.inner.data.read();
-        let Some(index) = &data.index else {
+        // Payload-filter evaluation lands in phase3a (SPEC-006); the builder
+        // slot is declared but `Filter` has no public constructor yet, so this
+        // is inert.
+        let _ = filter;
+        if limit == 0 {
             return Err(VecLiteError::InvalidArgument(
-                "collection has no HNSW index (DotProduct indexing is not yet supported)"
-                    .to_owned(),
+                "limit must be greater than 0".to_owned(),
             ));
+        }
+        let dim = self.inner.config.dimension;
+        if query.len() != dim {
+            return Err(VecLiteError::DimensionMismatch {
+                expected: dim,
+                got: query.len(),
+            });
+        }
+        if query.iter().any(|v| !v.is_finite()) {
+            return Err(VecLiteError::InvalidArgument(
+                "query vector contains NaN or infinite values".to_owned(),
+            ));
+        }
+        let ef_search = ef_search.unwrap_or(self.inner.config.hnsw.ef_search);
+        if !EF_SEARCH_BOUNDS.contains(&ef_search) {
+            return Err(VecLiteError::InvalidArgument(format!(
+                "ef_search must be in {}..={}, got {ef_search}",
+                EF_SEARCH_BOUNDS.start(),
+                EF_SEARCH_BOUNDS.end()
+            )));
+        }
+        let metric = self.inner.config.metric;
+
+        // Cosine normalizes the query at search time (CORE-014).
+        let normalized;
+        let q: &[f32] = if metric == Metric::Cosine {
+            let norm = query
+                .iter()
+                .map(|v| f64::from(*v) * f64::from(*v))
+                .sum::<f64>()
+                .sqrt();
+            if norm == 0.0 {
+                return Err(VecLiteError::InvalidArgument(
+                    "zero query vector is not allowed with the cosine metric".to_owned(),
+                ));
+            }
+            #[allow(clippy::cast_possible_truncation)]
+            {
+                normalized = query
+                    .iter()
+                    .map(|v| (f64::from(*v) / norm) as f32)
+                    .collect::<Vec<f32>>();
+            }
+            &normalized
+        } else {
+            query
         };
-        let fetch = k + data.tombstones.len();
-        let hits = index.search(query, fetch, ef_search)?;
-        let mut results = Vec::with_capacity(k.min(hits.len()));
-        for (slot, distance) in hits {
-            if data.id_to_slot.get(&data.ids[slot]) == Some(&slot) {
-                results.push((data.ids[slot].clone(), distance));
-                if results.len() == k {
-                    break;
+
+        let data = self.inner.data.read();
+        if data.id_to_slot.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut scored: Vec<(usize, f32)> = Vec::new();
+        #[cfg(not(target_arch = "wasm32"))]
+        match &data.index {
+            Some(index) => {
+                let fetch = limit + data.tombstones.len();
+                for (slot, distance) in index.search(q, fetch, ef_search)? {
+                    if data.id_to_slot.get(&data.ids[slot]) == Some(&slot) {
+                        scored.push((slot, distance_to_score(metric, distance)));
+                        if scored.len() == limit {
+                            break;
+                        }
+                    }
                 }
             }
+            None => brute_force(&data, q, metric, dim, &mut scored),
         }
-        Ok(results)
+        #[cfg(target_arch = "wasm32")]
+        brute_force(&data, q, metric, dim, &mut scored);
+
+        // Order per CORE-035, then truncate to the limit.
+        if metric_is_similarity(metric) {
+            scored.sort_by(|a, b| b.1.total_cmp(&a.1));
+        } else {
+            scored.sort_by(|a, b| a.1.total_cmp(&b.1));
+        }
+        scored.truncate(limit);
+
+        let hits = scored
+            .into_iter()
+            .map(|(slot, score)| Hit {
+                id: data.ids[slot].clone(),
+                score,
+                payload: if with_payload {
+                    data.payloads[slot].clone()
+                } else {
+                    None
+                },
+                vector: if with_vector {
+                    Some(data.vectors[slot * dim..(slot + 1) * dim].to_vec())
+                } else {
+                    None
+                },
+            })
+            .collect();
+        Ok(hits)
+    }
+}
+
+/// True for metrics whose score is a similarity (higher = closer, sorted
+/// descending); false for distance metrics sorted ascending (CORE-035).
+fn metric_is_similarity(metric: Metric) -> bool {
+    matches!(metric, Metric::Cosine | Metric::DotProduct)
+}
+
+/// Convert a raw hnsw_rs distance to the metric's score (CORE-035). Only the
+/// index-backed metrics reach this: Cosine (`DistCosine = 1 - cos`, so the
+/// similarity is `1 - distance`) and Euclidean (`DistL2` is the L2 distance,
+/// used as the score directly).
+#[cfg(not(target_arch = "wasm32"))]
+fn distance_to_score(metric: Metric, distance: f32) -> f32 {
+    match metric {
+        Metric::Cosine => 1.0 - distance,
+        _ => distance,
+    }
+}
+
+/// Exact search over every live slot, used when there is no HNSW index:
+/// DotProduct on native, and all metrics on wasm32. Scores are computed with
+/// the same semantics as the index paths so results stay consistent.
+fn brute_force(
+    data: &CollectionData,
+    query: &[f32],
+    metric: Metric,
+    dim: usize,
+    out: &mut Vec<(usize, f32)>,
+) {
+    for slot in 0..data.ids.len() {
+        if data.id_to_slot.get(&data.ids[slot]) != Some(&slot) {
+            continue; // tombstoned or replaced by a newer slot
+        }
+        let v = &data.vectors[slot * dim..(slot + 1) * dim];
+        let score = match metric {
+            Metric::Cosine => cosine_similarity(query, v),
+            Metric::Euclidean => euclidean_distance(query, v),
+            Metric::DotProduct => dot_product(query, v),
+        };
+        out.push((slot, score));
     }
 }
 

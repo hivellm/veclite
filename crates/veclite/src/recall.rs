@@ -99,10 +99,13 @@ fn hnsw_recall_matches_brute_force() {
         let query: Vec<f32> = (0..DIM).map(|_| rng.next_component()).collect();
         let expected = brute_force_top_k(&vectors, &query, K);
         let got = c
-            .search_internal(&query, K, 256)
+            .query(&query)
+            .limit(K)
+            .ef_search(256)
+            .run()
             .unwrap_or_else(|e| panic!("{e}"));
         assert_eq!(got.len(), K, "index returned fewer than k live results");
-        let got_ids: Vec<String> = got.into_iter().map(|(id, _)| id).collect();
+        let got_ids: Vec<String> = got.into_iter().map(|h| h.id).collect();
         total += recall(&expected, &got_ids);
     }
     let avg = total / QUERIES as f32;
@@ -163,14 +166,18 @@ fn search_excludes_tombstoned_slots() {
     for _ in 0..QUERIES {
         let query: Vec<f32> = (0..DIM).map(|_| rng.next_component()).collect();
         let got = c
-            .search_internal(&query, K, 256)
+            .query(&query)
+            .limit(K)
+            .ef_search(256)
+            .run()
             .unwrap_or_else(|e| panic!("{e}"));
         assert_eq!(
             got.len(),
             K,
             "over-fetch failed to fill the limit with live results"
         );
-        for (id, _) in &got {
+        for hit in &got {
+            let id = &hit.id;
             let idx: usize = id
                 .strip_prefix('v')
                 .and_then(|s| s.parse().ok())
@@ -210,10 +217,14 @@ fn reindex_purges_tombstones_and_encodes() {
     let live = c.len();
     let query: Vec<f32> = (0..DIM).map(|_| rng.next_component()).collect();
     let got = c
-        .search_internal(&query, 5, 128)
+        .query(&query)
+        .limit(5)
+        .ef_search(128)
+        .run()
         .unwrap_or_else(|e| panic!("{e}"));
     assert_eq!(got.len(), 5);
-    for (id, _) in &got {
+    for hit in &got {
+        let id = &hit.id;
         let idx: usize = id
             .strip_prefix('v')
             .and_then(|s| s.parse().ok())

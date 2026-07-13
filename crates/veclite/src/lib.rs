@@ -20,6 +20,7 @@ pub mod error;
 pub(crate) mod index;
 pub mod options;
 pub mod point;
+pub mod query;
 // Vendored quantization encodings (SQ-8 default, scalar 4/2/1-bit, binary;
 // product behind the `pq` feature). Consumed by the collection's reindex-time
 // encoding; byte-identical to the server (CORE-041). Cosmetic clippy lints are
@@ -55,3 +56,4 @@ pub use options::{
     OpenOptions, PayloadIndexKind, Quantization,
 };
 pub use point::{Hit, Point, SparseVector};
+pub use query::{Filter, QueryBuilder};

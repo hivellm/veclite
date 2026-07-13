@@ -40,6 +40,15 @@ Versions 0.x are pre-release: the public API may change between minors until 1.0
   upstream SQ `deserialize_params` offset-restore bug without changing the
   serialized shape. Recall gates pass: HNSW top-10 ≥ 0.95, SQ-8 vs
   unquantized ≥ 0.99.
+- Public search API (task `phase1c`, DAG T1.4, SPEC-004 §4–5): `Collection::search(vector, limit)`
+  and the `query()` builder (`limit` default 10, per-query `ef_search`,
+  `with_payload` default true, `with_vector` default false, and a declared
+  `filter` slot for phase3a). Results are ordered per metric (CORE-035):
+  descending similarity for Cosine/DotProduct, ascending distance for
+  Euclidean. Cosine/Euclidean use the HNSW index; DotProduct and any metric on
+  wasm32 use exact brute force. Builders hold no lock until `run()` (API-030);
+  `limit = 0` → `InvalidArgument`, `limit` above the live count returns all
+  live (API-031).
 
 ### Changed
 - **ADR-0001**: VecLite has zero dependency on Vectorizer crates. The originally
