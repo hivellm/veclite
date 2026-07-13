@@ -66,7 +66,7 @@ impl VecLite {
         if self.inner.collections.contains_key(name) {
             return Err(VecLiteError::AlreadyExists(name.to_owned()));
         }
-        let inner = Arc::new(CollectionInner::new(name.to_owned(), options));
+        let inner = Arc::new(CollectionInner::new(name.to_owned(), options)?);
         self.inner
             .collections
             .insert(name.to_owned(), Arc::clone(&inner));

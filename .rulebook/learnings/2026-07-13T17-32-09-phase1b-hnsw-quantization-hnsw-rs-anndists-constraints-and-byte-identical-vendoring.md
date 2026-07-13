@@ -1,0 +1,16 @@
+# phase1b HNSW+quantization: hnsw_rs/anndists constraints and byte-identical vendoring
+**Source**: manual
+**Date**: 2026-07-13
+**Related Task**: phase1b_hnsw-quantization
+**Tags**: rust, hnsw, quantization, simd, wasm, vendoring, phase1b
+Key findings integrating hnsw_rs 0.3.4 + vendored quantization into VecLite:
+
+1. hnsw_rs 0.3.4 cannot build on wasm32 (pulls cpu-time/rayon/mmap-rs unconditionally). It and the index module are target-gated off wasm32 (ADR-0002); quantization+SIMD are pure-Rust and compile everywhere. Native `cargo check` pulls hnsw_rs; `cargo check --target wasm32-unknown-unknown` must exclude it — both verified in CI.
+
+2. anndists 0.1.3 DistDot::eval for f32 = `1 - dot` and asserts `dot <= 1` — it PANICS on unnormalized vectors. The server's HNSW path only ever used DistCosine. So VecLite maps Cosine→DistCosine, Euclidean→DistL2, DotProduct→DistDot, but the collection does NOT build a DotProduct index (would crash); DotProduct HNSW is deferred (documented in index/mod.rs + ADR-0002 + README). hnsw_rs::Hnsw::new(max_nb_connection, max_elements, max_layer, ef_construction, dist); insert((&[f32], usize)); search(&[f32], k, ef)->Vec<Neighbour{d_id:usize, distance}>; no delete API (soft-delete via collection tombstones + search-time over-fetch by tombstone count + liveness filter: slot live iff id_to_slot[ids[slot]]==slot). Hnsw is Send+Sync (parallel_insert proves it), so no Arc<RwLock> wrapper needed — the collection's RwLock<CollectionData> suffices.
+
+3. SQ-8 encoding must be a BATCH fit over the live set (in reindex()), never per-upsert: the vendored fit computes global min/max, so per-upsert freezing would break byte-identical parity (CORE-041). In-memory 4x savings is NOT achievable in phase1b (hnsw_rs holds f32); SQ-8 is the on-disk/interop encoding realized with phase2 segments. The live graph stays f32; quantized scoring = dequantize-then-score (CORE-043 true quantized-domain traversal is phase2).
+
+4. Vendored scalar.rs had a real bug: deserialize_params dropped `offset` (left 0.0), corrupting dequant after a round-trip. Fixed by adding `self.offset = min_value;` in deserialize (offset always == min_value); serialize shape unchanged. Vendor scalar-complete SIMD only (ISA backends deferred; scalar oracle satisfies recall gates). Keep vendored files diffable against upstream (CORE-003): allow cosmetic clippy lints (manual_div_ceil, needless_range_loop, ptr_arg, etc.) on the vendored module rather than rewriting.
+
+5. Source-file naming is by THEME, not by phase (recall.rs, not phase1b_gates.rs) — matches collection.rs/index/quantization/simd. Recall gates achieved: HNSW top-10 >= 0.95, SQ-8 vs unquantized >= 0.99, with a fixed-seed splitmix64 corpus (no rand dep).

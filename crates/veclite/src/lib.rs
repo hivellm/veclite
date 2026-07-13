@@ -42,6 +42,10 @@ pub(crate) mod quantization;
 // full trait is kept complete for the future ISA backends that override it.
 #[allow(dead_code)]
 pub(crate) mod simd;
+// Retrieval-quality gates (recall, SQ-8 recall, tombstone). Native-only:
+// they drive the HNSW index via the crate-internal `search_internal`.
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod recall;
 
 pub use collection::Collection;
 pub use database::VecLite;

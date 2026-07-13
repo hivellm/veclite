@@ -19,7 +19,7 @@ No server. No ports. No configuration. One file.
 
 ## Status
 
-🚧 **Phase 1 — in-memory engine.** On top of the phase 0 foundation (`VecLiteError`, options with server-parity defaults, CI gates), an ephemeral `VecLite::memory()` database now runs the collection registry (create/get/delete/rename) and vector CRUD (upsert/get/delete, single and batch) with dimension and NaN/Inf guards and cosine ingest normalization. Persistence, HNSW indexing, and search land in later phases per the [DAG](docs/DAG.md).
+🚧 **Phase 1 — in-memory engine + HNSW.** On top of the phase 0 foundation (`VecLiteError`, options with server-parity defaults, CI gates), an ephemeral `VecLite::memory()` database runs the collection registry (create/get/delete/rename) and vector CRUD (upsert/get/delete, single and batch) with dimension and NaN/Inf guards and cosine ingest normalization. Vectors are indexed in an HNSW graph (Cosine/Euclidean) with soft-delete tombstones and `reindex()`; quantization (SQ-8/scalar/binary) and scalar SIMD distance kernels are vendored byte-identical from the server. The public `search()` API lands in phase 1c; a few items are scoped forward per the [DAG](docs/DAG.md): SIMD ISA backends (scalar oracle ships now), `DotProduct` HNSW (blocked by the pinned `anndists` dot-bound), and in-memory quantized storage (the live graph is f32; SQ-8 is the on-disk/interop encoding, realized with phase 2 segments).
 
 ### Development
 

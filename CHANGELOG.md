@@ -28,6 +28,18 @@ Versions 0.x are pre-release: the public API may change between minors until 1.0
   SPEC-001 §3–4, SPEC-004 §1/§4, CORE-010..014/020..022/050/051).
 - `Point`, `SparseVector`, and `Hit` data-model types with id and
   collection-name validation (CORE-010/011).
+- HNSW index over the pinned `hnsw_rs =0.3.4`, adapted from the server's
+  `optimized_hnsw` and generalized to Cosine/Euclidean with static enum
+  dispatch, per-collection `m`/`ef_construction` bounds (CORE-031),
+  soft-delete tombstones + search-time over-fetch (CORE-032/033), `reindex()`,
+  and rayon batch insert. Native-only — target-gated off wasm32 (ADR-0002,
+  task `phase1b`, DAG T1.2/T1.3, SPEC-001 §5).
+- Vendored quantization (SQ-8 default, scalar 4/2/1-bit, binary; product
+  behind the `pq` feature) and scalar SIMD distance/quantize kernels, both
+  byte-identical to `vectorizer-core@3.5.0` (CORE-040..043/001). Fixes the
+  upstream SQ `deserialize_params` offset-restore bug without changing the
+  serialized shape. Recall gates pass: HNSW top-10 ≥ 0.95, SQ-8 vs
+  unquantized ≥ 0.99.
 
 ### Changed
 - **ADR-0001**: VecLite has zero dependency on Vectorizer crates. The originally

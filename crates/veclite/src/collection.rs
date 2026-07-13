@@ -12,8 +12,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use parking_lot::RwLock;
 
 use crate::error::{Result, VecLiteError};
-use crate::options::{CollectionOptions, Metric};
+#[cfg(not(target_arch = "wasm32"))]
+use crate::index::HnswIndex;
+use crate::options::{CollectionOptions, Metric, Quantization};
 use crate::point::{Point, SparseVector, validate_id};
+use crate::quantization::traits::{QuantizationMethod, QuantizationParams};
+use crate::quantization::{BinaryQuantization, ScalarQuantization};
 
 /// Shared state behind every [`Collection`] handle for one collection.
 pub(crate) struct CollectionInner {
@@ -41,23 +45,85 @@ struct CollectionData {
     payloads: Vec<Option<serde_json::Value>>,
     /// Slot → sparse lane (cleared on tombstone).
     sparses: Vec<Option<SparseVector>>,
+    /// Native HNSW graph keyed by slot number (phase1b); `None` for
+    /// `DotProduct` collections since hnsw_rs's `DistDot` panics on
+    /// unnormalized vectors (ADR-0002). Node ids never change identity —
+    /// only `reindex` rebuilds this wholesale to purge tombstoned slots.
+    #[cfg(not(target_arch = "wasm32"))]
+    index: Option<HnswIndex>,
+    /// Flat SQ-8/binary code block from the last `reindex`; empty until the
+    /// first reindex or under `Quantization::None` (SPEC-001 §6). Always a
+    /// batch artifact — never kept in sync per-upsert (CORE-041 parity).
+    codes: Vec<u8>,
+    /// Parameters to decode `codes`; `None` exactly when `codes` is empty.
+    quant_params: Option<QuantizationParams>,
 }
 
-impl CollectionInner {
-    pub(crate) fn new(name: String, config: CollectionOptions) -> Self {
-        CollectionInner {
-            name: RwLock::new(name),
-            config,
-            deleted: AtomicBool::new(false),
-            data: RwLock::new(CollectionData {
-                vectors: Vec::new(),
-                ids: Vec::new(),
-                id_to_slot: HashMap::new(),
-                tombstones: HashSet::new(),
-                payloads: Vec::new(),
-                sparses: Vec::new(),
-            }),
+impl CollectionData {
+    #[cfg(not(target_arch = "wasm32"))]
+    fn empty(index: Option<HnswIndex>) -> Self {
+        CollectionData {
+            vectors: Vec::new(),
+            ids: Vec::new(),
+            id_to_slot: HashMap::new(),
+            tombstones: HashSet::new(),
+            payloads: Vec::new(),
+            sparses: Vec::new(),
+            index,
+            codes: Vec::new(),
+            quant_params: None,
         }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn empty() -> Self {
+        CollectionData {
+            vectors: Vec::new(),
+            ids: Vec::new(),
+            id_to_slot: HashMap::new(),
+            tombstones: HashSet::new(),
+            payloads: Vec::new(),
+            sparses: Vec::new(),
+            codes: Vec::new(),
+            quant_params: None,
+        }
+    }
+}
+
+/// Allocation hint handed to a freshly created HNSW graph (native only).
+/// Not a hard cap — hnsw_rs reallocates past it (SPEC-001 CORE-030).
+#[cfg(not(target_arch = "wasm32"))]
+const INITIAL_INDEX_CAPACITY: usize = 1024;
+
+impl CollectionInner {
+    /// Build a new collection's shared state, including its HNSW index
+    /// (native only). Propagates `HnswIndex::new`'s `m`/`ef_construction`
+    /// bounds check (SPEC-001 CORE-031); `DotProduct` collections get no
+    /// index (ADR-0002 — `DistDot` panics on unnormalized vectors).
+    pub(crate) fn new(name: String, config: CollectionOptions) -> Result<Self> {
+        #[cfg(not(target_arch = "wasm32"))]
+        let data = {
+            let index = match config.metric {
+                Metric::DotProduct => None,
+                _ => Some(HnswIndex::new(
+                    config.metric,
+                    config.dimension,
+                    config.hnsw.m,
+                    config.hnsw.ef_construction,
+                    INITIAL_INDEX_CAPACITY,
+                )?),
+            };
+            CollectionData::empty(index)
+        };
+        #[cfg(target_arch = "wasm32")]
+        let data = CollectionData::empty();
+
+        Ok(CollectionInner {
+            name: RwLock::new(name),
+            deleted: AtomicBool::new(false),
+            data: RwLock::new(data),
+            config,
+        })
     }
 }
 
@@ -206,6 +272,83 @@ impl Collection {
     pub fn name(&self) -> String {
         self.inner.name.read().clone()
     }
+
+    /// Rebuild the HNSW index from scratch over the live vector set,
+    /// purging tombstoned slots from the graph, and recompute quantization
+    /// codes over the same live set (SPEC-001 CORE-032). Quantization is
+    /// always batch-fit here — never per-upsert — for byte-identical
+    /// parity with a fresh ingest (CORE-041).
+    pub fn reindex(&self) -> Result<()> {
+        self.guard()?;
+        let mut data = self.inner.data.write();
+        let dim = self.inner.config.dimension;
+
+        let mut live: Vec<(usize, Vec<f32>)> = Vec::new();
+        for (slot, id) in data.ids.iter().enumerate() {
+            if data.id_to_slot.get(id) == Some(&slot) {
+                live.push((slot, data.vectors[slot * dim..(slot + 1) * dim].to_vec()));
+            }
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            data.index = if self.inner.config.metric == Metric::DotProduct {
+                None
+            } else {
+                let fresh = HnswIndex::new(
+                    self.inner.config.metric,
+                    dim,
+                    self.inner.config.hnsw.m,
+                    self.inner.config.hnsw.ef_construction,
+                    live.len().max(1),
+                )?;
+                if !live.is_empty() {
+                    fresh.insert_batch(&live);
+                }
+                Some(fresh)
+            };
+        }
+
+        recompute_quantization(&mut data, &self.inner.config, &live)?;
+        Ok(())
+    }
+
+    /// Query the native HNSW index and filter out tombstoned slots,
+    /// over-fetching to compensate for hnsw_rs having no delete API. Returns
+    /// raw hnsw distances with no score transformation — ordering and `Hit`
+    /// mapping are the public `search`'s job (phase1c, CORE-035).
+    // Not yet called: the public `search`/`Hit` API lands in phase1c, which
+    // consumes this. Allowed dead-code until then, same as the other
+    // not-yet-wired internals in this crate (see lib.rs `index`/`quantization`).
+    #[cfg(not(target_arch = "wasm32"))]
+    #[allow(dead_code)]
+    pub(crate) fn search_internal(
+        &self,
+        query: &[f32],
+        k: usize,
+        ef_search: usize,
+    ) -> Result<Vec<(String, f32)>> {
+        self.guard()?;
+        let data = self.inner.data.read();
+        let Some(index) = &data.index else {
+            return Err(VecLiteError::InvalidArgument(
+                "collection has no HNSW index (DotProduct indexing is not yet supported)"
+                    .to_owned(),
+            ));
+        };
+        let fetch = k + data.tombstones.len();
+        let hits = index.search(query, fetch, ef_search)?;
+        let mut results = Vec::with_capacity(k.min(hits.len()));
+        for (slot, distance) in hits {
+            if data.id_to_slot.get(&data.ids[slot]) == Some(&slot) {
+                results.push((data.ids[slot].clone(), distance));
+                if results.len() == k {
+                    break;
+                }
+            }
+        }
+        Ok(results)
+    }
 }
 
 /// Tombstone the slot behind `id`, clearing its payload/sparse storage.
@@ -237,19 +380,79 @@ fn apply_upsert(data: &mut CollectionData, p: PreparedPoint, dim: usize) {
     data.payloads.push(p.payload);
     data.sparses.push(p.sparse);
     data.id_to_slot.insert(p.id, slot);
+
+    // The replaced-id path above already tombstoned the old slot; hnsw_rs
+    // has no delete API, so that stale node stays in the graph until
+    // `reindex` — the search layer filters it out by liveness instead.
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(index) = &data.index {
+        index.insert(&data.vectors[slot * dim..(slot + 1) * dim], slot);
+    }
+}
+
+/// Recompute quantization codes over the live vector set (batch-fit, never
+/// per-upsert, for byte-identical parity — CORE-041). Clears `codes` when
+/// there are no live vectors or `Quantization::None` is configured.
+fn recompute_quantization(
+    data: &mut CollectionData,
+    config: &CollectionOptions,
+    live: &[(usize, Vec<f32>)],
+) -> Result<()> {
+    if live.is_empty() {
+        data.codes.clear();
+        data.quant_params = None;
+        return Ok(());
+    }
+    let vectors: Vec<Vec<f32>> = live.iter().map(|(_, v)| v.clone()).collect();
+    match config.quantization {
+        Quantization::None => {
+            data.codes.clear();
+            data.quant_params = None;
+        }
+        Quantization::Scalar { bits } => {
+            let mut sq = ScalarQuantization::new(bits)
+                .map_err(|e| VecLiteError::InvalidArgument(e.to_string()))?;
+            sq.fit(&vectors)
+                .map_err(|e| VecLiteError::InvalidArgument(e.to_string()))?;
+            let quantized = sq
+                .quantize(&vectors)
+                .map_err(|e| VecLiteError::InvalidArgument(e.to_string()))?;
+            data.quant_params = Some(
+                sq.serialize_params()
+                    .map_err(|e| VecLiteError::InvalidArgument(e.to_string()))?,
+            );
+            data.codes = quantized.data;
+        }
+        Quantization::Binary => {
+            let mut bq = BinaryQuantization::new();
+            bq.train(&vectors)
+                .map_err(|e| VecLiteError::InvalidArgument(e.to_string()))?;
+            let quantized = bq
+                .quantize(&vectors)
+                .map_err(|e| VecLiteError::InvalidArgument(e.to_string()))?;
+            data.quant_params = Some(
+                bq.serialize_params()
+                    .map_err(|e| VecLiteError::InvalidArgument(e.to_string()))?,
+            );
+            data.codes = quantized.data;
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::options::Quantization;
 
     fn coll(dimension: usize, metric: Metric) -> Collection {
         Collection {
-            inner: Arc::new(CollectionInner::new(
-                "t".into(),
-                CollectionOptions::new(dimension, metric).quantization(Quantization::None),
-            )),
+            inner: Arc::new(
+                CollectionInner::new(
+                    "t".into(),
+                    CollectionOptions::new(dimension, metric).quantization(Quantization::None),
+                )
+                .unwrap_or_else(|e| panic!("{e}")),
+            ),
         }
     }
 
