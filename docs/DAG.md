@@ -15,7 +15,7 @@ Conventions:
 graph TD
     subgraph P0["Phase 0 — Bootstrap"]
         T0.1["T0.1 Workspace + CI skeleton"]
-        T0.2["T0.2 vectorizer-core dependency validation<br/>(all targets incl. wasm32)"]
+        T0.2["T0.2 Cross-target build validation<br/>(all targets incl. wasm32; ADR-0001: no vectorizer deps)"]
         T0.3["T0.3 Error enum, DistanceMetric,<br/>options structs (server-parity defaults)"]
         G0{{"G0: cargo test green on 3 OS,<br/>wasm32 skeleton compiles"}}
         T0.1 --> T0.2
@@ -189,7 +189,7 @@ Implications:
 | ID | Task | Depends on | Spec(s) | PRD reqs | Deliverable / exit test |
 |---|---|---|---|---|---|
 | **T0.1** | Cargo workspace (`crates/veclite`), CI: fmt + clippy `-D warnings` + test on Linux/macOS/Windows; MSRV decision (OQ-2) | — | SPEC-016 | NFR-09 | Green pipeline on empty-ish crate |
-| **T0.2** | Add `vectorizer-core` dep; verify quantization/SIMD/compression compile standalone on 3 OS + `wasm32-unknown-unknown` | T0.1 | SPEC-001 | G1 | Cross-target build matrix green |
+| **T0.2** | Cross-target build validation on 3 OS + `wasm32-unknown-unknown`. ADR-0001: no Vectorizer dependency — quantization/SIMD are vendored in T1.2/T1.3, compression in T2.2 | T0.1 | SPEC-001 | G1 | Cross-target build matrix green |
 | **T0.3** | Port `VecLiteError`, `DistanceMetric`, `CollectionOptions`/`OpenOptions` with server-parity defaults | T0.1 | SPEC-004 | FR-11, FR-23 | Unit tests on defaults table |
 | **G0** | Phase 0 gate | T0.2, T0.3 | — | — | `cargo test` on 3 OS; wasm32 compiles |
 | **T1.1** | Collection registry (DashMap) + vector CRUD in-memory (`upsert/upsert_batch/get/delete/len`) | G0 | SPEC-001 | FR-10, FR-20–23 | CRUD property tests |

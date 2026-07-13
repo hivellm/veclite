@@ -13,14 +13,14 @@ Requirement IDs `IOP-xxx`. Behind cargo feature `vecdb-interop`; surfaced to use
 
 | Layer | Shared | Mechanism |
 |---|---|---|
-| Distance metrics, HNSW params, quantization encodings, SIMD, compression | identical | both depend on `vectorizer-core` |
+| Distance metrics, HNSW params, quantization encodings, SIMD, compression | identical | vendored byte-identical code (ADR-0001) verified by the shared conformance corpus |
 | Collection config semantics | identical | `CollectionOptions` ↔ server `CollectionConfig` 1:1 |
 | Embedding provider ids + vocabulary state | identical | same provider ids; state translates both ways |
 | Filter model | v1 subset | SPEC-006 (no geo/nested) |
 | On-disk file | **different** | `.veclite` vs `.vecdb`+`.vecidx`; logical import/export bridges |
 | Wire protocol | n/a | VecLite has none |
 
-- **IOP-001** Quantized vector blocks MUST translate losslessly in both directions (same `vectorizer-core` encodings — no de-quantize/re-quantize round trip).
+- **IOP-001** Quantized vector blocks MUST translate losslessly in both directions (byte-identical vendored encodings, CORE-041 — no de-quantize/re-quantize round trip).
 - **IOP-002** Behavior divergence between VecLite and the server for identical (config, data, query) is a **bug in one of them**. The shared conformance corpus (`tests/compat/`) runs in both repos' CI against golden results; exceptions MUST be documented in [07-compat](../vectorizer-lite/07-vectorizer-compatibility.md) with rationale (currently none).
 
 ## 2. Export (`.veclite` → `.vecdb`) — graduation path

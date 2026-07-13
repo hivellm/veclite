@@ -13,11 +13,11 @@ Keywords **MUST**, **MUST NOT**, **SHOULD**, **MAY** are RFC 2119. Requirement I
 
 The in-memory engine of the `veclite` crate: collection registry, vector CRUD, HNSW indexing, quantization, distance computation, and the concurrency model. Persistence is SPEC-002/003; the public API surface is SPEC-004.
 
-## 2. Dependencies and reuse
+## 2. Dependencies and reuse (ADR-0001: vendoring, zero Vectorizer dependencies)
 
-- **CORE-001** The crate MUST depend on the published `vectorizer-core` crate for: quantization (scalar/product/binary), SIMD distance kernels (AVX2/NEON/simd128 with runtime detection), LZ4/zstd compression, and codec primitives. These MUST NOT be reimplemented — bit-identical math is the parity guarantee (PRD G1, FR-73).
-- **CORE-002** Engine logic (collection management, HNSW wrapper, payload index, hybrid search) is **extract-and-adapt** from the Vectorizer workspace (`db/` modules): copied into `veclite`, with async, server, tenant, GPU, and shard branches removed. Provenance comments MUST reference the source file and Vectorizer version.
-- **CORE-003** `vectorizer-core` MUST be pinned to a minor line (initially `"3.5"`). Any change to quantization encodings, distance math, or HNSW serialization MUST land in `vectorizer-core` first (shared-crate policy, [07-compat §repo relationship](../vectorizer-lite/07-vectorizer-compatibility.md)).
+- **CORE-001** VecLite MUST NOT depend on any Vectorizer crate — not via crates.io, git, or path (ADR-0001 in `.rulebook/decisions/`). The algorithmic core (quantization scalar/product/binary, SIMD distance kernels with runtime detection, LZ4/zstd compression) is **vendored**: copied from `hivellm/vectorizer` into `crates/veclite` and adapted. Encodings and math MUST remain byte-identical to the server's — bit-identical math is the parity guarantee (PRD G1, FR-73), enforced by the parity harness and shared conformance corpus (NFR-04) instead of a shared crate.
+- **CORE-002** All vendored code (algorithmic core and engine logic — collection management, HNSW wrapper, payload index, hybrid search from the server's `db/` modules) is **copy-and-adapt**: async, server, tenant, GPU, and shard branches removed. Provenance comments MUST reference the source file and the Vectorizer commit copied from.
+- **CORE-003** Any change to quantization encodings, distance math, or HNSW serialization MUST be manually ported to/from the Vectorizer repo and re-verified against the shared conformance corpus on both sides before release. Vendoring happens copy-on-need per context cycle (quantization + SIMD in T1.2/T1.3, compression in T2.2).
 - **CORE-004** The default build MUST compile on `x86_64/aarch64` Linux, macOS, Windows and `wasm32-unknown-unknown` (engine without file storage). Verified in CI from T0.2 onward.
 
 ## 3. Data model
@@ -68,9 +68,9 @@ pub struct Hit { pub id: String, pub score: f32,
 ## 6. Quantization
 
 - **CORE-040** Default quantization is `Scalar { bits: 8 }` (SQ-8), matching the server default. `Quantization::None`, `Scalar { bits: 4|2|1 }`, `Binary`, and (feature `pq`) `Product` MUST be selectable per collection.
-- **CORE-041** Encodings come from `vectorizer-core` and MUST be byte-compatible with the server's (`.vecdb` interop, SPEC-013, depends on this).
+- **CORE-041** Encodings are vendored from the server's quantization code (CORE-001) and MUST remain byte-compatible with it (`.vecdb` interop, SPEC-013, depends on this).
 - **CORE-042** SQ scale/offset parameters are computed per segment (persistent) or per collection (in-memory) and stored alongside the codes. Re-quantization on `vacuum`/`reindex` MAY recompute them.
-- **CORE-043** Search on quantized collections scores against quantized codes using the matching `vectorizer-core` kernel. SQ-8 recall vs unquantized MUST be ≥ 0.99 top-10 on the standard corpus (T1.3 exit test).
+- **CORE-043** Search on quantized collections scores against quantized codes using the matching vendored kernel. SQ-8 recall vs unquantized MUST be ≥ 0.99 top-10 on the standard corpus (T1.3 exit test).
 
 ## 7. Concurrency model
 

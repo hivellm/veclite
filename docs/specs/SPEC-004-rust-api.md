@@ -164,7 +164,7 @@ pub enum VecLiteError {
 ```toml
 [features]
 default = ["simd"]
-simd    = []             # vectorizer-core SIMD kernels
+simd    = []             # vendored SIMD kernels (CORE-001)
 onnx    = ["dep:fastembed"]
 pq      = []
 svd     = ["dep:ndarray"]

@@ -20,8 +20,9 @@ Versions 0.x are pre-release: the public API may change between minors until 1.0
   3-OS test and lint workflows.
 - `.editorconfig` (4-space indentation) and Rust entries in `.gitignore`.
 
-### Known limitations
-- The `vectorizer-core` dependency (DAG T0.2, SPEC-001 CORE-001) is **not wired yet**:
-  the crate is unpublished and its current mandatory dependencies (axum/tonic/rmcp/umicp)
-  conflict with VecLite's no-network-crates rule (NFR-08). Tracked in task
-  `phase0a_bootstrap-workspace`; requires an upstream change in the Vectorizer repo.
+### Changed
+- **ADR-0001**: VecLite has zero dependency on Vectorizer crates. The originally
+  planned `vectorizer-core` dependency (unpublished; mandatory network deps conflict
+  with NFR-08) is replaced by a vendoring policy — needed code is copied into this
+  repo with provenance headers, byte-identical encodings enforced by the conformance
+  corpus. Quantization/SIMD land with `phase1b`, compression with `phase2a`.

@@ -12,8 +12,8 @@ Requirement IDs `REL-xxx`.
 ## 1. Workspace & repository
 
 - **REL-001** Repo `hivellm/veclite`, layout per [02-architecture §repository layout](../vectorizer-lite/02-architecture.md): `crates/{veclite, veclite-ffi, veclite-py, veclite-node, veclite-wasm, veclite-cli}`, `bindings/{go, csharp}`, `docs/`, `tests/`.
-- **REL-002** MSRV (resolves OQ-2): **track `vectorizer-core`'s MSRV**, pinned explicitly in `Cargo.toml` (`rust-version`) and tested in CI; bumping MSRV is a minor-version event, announced in the changelog.
-- **REL-003** Conventional Commits (`feat`/`fix`/`perf`/…); changelog generated per release. No git submodules; no cross-repo path dependencies (`vectorizer-core` comes from crates.io only).
+- **REL-002** MSRV (resolves OQ-2): VecLite pins its **own** MSRV in `Cargo.toml` (`rust-version`, currently 1.85 — the edition-2024 floor), tested in CI; bumping MSRV is a minor-version event, announced in the changelog. (Originally "track vectorizer-core"; superseded by ADR-0001.)
+- **REL-003** Conventional Commits (`feat`/`fix`/`perf`/…); changelog generated per release. No git submodules; **no dependency on any Vectorizer crate via crates.io, git, or path** — needed code is vendored (ADR-0001, CORE-001).
 
 ## 2. CI matrix
 
@@ -42,7 +42,7 @@ Requirement IDs `REL-xxx`.
 - **REL-030** SemVer. 0.x during phases 0–5; **1.0.0 at G6**. Core and every binding release in lockstep with one version number (NFR-12).
 - **REL-031** File-format version is independent of crate version; format v1 spans many releases. `min_reader_version` gates forward compat (STG header). **Stability pledge published at 1.0**: every future 1.x reads v1 files (NFR-11), backed by the golden-file corpus in CI (SPEC-002 §9.6).
 - **REL-032** FFI ABI: additive-only within a major; `vl_abi_version()` gates loaders (FFI-007). Public Rust API: additive-only post-freeze (API-061), enforced by a `cargo public-api` snapshot check.
-- **REL-033** `vectorizer-core` pinned to a minor line; a breaking core change requires a coordinated major and a conformance re-run in both repos.
+- **REL-033** Vendored engine code (ADR-0001): any change to shared math/encodings is manually ported between the repos and requires a conformance re-run on both sides before release.
 
 ## 5. Documentation deliverables (T6.3)
 

@@ -49,7 +49,7 @@ No server. No ports. No configuration. One file.
 
 ## 4. Goals
 
-1. **G1 — Embed the real engine.** Reuse Vectorizer's core algorithms (HNSW via `hnsw_rs 0.3`, SIMD distance kernels, scalar/product/binary quantization, LZ4/zstd compression) via the shared `vectorizer-core` crate. Search quality and performance match the server for single-process workloads. Not a toy reimplementation.
+1. **G1 — Embed the real engine.** Reuse Vectorizer's core algorithms (HNSW via `hnsw_rs 0.3`, SIMD distance kernels, scalar/product/binary quantization, LZ4/zstd compression) by **vendoring the code into this repo** (ADR-0001: VecLite has zero dependency on Vectorizer crates; copy-and-adapt with provenance, byte-identical encodings). Search quality and performance match the server for single-process workloads. Not a toy reimplementation.
 2. **G2 — Single-file storage.** One `.veclite` file per database (plus a transient `-wal` sidecar during writes) containing collections, vectors, indexes, payloads, and embedding state. Copyable, versionable, streamable.
 3. **G3 — Zero configuration, no runtime imposition.** Synchronous, thread-safe core; no tokio, no ports, no daemon, no config file. `open(path)` with sane defaults is a complete setup.
 4. **G4 — Native SDKs.** Python, Node.js, Go, C#, and WASM bindings that link the compiled core directly (PyO3, napi-rs, C-ABI/cgo, P/Invoke, wasm-bindgen). Installation never requires a Rust toolchain.
@@ -222,7 +222,7 @@ All of the following, verified by CI or a documented manual protocol:
 | Risk | Impact | Mitigation |
 |---|---|---|
 | `hnsw_rs 0.3` serialization instability across versions | Broken graph segments on upgrade | Pin exact version; graph segment carries its own version byte; rebuild-from-vectors fallback (FR-54) |
-| `vectorizer-core` evolves server-first and breaks VecLite | Parity drift, blocked releases | Pin minor line; conformance CI in both repos; changes to math/encodings must land in `vectorizer-core` first (shared-crate policy) |
+| Vendored engine code drifts from the server (ADR-0001: no shared crate) | Parity drift discovered late | Shared conformance corpus + parity harness in both repos' CI (NFR-04); any change to encodings/distance math is manually ported and re-verified on both sides |
 | Windows mmap + truncate friction (vacuum) | Corruption or failures on Windows | Pager designed for unmap→truncate→remap; crash suite runs on Windows CI |
 | Prebuild matrix burden (5 ecosystems × 3 OS × 2 arch) | Release grind, stale platforms | One reusable GH Actions workflow; standard maturin/napi-rs tooling; Python+Node first, others follow demand |
 | Scope creep back toward server features | Bloat, delayed 1.0 | §5 non-goals are the contract; requests redirect to graduation path |
@@ -235,7 +235,7 @@ Tracked here until resolved; resolution updates the relevant SPEC.
 | # | Question | Owner decision needed by |
 |---|---|---|
 | OQ-1 | Exact reference hardware profile for NFR-01/02/03 benchmarks (pin a cloud instance type + a laptop class). | Phase 1 exit (T1.6) |
-| OQ-2 | Minimum supported Rust version (MSRV) policy — track `vectorizer-core`'s or pin independently? | Phase 0 (T0.1) |
+| OQ-2 | ~~MSRV policy~~ — resolved: VecLite pins its own MSRV (1.85, edition-2024 floor) since ADR-0001 removed the `vectorizer-core` dependency | Resolved (phase0a) |
 | OQ-3 | WASM OPFS shim design: sync-core-over-async-storage needs a buffering strategy — full-file buffer vs block cache. | Phase 5 start (T5.3) |
 | OQ-4 | CLI distribution: separate `veclite-cli` crate/binary or feature of the core crate? | Phase 5 start (T5.5) |
 | OQ-5 | Whether `bincode 2` or MessagePack is used for CONFIG segments (planning says bincode 2; conformance with FFI payload codec favors one codec everywhere). | Phase 2 start (T2.2) |

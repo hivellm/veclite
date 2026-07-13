@@ -6,7 +6,7 @@ DAG T1.2 + T1.3: k-NN search requires the HNSW index extracted from Vectorizer's
 ## What Changes
 - HNSW wrapper over pinned hnsw_rs =0.3.x: insert, search, soft-delete tombstones, reindex() (CORE-030..035)
 - Parameter bounds validation (m 4..=64, ef_construction 8..=2048, ef_search 1..=4096)
-- SQ-8 quantization on ingest/search via vectorizer-core kernels; Quantization::None/Binary selectable (CORE-040..043)
+- Quantization + SIMD kernels vendored from the Vectorizer repo (ADR-0001, byte-identical encodings); SQ-8 on ingest/search; Quantization::None/Binary selectable (CORE-040..043)
 - rayon-parallel batch inserts (scoped, disabled on wasm32)
 
 ## Impact

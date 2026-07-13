@@ -12,7 +12,7 @@ Requirement IDs `WASM-xxx`. Target: browsers, Deno, Bun, edge runtimes (Cloudfla
 ## 1. Build profile
 
 - **WASM-001** `wasm32-unknown-unknown` via wasm-bindgen. Compile-time exclusions: file storage/pager (no filesystem), mmap, file locks, `rayon` (no threads by default), `onnx` (no ORT on wasm). Tier-1 (BYO vectors) and tier-2 (sparse providers) embeddings both work (EMB tiers).
-- **WASM-002** SIMD via `simd128` (the `vectorizer-core` wasm kernels); a non-SIMD fallback build MUST exist for older runtimes, selected automatically by feature detection in the JS loader.
+- **WASM-002** SIMD via `simd128` (the vendored wasm kernels, CORE-001); a non-SIMD fallback build MUST exist for older runtimes, selected automatically by feature detection in the JS loader.
 - **WASM-003** Single-threaded: no atomics/SharedArrayBuffer requirement in v1 (keeps COOP/COEP headers out of the adoption path).
 
 ## 2. Storage backends

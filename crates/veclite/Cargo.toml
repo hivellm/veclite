@@ -11,9 +11,8 @@ categories = ["database", "data-structures"]
 
 [features]
 default = ["simd"]
-# Forwards to vectorizer-core's SIMD kernels once that dependency lands.
-# Blocked: vectorizer-core 3.5.0 is unpublished and its mandatory axum/tonic/
-# rmcp/umicp deps violate NFR-08 — see .rulebook/tasks/phase0a_bootstrap-workspace.
+# Enables the vendored SIMD distance kernels once they land in phase1b
+# (ADR-0001: vendored from hivellm/vectorizer, no external dependency).
 simd = []
 
 [dependencies]

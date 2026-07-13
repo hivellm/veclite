@@ -4,8 +4,10 @@
 - [ ] 1.3 Parameter bounds validation per CORE-031; per-collection m/ef_construction, default ef_search
 - [ ] 1.4 Soft-delete tombstone set + over-fetch on search; upsert-existing = soft-delete + insert (CORE-032/033)
 - [ ] 1.5 reindex(): rebuild graph from live vectors, purge tombstones
-- [ ] 1.6 SQ-8 encode on ingest + quantized-domain scoring via vectorizer-core; None/Binary options (CORE-040..043)
-- [ ] 1.7 rayon scoped-thread batch insert, cfg-gated off for wasm32 (CORE-052)
+- [ ] 1.6 Vendor quantization from Vectorizer crates/vectorizer-core/src/quantization (scalar/binary; product behind pq) with provenance headers, byte-identical encodings (ADR-0001, CORE-001)
+- [ ] 1.7 Vendor SIMD distance kernels from crates/vectorizer-core/src/simd behind the simd feature, scalar fallback always available (ADR-0001)
+- [ ] 1.8 SQ-8 encode on ingest + quantized-domain scoring; None/Binary options (CORE-040..043)
+- [ ] 1.9 rayon scoped-thread batch insert, cfg-gated off for wasm32 (CORE-052)
 
 ## 2. Testing
 - [ ] 2.1 Recall harness vs brute force: top-10 recall >= 0.95 at defaults

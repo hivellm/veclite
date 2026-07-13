@@ -17,7 +17,7 @@ Traceability chain: **PRD** requirement IDs (`FR-xx`, `NFR-xx`) → **DAG** task
 
 | Spec | Scope | Freeze event |
 |---|---|---|
-| [SPEC-001](SPEC-001-core-engine.md) — Core Engine | Collections, CRUD, HNSW, quantization, concurrency model, reuse of `vectorizer-core` | API freeze (T4.1) |
+| [SPEC-001](SPEC-001-core-engine.md) — Core Engine | Collections, CRUD, HNSW, quantization, concurrency model, vendoring policy (ADR-0001) | API freeze (T4.1) |
 | [SPEC-002](SPEC-002-storage-format.md) — Storage Format | `.veclite` v1 file layout: header, segments, TOC, commit protocol, snapshot/vacuum, limits | **Format freeze (G2)** |
 | [SPEC-003](SPEC-003-wal-durability.md) — WAL & Durability | WAL entries, durability modes, checkpoint, recovery, close semantics | Format freeze (G2) |
 | [SPEC-004](SPEC-004-rust-api.md) — Rust API | Public API surface (source of truth for all bindings), defaults, errors, feature flags, evolution rules | API freeze (T4.1) |
@@ -39,7 +39,8 @@ Traceability chain: **PRD** requirement IDs (`FR-xx`, `NFR-xx`) → **DAG** task
 - RFC 2119 keywords (**MUST**, **MUST NOT**, **SHOULD**, **MAY**) are normative.
 - Requirement IDs are stable and referenced from commits, PRs, and tests. Removing or changing the meaning of an ID requires the same review bar as the behavior change itself.
 - Two hard freezes exist: the **storage format** freezes at gate G2 (after that, changes bump the format version) and the **public API** freezes at task T4.1 (after that, additive-only within 1.x).
-- Resolved [PRD open questions](../PRD.md#12-open-questions) so far: **OQ-2** → SPEC-016 REL-002 (MSRV tracks `vectorizer-core`) · **OQ-3** → SPEC-012 WASM-011 (full-image OPFS buffering) · **OQ-4** → SPEC-014 header (separate `veclite-cli` crate) · **OQ-5** → SPEC-002 §3.1 (MessagePack everywhere). **OQ-1** (reference benchmark hardware) remains open until T1.6.
+- Resolved [PRD open questions](../PRD.md#12-open-questions) so far: **OQ-2** → SPEC-016 REL-002 (own MSRV 1.85; ADR-0001 removed the vectorizer-core dependency) · **OQ-3** → SPEC-012 WASM-011 (full-image OPFS buffering) · **OQ-4** → SPEC-014 header (separate `veclite-cli` crate) · **OQ-5** → SPEC-002 §3.1 (MessagePack everywhere). **OQ-1** (reference benchmark hardware) remains open until T1.6.
+- **ADR-0001** (`.rulebook/decisions/`): VecLite has **zero dependency on Vectorizer crates** — needed code is vendored copy-on-need with provenance headers; parity is enforced by the conformance corpus, not a shared crate.
 
 ## Change control
 
