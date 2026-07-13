@@ -49,8 +49,22 @@ Versions 0.x are pre-release: the public API may change between minors until 1.0
   wasm32 use exact brute force. Builders hold no lock until `run()` (API-030);
   `limit = 0` → `InvalidArgument`, `limit` above the live count returns all
   live (API-031).
+- Benchmark + server-parity gate G1 (task `phase1d`, DAG T1.6/T1.7, SPEC-015 §4–5):
+  criterion benches (`benches/veclite_bench.rs`: search p50 ≈ 0.92 ms at
+  2k×512, index build, batch insert), a server-parity harness
+  (`tests/parity.rs`) that loads an identical corpus into VecLite and a pinned
+  `hivehub/vectorizer:3.5.0` container and asserts **top-10 overlap ≥ 0.99**
+  (measured 0.9920), a CI smoke-bench workflow with a ±20 % regression fence
+  plus nightly full bench, and the reference hardware profile in
+  [docs/benchmarks.md](docs/benchmarks.md). The harness is gated on
+  `VECLITE_PARITY_URL` (no server needed for a normal `cargo test`) and uses a
+  dependency-free HTTP client so no network crate enters the shipped build
+  (NFR-08).
 
 ### Changed
+- **PRD OQ-1 resolved** (phase1d): the reference hardware profile is pinned in
+  [docs/benchmarks.md](docs/benchmarks.md) — a desktop AMD Ryzen 9 7950X3D class
+  and an AWS `c7a.4xlarge` cloud class.
 - **ADR-0001**: VecLite has zero dependency on Vectorizer crates. The originally
   planned `vectorizer-core` dependency (unpublished; mandatory network deps conflict
   with NFR-08) is replaced by a vendoring policy — needed code is copied into this

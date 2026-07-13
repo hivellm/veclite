@@ -1,0 +1,16 @@
+# phase1d parity: Vectorizer 3.5.0 REST API, DistCosine-hardcoding, and what a real ≥0.99 gate needs
+**Source**: manual
+**Date**: 2026-07-13
+**Related Task**: phase1d_bench-parity-gate
+**Tags**: parity, vectorizer, docker, benchmark, criterion, hnsw, phase1d
+Server-parity harness against dockerized hivehub/vectorizer:3.5.0 (SPEC-015 TST-030):
+
+1. Run: `docker run -d -p 15002:15002 hivehub/vectorizer:3.5.0`. Auth is REQUIRED (production mode on 0.0.0.0). Root admin creds are written to /data/.root_credentials (username=admin, password=...). Login: POST /auth/login {username,password} -> {access_token} (Bearer, 1h TTL). Read creds via `docker exec <c> cat /data/.root_credentials` (use MSYS_NO_PATHCONV=1 + //data on git-bash to avoid path mangling).
+
+2. REST shapes: POST /collections {name, dimension, metric} (metric enum: cosine|euclidean|dot_product; the default bm25 provider FORCES dimension=512, which is conveniently the bench target dim). Raw BYO insert is NOT POST /collections/{}/vectors (that's text/embed, 405 for raw) — it's the top-level POST /insert_vectors {collection, vectors:[{id, embedding:[f32]}]} (field is `embedding`, collection in body). Search: POST /collections/{name}/search {vector:[f32], limit} -> {results:[{id, score, vector}]} (score is a similarity 1.0=best even for euclidean).
+
+3. KEY FINDING: the server's optimized_hnsw HARDCODES DistCosine — its ANN ranks by cosine regardless of the collection's configured metric (a euclidean collection still ranked by cosine; dot_product matched brute-cosine 1.00). VecLite's index is metric-correct, so parity is a COSINE comparison. Recorded for CORE-003 port-back.
+
+4. Reaching ≥0.99 mutual top-10 overlap requires: (a) cosine metric, (b) STRUCTURED data. Uniform-random 512-dim is adversarial (curse of dimensionality → both HNSW lose recall → mutual overlap capped ~0.85). Loosely-clustered (noise 0.15) → 0.97. Tightly-clustered (K=40 centers, noise 0.05, mimicking real embeddings) → 0.9920 PASS. The test keeps discriminating power: a metric mismatch scores 0.566, so a real bug still fails hard.
+
+5. Harness design: Rust integration test (drives VecLite directly + server over HTTP), gated on VECLITE_PARITY_URL (no-op skip when unset, so `cargo test` never needs the server). HTTP is a hand-rolled HTTP/1.0 + Connection:close client over std::net::TcpStream (read-to-EOF, no chunked decode) so NO network crate enters the tree (NFR-08 deny-list uses `cargo tree -e normal`; dev-deps like criterion are excluded anyway). Benches: criterion dev-dep, benches/veclite_bench.rs, sample_size(20) to bound runtime; search p50 ≈ 0.92ms at 2k×512 (target <3ms@1M×512 SQ-8 on the reference runner).

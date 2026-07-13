@@ -1,0 +1,62 @@
+name: VecLite Bench
+
+# Scaled-down smoke bench on every PR with a ±20 % regression fence; the full
+# benches run nightly on the reference runner (SPEC-015 TST-041). The parity
+# harness (TST-030) is not in CI here — it needs a live Vectorizer server and
+# runs via the documented command in docs/benchmarks.md.
+
+on:
+  pull_request:
+    branches: ['**']
+  schedule:
+    - cron: '0 6 * * *' # nightly full-size bench
+
+jobs:
+  smoke-bench:
+    name: Smoke bench (±20% fence)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: bench
+
+      - name: Run benches (bencher format)
+        run: cargo bench -p veclite -- --output-format bencher | tee bench-output.txt
+
+      # Persist the previous run's numbers across CI runs so the fence has a
+      # baseline to compare against.
+      - name: Restore bench baseline
+        uses: actions/cache@v4
+        with:
+          path: ./bench-cache
+          key: veclite-bench-baseline
+
+      - name: Compare against baseline (fail on >20% regression)
+        uses: benchmark-action/github-action-benchmark@v1
+        with:
+          tool: cargo
+          output-file-path: bench-output.txt
+          external-data-json-path: ./bench-cache/benchmark-data.json
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          alert-threshold: '120%'
+          fail-on-alert: true
+          comment-on-alert: true
+          auto-push: false
+
+  full-bench:
+    name: Full bench (nightly)
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: bench-full
+      - name: Run full benches
+        run: cargo bench -p veclite

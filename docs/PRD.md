@@ -234,7 +234,7 @@ Tracked here until resolved; resolution updates the relevant SPEC.
 
 | # | Question | Owner decision needed by |
 |---|---|---|
-| OQ-1 | Exact reference hardware profile for NFR-01/02/03 benchmarks (pin a cloud instance type + a laptop class). | Phase 1 exit (T1.6) |
+| OQ-1 | ~~Exact reference hardware profile for NFR-01/02/03 benchmarks~~ — resolved (T1.6): pinned in [benchmarks.md](benchmarks.md) — desktop AMD Ryzen 9 7950X3D / 128 GB / Win10, cloud AWS `c7a.4xlarge`. | Resolved (phase1d) |
 | OQ-2 | ~~MSRV policy~~ — resolved: VecLite pins its own MSRV (1.85, edition-2024 floor) since ADR-0001 removed the `vectorizer-core` dependency | Resolved (phase0a) |
 | OQ-3 | WASM OPFS shim design: sync-core-over-async-storage needs a buffering strategy — full-file buffer vs block cache. | Phase 5 start (T5.3) |
 | OQ-4 | CLI distribution: separate `veclite-cli` crate/binary or feature of the core crate? | Phase 5 start (T5.5) |
