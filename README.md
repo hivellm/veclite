@@ -19,7 +19,7 @@ No server. No ports. No configuration. One file.
 
 ## Status
 
-🚧 **Phase 0 — bootstrap.** The workspace, foundation types (`VecLiteError`, options with server-parity defaults), and CI gates exist; the engine lands phase by phase per the [DAG](docs/DAG.md).
+🚧 **Phase 1 — in-memory engine.** On top of the phase 0 foundation (`VecLiteError`, options with server-parity defaults, CI gates), an ephemeral `VecLite::memory()` database now runs the collection registry (create/get/delete/rename) and vector CRUD (upsert/get/delete, single and batch) with dimension and NaN/Inf guards and cosine ingest normalization. Persistence, HNSW indexing, and search land in later phases per the [DAG](docs/DAG.md).
 
 ### Development
 

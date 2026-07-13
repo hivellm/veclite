@@ -12,6 +12,10 @@ repository = "https://github.com/hivellm/veclite"
 
 [workspace.dependencies]
 thiserror = "2.0"
+dashmap = "6.1"
+parking_lot = "0.12"
+serde_json = "1.0"
+proptest = "1.6"
 
 [workspace.lints.clippy]
 unwrap_used = "deny"

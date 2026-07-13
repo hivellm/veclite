@@ -1,0 +1,6 @@
+# Workspace denies unwrap/expect everywhere including tests — no clippy.toml exemption
+**Source**: manual
+**Date**: 2026-07-13
+**Related Task**: phase1a_collection-crud-memory
+**Tags**: rust, clippy, testing, lints, proptest, phase1a
+VecLite's [workspace.lints.clippy] sets unwrap_used=deny and expect_used=deny with NO clippy.toml, so allow-unwrap-in-tests / allow-expect-in-tests default to false. These lints therefore fire in #[cfg(test)] and integration-test code too, and expect_used covers BOTH Option/Result::expect AND Result::expect_err. The committed foundation tests (error.rs, options.rs) follow the intended convention: use .unwrap_or_else(|e| panic!("{e}")) for Result, .unwrap_or_else(|| panic!("msg")) for Option, and `let Err(err) = expr else { panic!("must fail") };` to bind an expected error. Do NOT add a clippy.toml test exemption to work around this — the deny-everywhere policy is deliberate; match the existing pattern instead. In proptest bodies, prefer prop_assert!/prop_assert_eq! for the actual assertions and reserve the unwrap_or_else(panic!) form only for engine calls that cannot fail given valid inputs. Diagnostic-first: run `cargo clippy --all-targets` before `cargo test`; it catches these where `cargo check` does not.

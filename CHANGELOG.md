@@ -19,6 +19,15 @@ Versions 0.x are pre-release: the public API may change between minors until 1.0
   and MSRV build job (`veclite-checks.yml`), alongside the existing
   3-OS test and lint workflows.
 - `.editorconfig` (4-space indentation) and Rust entries in `.gitignore`.
+- In-memory engine `VecLite::memory()`: collection registry over `DashMap`
+  (`create_collection`/`collection`/`delete_collection`/`rename_collection`/
+  `list_collections` with `AlreadyExists`/`CollectionNotFound` semantics and
+  stale-handle guards) and vector CRUD (`upsert`/`upsert_batch`/`get`/`delete`/
+  `delete_batch`/`len`) with dimension and NaN/Inf rejection and cosine ingest
+  normalization; `Send + Sync + Clone` handles (task `phase1a`, DAG T1.1/T1.5,
+  SPEC-001 §3–4, SPEC-004 §1/§4, CORE-010..014/020..022/050/051).
+- `Point`, `SparseVector`, and `Hit` data-model types with id and
+  collection-name validation (CORE-010/011).
 
 ### Changed
 - **ADR-0001**: VecLite has zero dependency on Vectorizer crates. The originally
