@@ -22,6 +22,14 @@ hnsw_rs = "=0.3.4"
 rayon = "1.10"
 proptest = "1.6"
 criterion = { version = "0.5", default-features = false }
+# Storage layer (SPEC-002, native-only — wasm has no file storage, CORE-004).
+rmp-serde = "1.3"
+lz4_flex = "0.13"
+zstd = "0.13"
+crc32fast = "1.4"
+roaring = "0.10"
+xxhash-rust = { version = "0.8", features = ["xxh64"] }
+uuid = { version = "1", features = ["v4"] }
 
 [workspace.lints.clippy]
 unwrap_used = "deny"

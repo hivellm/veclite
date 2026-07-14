@@ -33,6 +33,16 @@ serde_json.workspace = true
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 hnsw_rs = { workspace = true }
 rayon = { workspace = true }
+# Storage layer (SPEC-002). zstd links a C library and none of these are
+# needed on wasm32 (no file storage there — CORE-004), so the whole set is
+# native-only alongside the storage module gate in lib.rs.
+rmp-serde = { workspace = true }
+lz4_flex = { workspace = true }
+zstd = { workspace = true }
+crc32fast = { workspace = true }
+roaring = { workspace = true }
+xxhash-rust = { workspace = true }
+uuid = { workspace = true }
 
 [dev-dependencies]
 proptest.workspace = true

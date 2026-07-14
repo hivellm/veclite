@@ -43,6 +43,13 @@ pub(crate) mod quantization;
 // full trait is kept complete for the future ISA backends that override it.
 #[allow(dead_code)]
 pub(crate) mod simd;
+// On-disk `.veclite` format v1 (SPEC-002). Native-only: wasm32 has no file
+// storage (CORE-004), and zstd links a C library. Consumed by the persistent
+// database open/checkpoint path (phase2b+); the codec + commit protocol land
+// here first.
+#[cfg(not(target_arch = "wasm32"))]
+#[allow(dead_code)]
+pub(crate) mod storage;
 // Retrieval-quality gates (recall, SQ-8 recall, tombstone). Native-only:
 // they drive the HNSW index via the crate-internal `search_internal`.
 #[cfg(all(test, not(target_arch = "wasm32")))]
