@@ -1,0 +1,23 @@
+[package]
+name = "veclite-ffi"
+description = "C ABI for VecLite (SPEC-008)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "veclite_ffi"
+# cdylib/staticlib are the shipped artifacts (FFI-030); `lib` (rlib) lets the
+# crate's own tests link and call the extern functions.
+crate-type = ["cdylib", "staticlib", "lib"]
+
+[dependencies]
+veclite = { path = "../veclite" }
+serde = { workspace = true }
+serde_json.workspace = true
+rmp-serde.workspace = true
+
+[lints]
+workspace = true

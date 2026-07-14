@@ -90,6 +90,31 @@ pub enum VecLiteError {
     Io(#[from] std::io::Error),
 }
 
+impl VecLiteError {
+    /// The stable C-ABI error code for this variant (SPEC-008 §3). The match is
+    /// exhaustive, so adding a new `VecLiteError` variant without assigning it a
+    /// code fails the build (SPEC-008 acceptance 3). Codes are never renumbered
+    /// within a major version. `0` means success and is never returned here.
+    #[must_use]
+    pub fn ffi_code(&self) -> i32 {
+        match self {
+            VecLiteError::CollectionNotFound(_) => -1,
+            VecLiteError::VectorNotFound(_) => -2,
+            VecLiteError::AlreadyExists(_) => -3,
+            VecLiteError::DimensionMismatch { .. } => -4,
+            VecLiteError::Locked => -5,
+            VecLiteError::Corrupt(_) => -6,
+            VecLiteError::UnsupportedFormatVersion { .. } => -7,
+            VecLiteError::UnsupportedProvider { .. } => -8,
+            VecLiteError::ReadOnly => -9,
+            VecLiteError::InvalidArgument(_) => -10,
+            VecLiteError::Io(_) => -11,
+            VecLiteError::WalPending => -12,
+            VecLiteError::Closed => -13,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
