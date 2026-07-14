@@ -145,6 +145,21 @@ Versions 0.x are pre-release: the public API may change between minors until 1.0
   rejected. Covered by a conformance corpus, index/scan-equivalence, pre-filter
   vs brute-force, reserved-key, and unsupported-feature tests (`tests/filters.rs`,
   gate G3 criteria 1–5).
+- Text embeddings & auto-embed collections (task `phase3b`, DAG T3.5/T3.6,
+  SPEC-005). An `Embedder` trait and four pure-Rust sparse providers vendored
+  from the server (ADR-0001) with identical scoring math for parity (EMB-002):
+  `bm25` (default; `k1=1.5`, `b=0.75`), `tfidf`, `bow`, and `char_ngram`
+  (typo-tolerant trigrams); `veclite::build_provider(name, dim)` fails with
+  `UnsupportedProvider` on an unknown name (EMB-021). `CollectionOptions::
+  auto_embed(provider, dim)` collections accept `upsert_text`/`search_text`:
+  the text is embedded and stored under the reserved `_text` key (EMB-022), and
+  the vocabulary is a function of the live `_text` corpus — recomputed lazily
+  before search and rebuilt from `_text` on reopen (like the HNSW graph), so
+  `search_text` is reopen-identical (EMB-020) with no VOCAB segment yet. Text
+  ops on a BYO collection and reserved user keys are rejected. A deterministic,
+  UTF-8-safe `veclite::chunk::Chunker` (word/sentence boundaries, overlap;
+  EMB-050/051) rounds it out. Covered by provider unit tests, a chunker UTF-8
+  fuzz, and `tests/auto_embed.rs`.
 
 ### Fixed
 - **Small-collection search recall** (phase3a): searches now return exact,

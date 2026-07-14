@@ -1,0 +1,17 @@
+{
+  "id": "2026-07-14T19-12-50-phase3b-embeddings-vocabulary-f-live-text-rebuilt-on-open-the-full-refit-model-sidesteps-vocab-persistence",
+  "title": "phase3b embeddings: vocabulary = f(live _text), rebuilt on open; the full-refit model sidesteps VOCAB persistence",
+  "content": "phase3b delivered the Embedder trait, 4 sparse providers (bm25/tfidf/bow/char_ngram vendored from the server), the auto-embed API, and the chunker. Key design choices:\n\n1. Reopen determinism (EMB-020) WITHOUT a VOCAB segment: treat the BM25/tfidf/bow/char_ngram vocabulary as a pure function of the live `_text` corpus. upsert_text stores the original text under the reserved `_text` key (EMB-022) and marks text_dirty; the next search runs refit_if_dirty (fit the embedder on all live `_text`, then re-embed every document so all stored vectors share one vocab). On open, CollectionInner starts text_dirty=true, so the first search rebuilds the vocab from the loaded `_text` — exactly like the HNSW graph rebuild. This is EXACT and reopen-identical with zero persistence code. The tradeoff: it re-embeds all docs on each refit (tombstoning old slots), so a loop of single upsert_text is O(n^2) writes; the incremental-approximate model + a persisted VOCAB segment (the server's approach, EMB-030) is the speed optimization, deferred to phase3f.\n\n2. Cosine + zero vectors: a fresh/empty vocab or fully-OOV text embeds to a zero vector, which cosine collections reject. embed_nonzero() substitutes a deterministic non-zero placeholder ([1,0,..]) until refit replaces it with the real (non-zero, since the doc's own terms are in the corpus) embedding. So the text path never feeds a zero vector to a cosine collection.\n\n3. Reserved `_text` plumbing: prepare_inner(point, allow_reserved) — the public upsert rejects all `_`-prefixed payload keys (FLT-002), but the internal text path and WAL replay pass allow_reserved=true so the system `_text` survives. upsert_text logs a normal UpsertBatch WAL entry (vector + `_text` payload), so replay reconstructs it. create_collection validates the provider (build_provider) BEFORE journaling CreateColl, so an unknown provider can't poison the WAL (fail-fast EMB-021).\n\n4. Vendoring: the providers' scoring math is copied byte-identical for parity; the server's monitoring counters, rate-limited warns, and hash-placeholder fallbacks (EMB-001) are NOT ported — OOV text yields the honest zero vector. All embedding code is all-targets (pure Rust, serde_json state) — text search works on wasm32.",
+  "source": "manual",
+  "relatedTask": "phase3b_embedding-providers",
+  "tags": [
+    "phase3b",
+    "embeddings",
+    "bm25",
+    "auto-embed",
+    "vocabulary",
+    "chunker",
+    "veclite"
+  ],
+  "createdAt": "2026-07-14T19:12:50.382Z"
+}

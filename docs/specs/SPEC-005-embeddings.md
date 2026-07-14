@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Draft |
+| **Status** | Implemented (phase3b): Embedder trait, the four default sparse providers (bm25/tfidf/bow/char_ngram), auto-embed `upsert_text`/`search_text`, the chunker, and reopen-deterministic text search (vocabulary rebuilt from `_text`). Incremental vocabulary + VOCAB persistence (EMB-030), `register_embedder` (EMB-011), the `svd`/`onnx` providers, and the server parity corpus are tracked in `phase3f_embedding-svd-onnx-vocab-persistence`. |
 | **Phase / tasks** | Phase 3, 5 · T3.5, T3.6, T3.8, T3.9, T5.4 ([DAG](../DAG.md)) |
 | **PRD requirements** | FR-36, FR-40–47 |
 | **Planning source** | [05-embeddings.md](../vectorizer-lite/05-embeddings.md) |

@@ -10,6 +10,9 @@
 //! current build ships the in-memory engine: the collection registry and
 //! vector CRUD over an ephemeral [`VecLite::memory`] database (phase1a).
 
+// Deterministic, UTF-8-safe text chunker (SPEC-005 §7). Pure utility, all
+// targets — bindings expose the identical splitter.
+pub mod chunk;
 pub mod collection;
 pub mod database;
 // Text-embedding providers (SPEC-005): pure-Rust sparse embedders (bm25 default)
