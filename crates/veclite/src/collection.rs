@@ -240,6 +240,30 @@ pub struct Collection {
     pub(crate) inner: Arc<CollectionInner>,
 }
 
+/// One page of a [`scroll`](Collection::scroll) (SPEC-004 API-022).
+#[derive(Clone, Debug)]
+pub struct ScrollPage {
+    /// The live points on this page, in stable slot order.
+    pub points: Vec<Point>,
+    /// Cursor to pass as `after` for the next page; `None` when exhausted.
+    pub next_cursor: Option<String>,
+}
+
+/// Collection statistics (SPEC-004 FR-08/13).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CollectionStats {
+    /// Current collection name.
+    pub name: String,
+    /// Configured vector dimension.
+    pub dimension: usize,
+    /// Number of live vectors.
+    pub len: usize,
+    /// Number of tombstoned (dead) slots awaiting vacuum.
+    pub tombstones: usize,
+    /// Whether this is an auto-embed (text) collection.
+    pub auto_embed: bool,
+}
+
 /// A point validated and normalized, ready to apply under the write lock.
 struct PreparedPoint {
     id: String,
@@ -686,6 +710,99 @@ impl Collection {
     /// (SPEC-007 §2–3). The builder holds no lock until `run`.
     pub fn hybrid_query(&self) -> crate::hybrid::HybridQuery<'_> {
         crate::hybrid::HybridQuery::new(self)
+    }
+
+    /// Cursor-based pagination over live points in stable slot order (SPEC-004
+    /// API-022): pass `after = None` for the first page and
+    /// `after = Some(&page.next_cursor)` for each subsequent page. Every live
+    /// vector is covered exactly once. An optional `filter` restricts the page
+    /// (SPEC-007 FLT-032). `limit` must be greater than 0.
+    pub fn scroll(
+        &self,
+        after: Option<&str>,
+        limit: usize,
+        filter: Option<&Filter>,
+    ) -> Result<ScrollPage> {
+        self.guard()?;
+        if limit == 0 {
+            return Err(VecLiteError::InvalidArgument(
+                "limit must be greater than 0".to_owned(),
+            ));
+        }
+        if let Some(f) = filter {
+            f.validate()?;
+        }
+        let data = self.inner.data.read();
+        let dim = self.inner.config.dimension;
+        // Resume just after the cursor's slot: prefer the live slot, else the
+        // last slot that carried the id (it was live when returned).
+        let start = match after {
+            Some(id) => data
+                .id_to_slot
+                .get(id)
+                .copied()
+                .or_else(|| data.ids.iter().rposition(|x| x == id))
+                .map_or(0, |s| s + 1),
+            None => 0,
+        };
+        let mut points = Vec::new();
+        let mut next_cursor = None;
+        for slot in start..data.ids.len() {
+            if data.id_to_slot.get(&data.ids[slot]) != Some(&slot) {
+                continue; // tombstoned or replaced
+            }
+            if let Some(f) = filter {
+                if !f.matches(data.payloads[slot].as_ref()) {
+                    continue;
+                }
+            }
+            if points.len() == limit {
+                // There is at least one more live match → hand back a cursor.
+                next_cursor = points.last().map(|p: &Point| p.id.clone());
+                break;
+            }
+            points.push(Point {
+                id: data.ids[slot].clone(),
+                vector: data.vectors[slot * dim..(slot + 1) * dim].to_vec(),
+                sparse: data.sparses[slot].clone(),
+                payload: data.payloads[slot].clone(),
+            });
+        }
+        Ok(ScrollPage {
+            points,
+            next_cursor,
+        })
+    }
+
+    /// Run many k-NN queries, in parallel where available (SPEC-004 FR-35). Each
+    /// result is independent; a failed query yields its own `Err`.
+    #[must_use]
+    pub fn search_batch(&self, queries: &[Vec<f32>], limit: usize) -> Vec<Result<Vec<Hit>>> {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            use rayon::prelude::*;
+            queries.par_iter().map(|q| self.search(q, limit)).collect()
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            queries.iter().map(|q| self.search(q, limit)).collect()
+        }
+    }
+
+    /// A snapshot of collection statistics (SPEC-004 FR-08/13).
+    #[must_use]
+    pub fn stats(&self) -> CollectionStats {
+        let (len, tombstones) = {
+            let data = self.inner.data.read();
+            (data.id_to_slot.len(), data.tombstones.len())
+        };
+        CollectionStats {
+            name: self.inner.name.read().clone(),
+            dimension: self.inner.config.dimension,
+            len,
+            tombstones,
+            auto_embed: self.inner.embedder.is_some(),
+        }
     }
 
     /// Ranked `(slot, score)` for the sparse lane, filtered and truncated to

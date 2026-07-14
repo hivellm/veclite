@@ -71,7 +71,7 @@ pub(crate) mod storage;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod recall;
 
-pub use collection::Collection;
+pub use collection::{Collection, CollectionStats, ScrollPage};
 pub use database::VecLite;
 pub use embedding::{DEFAULT_PROVIDER, Embedder, available_providers, build_provider};
 pub use error::{Result, VecLiteError};
