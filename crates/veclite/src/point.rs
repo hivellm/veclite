@@ -1,6 +1,8 @@
 //! Data model: points, sparse vectors, search hits, and identifier
 //! validation (SPEC-001 §3).
 
+use serde::{Deserialize, Serialize};
+
 use crate::error::{Result, VecLiteError};
 
 /// Maximum vector id length in bytes (SPEC-002 §8 limits).
@@ -17,7 +19,7 @@ pub(crate) const MAX_COLLECTION_NAME_BYTES: usize = 255;
 ///     .payload(serde_json::json!({ "lang": "en" }));
 /// assert_eq!(p.id, "id-1");
 /// ```
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Point {
     /// UTF-8 id, 1–512 bytes (CORE-010).
     pub id: String,
@@ -55,7 +57,7 @@ impl Point {
 
 /// Sparse vector: parallel `indices`/`values` arrays (SPEC-007 HYB-001;
 /// validation of the invariants lands with hybrid search in phase3c).
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SparseVector {
     /// Term indices, strictly increasing.
     pub indices: Vec<u32>,

@@ -49,6 +49,15 @@ impl IdDir {
         self.buckets.iter().map(Vec::len).sum()
     }
 
+    /// Iterate all `(id, slot)` mappings (unordered) — used to rebuild the
+    /// slot→id direction when loading a collection.
+    pub(crate) fn entries(&self) -> impl Iterator<Item = (&str, u64)> {
+        self.buckets
+            .iter()
+            .flatten()
+            .map(|(id, slot)| (id.as_str(), *slot))
+    }
+
     /// Layout: `bucket_count u32`, then per bucket `entry_count u32` and each
     /// entry `id_len u16 · id bytes · slot u64`.
     #[allow(clippy::cast_possible_truncation)] // ids <=512 bytes (CORE-010); counts fit by construction.

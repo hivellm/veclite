@@ -19,6 +19,11 @@ pub mod error;
 #[allow(dead_code)]
 pub(crate) mod index;
 pub mod options;
+// Persistence orchestration (open/checkpoint/recovery). Native-only, on top of
+// the storage codec (ADR-0002/CORE-004). Consumed by VecLite::open (phase2b+).
+#[cfg(not(target_arch = "wasm32"))]
+#[allow(dead_code)]
+pub(crate) mod persist;
 pub mod point;
 pub mod query;
 // Vendored quantization encodings (SQ-8 default, scalar 4/2/1-bit, binary;
