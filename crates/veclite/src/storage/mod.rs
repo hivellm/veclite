@@ -18,6 +18,7 @@ pub(crate) mod pager;
 pub(crate) mod segment;
 pub(crate) mod toc;
 pub(crate) mod vectors;
+pub(crate) mod wal;
 
 /// Little-endian readers over a byte slice, returning `Corrupt(ctx)` on a short
 /// buffer instead of panicking (STG-010/021). Offsets are caller-checked to be
