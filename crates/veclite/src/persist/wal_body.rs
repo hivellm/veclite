@@ -34,6 +34,14 @@ pub(crate) struct Rename {
     pub(crate) new_name: String,
 }
 
+/// `ALIAS` body: create (`true`) or delete (`false`) the `alias` pointing at the
+/// collection in the entry's `coll_id` (SPEC-004 §2 / SPEC-005 CORE-011).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct Alias {
+    pub(crate) create: bool,
+    pub(crate) alias: String,
+}
+
 // UPSERT_BATCH body = `Vec<Point>`; DELETE_BATCH body = `Vec<String>`;
 // DROP_COLL body = empty. Those need no dedicated struct — encode/decode the
 // value directly.

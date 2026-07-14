@@ -33,6 +33,9 @@ const MAX_DIMENSION: usize = 65_536;
 
 struct DatabaseInner {
     collections: DashMap<String, Arc<CollectionInner>>,
+    /// Alias name → target collection name (SPEC-004 §2, CORE-011). Resolved
+    /// transparently in `collection()`.
+    aliases: DashMap<String, String>,
     /// Serializes create/delete/rename (registry-level write, CORE-051).
     registry: Mutex<()>,
     /// Next collection id to assign (stamped into WAL entries + CONFIG).
@@ -80,6 +83,7 @@ fn install_collection(
     persistence: &Arc<Persistence>,
     name: String,
     coll_id: u32,
+    aliases: Vec<String>,
     loaded: seal::LoadedCollection,
 ) -> Result<()> {
     let sink: Arc<dyn WalSink> = Arc::clone(persistence) as Arc<dyn WalSink>;
@@ -90,6 +94,11 @@ fn install_collection(
         Some(sink),
         loaded.points.len(),
     )?);
+    // Restore the collection's aliases and register them for resolution.
+    *cinner.aliases.write() = aliases.clone();
+    for alias in aliases {
+        inner.aliases.insert(alias, name.clone());
+    }
     let handle = Collection {
         inner: Arc::clone(&cinner),
     };
@@ -129,6 +138,7 @@ fn apply_wal_entry(
                 persistence,
                 body.name,
                 entry.coll_id,
+                body.aliases,
                 seal::LoadedCollection {
                     options,
                     points: Vec::new(),
@@ -173,7 +183,24 @@ fn apply_wal_entry(
                 c.replay_delete(&ids);
             }
         }
-        WalOp::Alias | WalOp::VocabUpdate | WalOp::PidxDeclare => {}
+        WalOp::Alias => {
+            let body: wal_body::Alias = wal_body::decode(&entry.body, "alias")?;
+            let target = inner
+                .collections
+                .iter()
+                .find(|e| e.value().coll_id == entry.coll_id)
+                .map(|e| (e.key().clone(), Arc::clone(e.value())));
+            if let Some((name, ci)) = target {
+                if body.create {
+                    inner.aliases.insert(body.alias.clone(), name);
+                    ci.aliases.write().push(body.alias);
+                } else {
+                    inner.aliases.remove(&body.alias);
+                    ci.aliases.write().retain(|a| a != &body.alias);
+                }
+            }
+        }
+        WalOp::VocabUpdate | WalOp::PidxDeclare => {}
     }
     Ok(())
 }
@@ -194,13 +221,9 @@ fn sealed_live_collections(inner: &Arc<DatabaseInner>) -> Result<Vec<CheckpointC
         };
         let live = handle.live_points();
         let name = ci.name.read().clone();
+        let aliases = ci.aliases.read().clone();
         colls.push(seal::seal(
-            ci.coll_id,
-            name,
-            Vec::new(),
-            &ci.config,
-            &live,
-            epoch,
+            ci.coll_id, name, aliases, &ci.config, &live, epoch,
         )?);
     }
     Ok(colls)
@@ -295,6 +318,7 @@ impl VecLite {
         VecLite {
             inner: Arc::new(DatabaseInner {
                 collections: DashMap::new(),
+                aliases: DashMap::new(),
                 registry: Mutex::new(()),
                 next_coll_id: AtomicU32::new(1),
                 #[cfg(not(target_arch = "wasm32"))]
@@ -327,14 +351,15 @@ impl VecLite {
         let persistence = Arc::new(persistence);
         let inner = Arc::new(DatabaseInner {
             collections: DashMap::new(),
+            aliases: DashMap::new(),
             registry: Mutex::new(()),
             next_coll_id: AtomicU32::new(1),
             persistence: Some(Arc::clone(&persistence)),
         });
 
         let mut max_coll_id = 0u32;
-        for (name, coll_id, loaded) in state.collections {
-            install_collection(&inner, &persistence, name, coll_id, loaded)?;
+        for (name, coll_id, aliases, loaded) in state.collections {
+            install_collection(&inner, &persistence, name, coll_id, aliases, loaded)?;
             max_coll_id = max_coll_id.max(coll_id);
         }
         for entry in state.replay_entries {
@@ -440,14 +465,95 @@ impl VecLite {
         Ok(Collection { inner })
     }
 
-    /// Handle to an existing collection (lock-free lookup, CORE-051).
+    /// Handle to a collection by name or alias (lock-free lookup, CORE-051). An
+    /// alias resolves transparently to its target (SPEC-004 §2).
     pub fn collection(&self, name: &str) -> Result<Collection> {
-        match self.inner.collections.get(name) {
-            Some(entry) => Ok(Collection {
+        if let Some(entry) = self.inner.collections.get(name) {
+            return Ok(Collection {
                 inner: Arc::clone(entry.value()),
-            }),
-            None => Err(VecLiteError::CollectionNotFound(name.to_owned())),
+            });
         }
+        if let Some(alias) = self.inner.aliases.get(name) {
+            if let Some(entry) = self.inner.collections.get(alias.value()) {
+                return Ok(Collection {
+                    inner: Arc::clone(entry.value()),
+                });
+            }
+        }
+        Err(VecLiteError::CollectionNotFound(name.to_owned()))
+    }
+
+    /// Create an alias that resolves to `target` in `collection()` lookups
+    /// (SPEC-004 §2, CORE-011). `AlreadyExists` if the name is taken by a
+    /// collection or another alias; `CollectionNotFound` if `target` is missing.
+    /// Re-point by deleting the alias first.
+    pub fn create_alias(&self, alias: &str, target: &str) -> Result<()> {
+        validate_collection_name(alias)?;
+        let _guard = self.inner.registry.lock();
+        if self.inner.collections.contains_key(alias) || self.inner.aliases.contains_key(alias) {
+            return Err(VecLiteError::AlreadyExists(alias.to_owned()));
+        }
+        let coll_id = self
+            .inner
+            .collections
+            .get(target)
+            .map(|e| e.coll_id)
+            .ok_or_else(|| VecLiteError::CollectionNotFound(target.to_owned()))?;
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(p) = &self.inner.persistence {
+            let body = wal_body::encode(&wal_body::Alias {
+                create: true,
+                alias: alias.to_owned(),
+            })?;
+            p.append(coll_id, WalOp::Alias, body)?;
+        }
+        #[cfg(target_arch = "wasm32")]
+        let _ = coll_id;
+        self.inner
+            .aliases
+            .insert(alias.to_owned(), target.to_owned());
+        if let Some(ci) = self.inner.collections.get(target) {
+            ci.aliases.write().push(alias.to_owned());
+        }
+        Ok(())
+    }
+
+    /// Delete an alias (SPEC-004 §2). `CollectionNotFound` if it does not exist.
+    pub fn delete_alias(&self, alias: &str) -> Result<()> {
+        let _guard = self.inner.registry.lock();
+        let target = self
+            .inner
+            .aliases
+            .get(alias)
+            .map(|e| e.value().clone())
+            .ok_or_else(|| VecLiteError::CollectionNotFound(alias.to_owned()))?;
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(p) = &self.inner.persistence {
+            if let Some(coll_id) = self.inner.collections.get(&target).map(|e| e.coll_id) {
+                let body = wal_body::encode(&wal_body::Alias {
+                    create: false,
+                    alias: alias.to_owned(),
+                })?;
+                p.append(coll_id, WalOp::Alias, body)?;
+            }
+        }
+        self.inner.aliases.remove(alias);
+        if let Some(ci) = self.inner.collections.get(&target) {
+            ci.aliases.write().retain(|a| a != alias);
+        }
+        Ok(())
+    }
+
+    /// All `(alias, target)` pairs, sorted by alias.
+    pub fn aliases(&self) -> Vec<(String, String)> {
+        let mut out: Vec<(String, String)> = self
+            .inner
+            .aliases
+            .iter()
+            .map(|e| (e.key().clone(), e.value().clone()))
+            .collect();
+        out.sort();
+        out
     }
 
     /// Drop a collection; open handles fail with `CollectionNotFound` from
@@ -468,6 +574,10 @@ impl VecLite {
         let _ = coll_id;
         if let Some((_, inner)) = self.inner.collections.remove(name) {
             inner.deleted.store(true, Ordering::Release);
+            // Drop any aliases that resolved to this collection.
+            for alias in inner.aliases.read().iter() {
+                self.inner.aliases.remove(alias);
+            }
         }
         Ok(())
     }
@@ -497,6 +607,10 @@ impl VecLite {
         let _ = coll_id;
         if let Some((_, inner)) = self.inner.collections.remove(from) {
             *inner.name.write() = to.to_owned();
+            // Re-point this collection's aliases at the new name.
+            for alias in inner.aliases.read().iter() {
+                self.inner.aliases.insert(alias.clone(), to.to_owned());
+            }
             self.inner.collections.insert(to.to_owned(), inner);
         }
         Ok(())

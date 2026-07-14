@@ -47,6 +47,9 @@ pub(crate) trait WalSink: Send + Sync {
 pub(crate) struct CollectionInner {
     /// Current name; renames update it in place (CORE-022).
     pub(crate) name: RwLock<String>,
+    /// Alias names that resolve to this collection (SPEC-004 §2). Sealed into
+    /// the TOC so blue-green swaps survive reopen.
+    pub(crate) aliases: RwLock<Vec<String>>,
     /// Immutable configuration (CORE-016).
     pub(crate) config: CollectionOptions,
     /// Registry id, stamped in WAL entries and CONFIG segments. 0 for memory
@@ -207,6 +210,7 @@ impl CollectionInner {
 
         Ok(CollectionInner {
             name: RwLock::new(name),
+            aliases: RwLock::new(Vec::new()),
             deleted: AtomicBool::new(false),
             coll_id,
             persistence,

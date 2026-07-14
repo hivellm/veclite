@@ -66,7 +66,8 @@ pub(crate) struct Persistence {
 /// Everything an `open` recovered: the checkpointed collections, the WAL
 /// entries to replay on top, and whether a torn/stale WAL tail was discarded.
 pub(crate) struct LoadedState {
-    pub(crate) collections: Vec<(String, u32, seal::LoadedCollection)>,
+    /// `(name, coll_id, aliases, loaded)` per collection recovered from the TOC.
+    pub(crate) collections: Vec<(String, u32, Vec<String>, seal::LoadedCollection)>,
     pub(crate) replay_entries: Vec<WalEntry>,
     pub(crate) discarded_tail: bool,
 }
@@ -99,7 +100,12 @@ impl Persistence {
             for seg_ref in &entry.live_segments {
                 segments.push(pager.read_segment(*seg_ref)?);
             }
-            collections.push((entry.name.clone(), entry.coll_id, seal::load(&segments)?));
+            collections.push((
+                entry.name.clone(),
+                entry.coll_id,
+                entry.aliases.clone(),
+                seal::load(&segments)?,
+            ));
         }
 
         let mut wal = Wal::open(&wal_path(path), uuid)?;
