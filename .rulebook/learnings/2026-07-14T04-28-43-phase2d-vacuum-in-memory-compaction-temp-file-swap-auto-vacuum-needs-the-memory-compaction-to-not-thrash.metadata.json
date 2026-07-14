@@ -1,0 +1,18 @@
+{
+  "id": "2026-07-14T04-28-43-phase2d-vacuum-in-memory-compaction-temp-file-swap-auto-vacuum-needs-the-memory-compaction-to-not-thrash",
+  "title": "phase2d: vacuum = in-memory compaction + temp-file swap; auto-vacuum needs the memory compaction to not thrash",
+  "content": "phase2d shipped snapshot(), vacuum(), and auto-vacuum. Key design facts discovered:\n\n1. Checkpoint already drops tombstones. `seal()` compacts live points to slots 0..n with tombstone_count=0, so a checkpoint writes a clean generation. File bloat is therefore NOT stale tombstones inside segments — it is the append-only accumulation of prior generations (STG-040 dead space). So vacuum's job is to drop dead generations, not to filter tombstones out of one segment.\n\n2. vacuum() has TWO halves and BOTH are needed:\n   (a) in-memory compaction — Collection::compact() rebuilds CollectionData with only live points at fresh slots 0..n, clears the tombstone set, and rebuilds the HNSW graph. Without this, in-memory tombstones persist.\n   (b) file rewrite — Persistence::vacuum() writes a fresh single-generation compacted file (same file_uuid) and swaps it in, dropping all prior generations so the file shrinks.\n\n3. Auto-vacuum (STG-072) keys on the in-memory tombstone ratio. If vacuum only did the file half (b), the in-memory tombstones would remain, the ratio would stay above threshold, and every subsequent checkpoint would re-trigger vacuum forever (thrash). Doing the memory half (a) drops the ratio to 0, so auto-vacuum fires once and stops. This is why in-memory compaction is mandatory, not optional.\n\n4. vacuum shrink uses a temp file + atomic close→rename→reopen (SQLite-VACUUM style), preserving file_uuid, instead of the spec's in-place append-then-truncate (STG-071). Rationale: crash-safe (a crash leaves either original+WAL or the compacted file, both valid standalone), and Windows-safe (close the handle before rename — Windows refuses to replace an open file; and there is no active mmap to unmap since ADR-0003 defers mmap). Preserving file_uuid is REQUIRED: a crash after rename but before wal.truncate() leaves the compacted file + old WAL, and replay must be accepted (uuid match) and is idempotent (WAL-042). The in-place unmap→truncate→remap variant only matters once mmap lands (phase2f).\n\nTest gotcha: with the default auto_vacuum_threshold (0.25), deleting >=25% of a collection makes the NEXT checkpoint auto-vacuum. A test that wants to measure an EXPLICIT vacuum() must open with auto_vacuum_threshold(0.0), or the earlier checkpoint already compacted (before==after file size). Also, Pager::checkpoint borrow: hoist self.tail/uuid/created into locals before borrowing self.file (now Option<File>) so the final self.tail write doesn't conflict with the file borrow (NLL ends it at the last file use).",
+  "source": "manual",
+  "relatedTask": "phase2d_snapshot-vacuum",
+  "tags": [
+    "phase2d",
+    "storage",
+    "vacuum",
+    "snapshot",
+    "auto-vacuum",
+    "compaction",
+    "windows",
+    "veclite"
+  ],
+  "createdAt": "2026-07-14T04:28:43.754Z"
+}

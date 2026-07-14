@@ -422,3 +422,174 @@ fn damaged_tail_opens_in_both_modes() {
     drop(db);
     cleanup(&path);
 }
+
+fn file_len(p: &Path) -> u64 {
+    std::fs::metadata(p).unwrap_or_else(|e| panic!("{e}")).len()
+}
+
+/// Task 2.2 / STG-071: after deletes, `vacuum()` shrinks the file in place, the
+/// pager stays live for further writes, and reopening preserves the compacted
+/// data.
+#[test]
+fn vacuum_shrinks_file_and_pager_survives() {
+    let path = db_path("vacuum");
+    cleanup(&path);
+    let mut rng = Rng::new(42);
+    {
+        // Disable auto-vacuum so the explicit vacuum() is what reclaims space
+        // (otherwise deleting half crosses the 0.25 default and the second
+        // checkpoint already compacts — see auto_vacuum_escalates_at_threshold).
+        let db = VecLite::open_with(
+            &path,
+            veclite::OpenOptions::new().auto_vacuum_threshold(0.0),
+        )
+        .unwrap_or_else(|e| panic!("{e}"));
+        let c = db
+            .create_collection("docs", opts(8))
+            .unwrap_or_else(|e| panic!("{e}"));
+        for i in 0..2000u32 {
+            let v: Vec<f32> = (0..8).map(|_| rng.next_f32()).collect();
+            c.upsert(Point::new(format!("k{i}"), v))
+                .unwrap_or_else(|e| panic!("{e}"));
+        }
+        db.checkpoint().unwrap_or_else(|e| panic!("{e}"));
+        // Delete half, then checkpoint again — the file grows (append-only).
+        for i in 0..1000u32 {
+            c.delete(&format!("k{i}")).unwrap_or_else(|e| panic!("{e}"));
+        }
+        db.checkpoint().unwrap_or_else(|e| panic!("{e}"));
+        let before = file_len(&path);
+
+        db.vacuum().unwrap_or_else(|e| panic!("{e}"));
+        let after = file_len(&path);
+        assert!(
+            after < before,
+            "vacuum should shrink the file: before={before}, after={after}"
+        );
+        assert_eq!(c.len(), 1000);
+
+        // The pager is still live after the in-place close→rename→reopen swap.
+        for i in 2000..2100u32 {
+            let v: Vec<f32> = (0..8).map(|_| rng.next_f32()).collect();
+            c.upsert(Point::new(format!("k{i}"), v))
+                .unwrap_or_else(|e| panic!("{e}"));
+        }
+        db.checkpoint().unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(c.len(), 1100);
+    }
+    // Reopen: compacted data intact, deletes still gone.
+    let db = VecLite::open(&path).unwrap_or_else(|e| panic!("{e}"));
+    let c = db.collection("docs").unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(c.len(), 1100);
+    assert!(c.get("k0").unwrap_or_else(|e| panic!("{e}")).is_none());
+    assert!(c.get("k1500").unwrap_or_else(|e| panic!("{e}")).is_some());
+    drop(db);
+    cleanup(&path);
+}
+
+/// Task 2.4 / STG-072: a checkpoint escalates to a vacuum once a collection's
+/// tombstone ratio crosses the configured threshold — shrinking the file a
+/// non-escalating checkpoint would leave bloated.
+#[test]
+fn auto_vacuum_escalates_at_threshold() {
+    let on = db_path("autovac-on"); // threshold 0.25, ratio 0.30 crosses it
+    let off = db_path("autovac-off"); // threshold 0.90, ratio 0.30 does not
+    cleanup(&on);
+    cleanup(&off);
+
+    // Populate 100, checkpoint, delete 30 (ratio 0.30), checkpoint; measure the
+    // file before the drop-time checkpoint muddies it. Returns the file size.
+    fn churn_and_measure(path: &Path, threshold: f32) -> u64 {
+        let db = VecLite::open_with(
+            path,
+            veclite::OpenOptions::new().auto_vacuum_threshold(threshold),
+        )
+        .unwrap_or_else(|e| panic!("{e}"));
+        let c = db
+            .create_collection("docs", opts(4))
+            .unwrap_or_else(|e| panic!("{e}"));
+        let mut rng = Rng::new(7);
+        for i in 0..100u32 {
+            let v: Vec<f32> = (0..4).map(|_| rng.next_f32()).collect();
+            c.upsert(Point::new(format!("k{i}"), v))
+                .unwrap_or_else(|e| panic!("{e}"));
+        }
+        db.checkpoint().unwrap_or_else(|e| panic!("{e}"));
+        for i in 0..30u32 {
+            c.delete(&format!("k{i}")).unwrap_or_else(|e| panic!("{e}"));
+        }
+        db.checkpoint().unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(c.len(), 70);
+        let len = file_len(path);
+        db.__test_simulate_crash(); // skip the drop checkpoint so `len` is final
+        len
+    }
+
+    let with_autovac = churn_and_measure(&on, 0.25);
+    let without = churn_and_measure(&off, 0.90);
+    assert!(
+        with_autovac < without,
+        "auto-vacuum should shrink the file: on={with_autovac}, off={without}"
+    );
+    cleanup(&on);
+    cleanup(&off);
+}
+
+/// Task 2.1 / STG-070: `snapshot` writes a standalone compacted copy that opens
+/// independently with a consistent point-in-time state, while a concurrent
+/// writer keeps upserting without failure.
+#[test]
+fn snapshot_is_standalone_and_consistent_under_writes() {
+    let path = db_path("snap-src");
+    let snap = db_path("snap-out");
+    cleanup(&path);
+    cleanup(&snap);
+
+    let db = VecLite::open(&path).unwrap_or_else(|e| panic!("{e}"));
+    let c = db
+        .create_collection("docs", opts(4))
+        .unwrap_or_else(|e| panic!("{e}"));
+    let mut rng = Rng::new(99);
+    for i in 0..500u32 {
+        let v: Vec<f32> = (0..4).map(|_| rng.next_f32()).collect();
+        c.upsert(Point::new(format!("k{i}"), v))
+            .unwrap_or_else(|e| panic!("{e}"));
+    }
+
+    // A concurrent writer keeps adding points during the snapshot.
+    let writer_db = db.clone();
+    let handle = std::thread::spawn(move || {
+        let wc = writer_db
+            .collection("docs")
+            .unwrap_or_else(|e| panic!("{e}"));
+        let mut r = Rng::new(1234);
+        for i in 500..1500u32 {
+            let v: Vec<f32> = (0..4).map(|_| r.next_f32()).collect();
+            wc.upsert(Point::new(format!("k{i}"), v))
+                .unwrap_or_else(|e| panic!("{e}"));
+        }
+    });
+
+    db.snapshot(&snap).unwrap_or_else(|e| panic!("{e}"));
+    assert!(handle.join().is_ok(), "concurrent writer must not fail");
+
+    // The original received every write.
+    assert_eq!(c.len(), 1500);
+    drop(db);
+
+    // The snapshot opens standalone with a consistent point-in-time subset
+    // (>= the 500 present before the snapshot, <= the full 1500).
+    let sdb = VecLite::open(&snap).unwrap_or_else(|e| panic!("{e}"));
+    let sc = sdb.collection("docs").unwrap_or_else(|e| panic!("{e}"));
+    let n = sc.len();
+    assert!((500..=1500).contains(&n), "snapshot count {n} out of range");
+    assert!(sc.get("k0").unwrap_or_else(|e| panic!("{e}")).is_some());
+    let hits = sc
+        .search(&[0.1, 0.2, 0.3, 0.4], 5)
+        .unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(hits.len(), 5);
+    drop(sdb);
+
+    cleanup(&path);
+    cleanup(&snap);
+}

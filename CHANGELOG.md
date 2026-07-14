@@ -99,6 +99,19 @@ Versions 0.x are pre-release: the public API may change between minors until 1.0
   reading the last committed state (STG-003). Covered by four integration
   tests (lock conflict, read-only read/write matrix, WalPending guard,
   damaged-tail in both modes).
+- Snapshot, vacuum, and auto-vacuum (task `phase2d`, DAG T2.7/T2.8,
+  SPEC-002 §7, native-only). `db.snapshot(path)` writes a standalone compacted
+  copy with a fresh `file_uuid` — dead space and tombstones dropped — from the
+  in-memory live state, so a concurrent writer keeps going without failure
+  (STG-070); it works for in-memory databases too. `db.vacuum()` reclaims dead
+  space: it compacts every collection in memory (dropping tombstoned slots and
+  renumbering to `0..live`), rewrites the file to a single compacted generation
+  with the **same** `file_uuid`, and shrinks it via a crash-safe
+  close→rename→reopen swap (STG-071). A checkpoint escalates to a vacuum once a
+  collection's tombstone ratio crosses `OpenOptions::auto_vacuum_threshold`
+  (default 0.25, STG-072). Verified: snapshot-under-write standalone
+  consistency, file shrink after a 50 % delete with the pager still live for
+  further writes, and the auto-vacuum escalation threshold.
 
 ### Changed
 - **PRD OQ-1 resolved** (phase1d): the reference hardware profile is pinned in
@@ -115,3 +128,10 @@ Versions 0.x are pre-release: the public API may change between minors until 1.0
   larger-than-RAM benefit) and has no stable graph serialization (so the graph
   is rebuilt from vectors on every open). Both are tracked in
   `phase2f_mmap-hnsw-persistence`, gated on an index-strategy decision.
+- **vacuum mechanism** (phase2d): v1 `vacuum()` shrinks via a compacted
+  temp-file + atomic close→rename→reopen swap (SQLite-VACUUM style) rather than
+  the in-place append-then-truncate of SPEC-002 STG-071. This is crash-safe and
+  Windows-safe without an active memory map; the STG-071 "unmap→truncate→remap"
+  in-place variant only becomes relevant once mmap lands, and is tracked in
+  `phase2f_mmap-hnsw-persistence` alongside the active-mmap vacuum test (was
+  phase2d 2.3).

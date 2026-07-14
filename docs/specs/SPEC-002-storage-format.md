@@ -125,6 +125,7 @@ CollEntry {
 
 - **STG-070** `snapshot(path)`: run a checkpoint, then copy header + live segments + fresh TOC into a **new compacted file** at `path` (dead space and tombstoned slots dropped, IDDIR rewritten). The snapshot is a valid standalone `.veclite` file with a **new** `file_uuid`. Writers are not blocked beyond the checkpoint's TOC swap window.
 - **STG-071** `vacuum()`: (1) checkpoint; (2) rewrite live data of collections exceeding the tombstone threshold into fresh segments appended to the same file; (3) write new TOC + header swap; (4) truncate the file tail. On Windows, the pager MUST unmap→truncate→remap (mapped regions cannot be truncated).
+  - **v1 implementation note** (phase2d, ADR-0003): while there is no memory-mapped read path (mmap is deferred to phase2f), v1 `vacuum()` shrinks via a compacted **temp file + atomic close→rename→reopen** swap (preserving `file_uuid`) rather than in-place append-then-truncate. This is crash-safe (a crash leaves either the original+WAL or the compacted file, both valid) and Windows-safe (the handle is closed before the rename). In-memory readers are served from RAM, so none are invalidated. The in-place append-then-truncate with unmap→truncate→remap becomes relevant only once an active mmap exists (phase2f).
 - **STG-072** Auto-vacuum: when a collection's tombstones exceed 25 % of slots (tunable via `OpenOptions`), the next checkpoint escalates to a vacuum of that collection.
 
 ## 8. Limits (format v1)

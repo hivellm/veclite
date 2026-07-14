@@ -22,6 +22,8 @@ use crate::persist::{Persistence, config, now_epoch_s, seal, wal_body};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::point::Point;
 #[cfg(not(target_arch = "wasm32"))]
+use crate::storage::pager::CheckpointColl;
+#[cfg(not(target_arch = "wasm32"))]
 use crate::storage::wal::{WalEntry, WalOp};
 #[cfg(not(target_arch = "wasm32"))]
 use std::path::Path;
@@ -176,13 +178,10 @@ fn apply_wal_entry(
     Ok(())
 }
 
-/// Seal every live collection and run the commit protocol, then truncate the
-/// WAL (SPEC-002 §5 / WAL-031). No-op for a memory database.
+/// Seal every live collection's current state into `CheckpointColl`s — the
+/// input shared by checkpoint, vacuum, and snapshot.
 #[cfg(not(target_arch = "wasm32"))]
-fn checkpoint_inner(inner: &Arc<DatabaseInner>) -> Result<()> {
-    let Some(persistence) = &inner.persistence else {
-        return Ok(());
-    };
+fn sealed_live_collections(inner: &Arc<DatabaseInner>) -> Result<Vec<CheckpointColl>> {
     let epoch = now_epoch_s();
     let mut colls = Vec::new();
     for entry in inner.collections.iter() {
@@ -204,7 +203,73 @@ fn checkpoint_inner(inner: &Arc<DatabaseInner>) -> Result<()> {
             epoch,
         )?);
     }
-    persistence.commit(colls)
+    Ok(colls)
+}
+
+/// Seal every live collection and run the commit protocol, then truncate the
+/// WAL (SPEC-002 §5 / WAL-031). No-op for a memory database.
+#[cfg(not(target_arch = "wasm32"))]
+fn checkpoint_inner(inner: &Arc<DatabaseInner>) -> Result<()> {
+    let Some(persistence) = &inner.persistence else {
+        return Ok(());
+    };
+    persistence.commit(sealed_live_collections(inner)?)
+}
+
+/// Checkpoint, then escalate to a vacuum when a collection has churned past the
+/// auto-vacuum threshold (SPEC-002 STG-072). Drives the WAL-size trigger and
+/// the public `checkpoint()`; the Drop path uses the plain `checkpoint_inner`.
+#[cfg(not(target_arch = "wasm32"))]
+fn checkpoint_and_maybe_vacuum(inner: &Arc<DatabaseInner>) -> Result<()> {
+    checkpoint_inner(inner)?;
+    if should_auto_vacuum(inner) {
+        vacuum_inner(inner)?;
+    }
+    Ok(())
+}
+
+/// Whether any live collection's tombstone ratio has reached the auto-vacuum
+/// threshold (STG-072). False without persistence or when the threshold is
+/// disabled (`<= 0`).
+#[cfg(not(target_arch = "wasm32"))]
+fn should_auto_vacuum(inner: &Arc<DatabaseInner>) -> bool {
+    let Some(p) = &inner.persistence else {
+        return false;
+    };
+    let threshold = p.auto_vacuum_threshold();
+    if threshold <= 0.0 {
+        return false;
+    }
+    inner.collections.iter().any(|e| {
+        let ci = e.value();
+        !ci.deleted.load(Ordering::Acquire)
+            && Collection {
+                inner: Arc::clone(ci),
+            }
+            .tombstone_ratio()
+                >= threshold
+    })
+}
+
+/// Reclaim dead space (SPEC-002 STG-071): compact every live collection in
+/// memory (dropping tombstoned slots), then rewrite the file to a fresh
+/// compacted generation and shrink it. No-op for a memory database.
+#[cfg(not(target_arch = "wasm32"))]
+fn vacuum_inner(inner: &Arc<DatabaseInner>) -> Result<()> {
+    let Some(persistence) = &inner.persistence else {
+        return Ok(());
+    };
+    for entry in inner.collections.iter() {
+        let ci = entry.value();
+        if ci.deleted.load(Ordering::Acquire) {
+            continue;
+        }
+        Collection {
+            inner: Arc::clone(ci),
+        }
+        .compact()?;
+    }
+    persistence.vacuum(sealed_live_collections(inner)?)
 }
 
 /// Database handle. Cheap to clone; `Send + Sync` (CORE-050). Multiple
@@ -255,6 +320,7 @@ impl VecLite {
             path,
             options.durability,
             options.wal_size_limit,
+            options.auto_vacuum_threshold,
             options.read_only,
             options.read_only_ignore_wal,
         )?;
@@ -281,7 +347,8 @@ impl VecLite {
         // never keeps the database alive.
         let weak = Arc::downgrade(&inner);
         persistence.set_checkpoint(Box::new(move || {
-            weak.upgrade().map_or(Ok(()), |d| checkpoint_inner(&d))
+            weak.upgrade()
+                .map_or(Ok(()), |d| checkpoint_and_maybe_vacuum(&d))
         }));
 
         if state.discarded_tail {
@@ -291,10 +358,33 @@ impl VecLite {
     }
 
     /// Force a checkpoint now: seal in-memory state into segments and truncate
-    /// the WAL (WAL-030b). No-op for a memory database.
+    /// the WAL (WAL-030b). Escalates to a vacuum when a collection has churned
+    /// past the auto-vacuum threshold (STG-072). No-op for a memory database.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn checkpoint(&self) -> Result<()> {
-        checkpoint_inner(&self.inner)
+        checkpoint_and_maybe_vacuum(&self.inner)
+    }
+
+    /// Write a compacted, standalone point-in-time copy of the database to
+    /// `path` (SPEC-002 STG-070). The copy has a fresh `file_uuid`, drops dead
+    /// space and tombstoned slots, and opens independently. The live database
+    /// (and its writers) are not blocked by the copy. `path` must not already
+    /// exist. Works for both file-backed and in-memory databases.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn snapshot(&self, path: impl AsRef<Path>) -> Result<()> {
+        // Flush acked state first (STG-070 "run a checkpoint"); a memory
+        // database has nothing to flush.
+        checkpoint_inner(&self.inner)?;
+        Persistence::write_snapshot(path.as_ref(), sealed_live_collections(&self.inner)?)
+    }
+
+    /// Reclaim dead space in place (SPEC-002 STG-071): compact live data and
+    /// rewrite the file to a fresh compacted generation, shrinking it. Also
+    /// runs automatically when a collection's tombstone ratio crosses the
+    /// `auto_vacuum_threshold` (STG-072). No-op for a memory database.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn vacuum(&self) -> Result<()> {
+        vacuum_inner(&self.inner)
     }
 
     /// Test hook: mark the database crashed and drop it, so the close-time

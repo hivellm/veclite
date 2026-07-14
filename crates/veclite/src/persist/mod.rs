@@ -52,6 +52,9 @@ pub(crate) struct Persistence {
     uuid: [u8; 16],
     durability: Durability,
     wal_size_limit: u64,
+    /// Tombstone ratio (0.0..1.0) that escalates a checkpoint to a vacuum
+    /// (STG-072); 0.0 disables auto-vacuum.
+    auto_vacuum_threshold: f32,
     /// A read-only database rejects every mutation with `ReadOnly` (STG-062).
     read_only: bool,
     /// Set to skip the close-time checkpoint (a simulated crash, for tests) —
@@ -78,6 +81,7 @@ impl Persistence {
         path: &Path,
         durability: Durability,
         wal_size_limit: u64,
+        auto_vacuum_threshold: f32,
         read_only: bool,
         read_only_ignore_wal: bool,
     ) -> Result<(Persistence, LoadedState)> {
@@ -122,6 +126,7 @@ impl Persistence {
                 uuid,
                 durability,
                 wal_size_limit,
+                auto_vacuum_threshold,
                 read_only,
                 crashed: AtomicBool::new(false),
                 checkpoint: OnceLock::new(),
@@ -202,6 +207,45 @@ impl Persistence {
         j.wal.truncate()?;
         Ok(())
     }
+
+    /// Tombstone ratio that escalates a checkpoint to a vacuum (STG-072).
+    pub(crate) fn auto_vacuum_threshold(&self) -> f32 {
+        self.auto_vacuum_threshold
+    }
+
+    /// Write a compacted standalone copy at `path` with a **fresh** `file_uuid`
+    /// (SPEC-002 STG-070). `colls` is the caller's sealed live state; the source
+    /// file and WAL are untouched, so the copy never blocks writers. Fails if
+    /// `path` already exists (a snapshot never clobbers).
+    pub(crate) fn write_snapshot(path: &Path, colls: Vec<CheckpointColl>) -> Result<()> {
+        let uuid = *uuid::Uuid::new_v4().as_bytes();
+        Pager::create_compacted(path, uuid, 1, colls, Codec::Lz4, now_epoch_s())
+    }
+
+    /// Compact the file in place (SPEC-002 STG-071): write a fresh single-
+    /// generation file (the source `file_uuid` preserved) holding only `colls`,
+    /// atomically swap it onto the live path, then drop the now-redundant WAL.
+    /// Crash-safe: a crash before the swap leaves the original file and WAL
+    /// intact; a crash after leaves the compacted file, whose uuid still matches
+    /// the WAL, so replay stays valid and idempotent (WAL-042). Read-only is a
+    /// no-op.
+    pub(crate) fn vacuum(&self, colls: Vec<CheckpointColl>) -> Result<()> {
+        if self.read_only {
+            return Ok(());
+        }
+        let mut j = self.journal.lock();
+        let uuid = j.pager.uuid();
+        let temp = vacuum_temp_path(j.pager.path());
+        // A leftover temp from an interrupted vacuum is our own artifact.
+        let _ = std::fs::remove_file(&temp);
+        j.generation += 1;
+        let generation = j.generation;
+        Pager::create_compacted(&temp, uuid, generation, colls, Codec::Lz4, now_epoch_s())?;
+        // Windows-safe close→rename→reopen; readers are served from memory.
+        j.pager.replace_with(&temp)?;
+        j.wal.truncate()?;
+        Ok(())
+    }
 }
 
 impl crate::collection::WalSink for Persistence {
@@ -217,6 +261,14 @@ impl crate::collection::WalSink for Persistence {
 fn wal_path(db: &Path) -> std::path::PathBuf {
     let mut name = db.file_name().unwrap_or_default().to_os_string();
     name.push("-wal");
+    db.with_file_name(name)
+}
+
+/// The vacuum scratch path: `<db>.veclite-vac`. The compacted file is written
+/// here, then atomically renamed onto the live path (STG-071).
+fn vacuum_temp_path(db: &Path) -> std::path::PathBuf {
+    let mut name = db.file_name().unwrap_or_default().to_os_string();
+    name.push("-vac");
     db.with_file_name(name)
 }
 
@@ -257,14 +309,15 @@ mod tests {
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_file(wal_path(&path));
         {
-            let (p, state) = Persistence::open(&path, Durability::Normal, 64 << 20, false, false)
-                .unwrap_or_else(|e| panic!("{e}"));
+            let (p, state) =
+                Persistence::open(&path, Durability::Normal, 64 << 20, 0.25, false, false)
+                    .unwrap_or_else(|e| panic!("{e}"));
             assert!(state.collections.is_empty());
             assert!(state.replay_entries.is_empty());
             let _ = p;
         }
         // Reopen: empty (no collections, clean WAL).
-        let (_, state) = Persistence::open(&path, Durability::Normal, 64 << 20, false, false)
+        let (_, state) = Persistence::open(&path, Durability::Normal, 64 << 20, 0.25, false, false)
             .unwrap_or_else(|e| panic!("{e}"));
         assert!(state.collections.is_empty());
         assert!(state.replay_entries.is_empty());

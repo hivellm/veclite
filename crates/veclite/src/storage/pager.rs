@@ -7,7 +7,7 @@
 
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::error::{Result, VecLiteError};
 use crate::storage::compression::Codec;
@@ -26,17 +26,43 @@ pub(crate) struct CheckpointColl {
     pub(crate) segments: Vec<Segment>,
 }
 
-/// Owns the open `.veclite` file and tracks the next append offset.
+/// Owns the open `.veclite` file and tracks the next append offset. The handle
+/// is `None` only during the brief close→rename→reopen window of `replace_with`
+/// (vacuum); every other method assumes it is present.
 pub(crate) struct Pager {
-    file: File,
+    file: Option<File>,
     uuid: [u8; 16],
     created_epoch_s: u64,
     /// Byte offset where the next appended segment/TOC will start.
     tail: u64,
+    /// The `.veclite` path this pager serves (used by `replace_with`).
+    path: PathBuf,
 }
 
 fn as_usize(v: u64, ctx: &str) -> Result<usize> {
     usize::try_from(v).map_err(|_| VecLiteError::Corrupt(format!("{ctx}: offset exceeds usize")))
+}
+
+/// Read and validate the committed header→TOC chain from a freshly opened file
+/// (STG-010/051): decode the header, CRC-check and decode the TOC it points at,
+/// and compute the next-append tail. Shared by `open` and `replace_with`.
+fn read_committed(file: &mut File) -> Result<(Header, Toc, u64)> {
+    let mut hbuf = [0u8; HEADER_SIZE];
+    file.seek(SeekFrom::Start(0))?;
+    file.read_exact(&mut hbuf)
+        .map_err(|_| VecLiteError::Corrupt("header: file shorter than 4 KiB".into()))?;
+    let header = Header::decode(&hbuf)?;
+
+    let mut tbuf = vec![0u8; as_usize(header.toc_len, "toc")?];
+    file.seek(SeekFrom::Start(header.toc_offset))?;
+    file.read_exact(&mut tbuf)
+        .map_err(|_| VecLiteError::Corrupt("toc: truncated".into()))?;
+    if crc32fast::hash(&tbuf) != header.toc_crc32 {
+        return Err(VecLiteError::Corrupt("toc: crc mismatch".into()));
+    }
+    let toc = Toc::decode(&tbuf)?;
+    let tail = header.toc_offset + header.toc_len;
+    Ok((header, toc, tail))
 }
 
 /// Advisory lock on `file` (STG-060): exclusive for read-write, shared for
@@ -69,10 +95,11 @@ impl Pager {
             .open(path)?;
         lock_file(&file, true)?;
         let mut pager = Pager {
-            file,
+            file: Some(file),
             uuid: *uuid::Uuid::new_v4().as_bytes(),
             created_epoch_s,
             tail: HEADER_SIZE as u64,
+            path: path.to_owned(),
         };
         pager.checkpoint(0, Vec::new(), Codec::Lz4, created_epoch_s)?;
         Ok(pager)
@@ -85,30 +112,78 @@ impl Pager {
         // Lock BEFORE any read (STG-060): another process's exclusive lock must
         // surface as `Locked`, not a mid-read I/O error.
         lock_file(&file, exclusive)?;
-        let mut hbuf = [0u8; HEADER_SIZE];
-        file.seek(SeekFrom::Start(0))?;
-        file.read_exact(&mut hbuf)
-            .map_err(|_| VecLiteError::Corrupt("header: file shorter than 4 KiB".into()))?;
-        let header = Header::decode(&hbuf)?;
-
-        let mut tbuf = vec![0u8; as_usize(header.toc_len, "toc")?];
-        file.seek(SeekFrom::Start(header.toc_offset))?;
-        file.read_exact(&mut tbuf)
-            .map_err(|_| VecLiteError::Corrupt("toc: truncated".into()))?;
-        if crc32fast::hash(&tbuf) != header.toc_crc32 {
-            return Err(VecLiteError::Corrupt("toc: crc mismatch".into()));
-        }
-        let toc = Toc::decode(&tbuf)?;
-        let tail = header.toc_offset + header.toc_len;
+        let (header, toc, tail) = read_committed(&mut file)?;
         Ok((
             Pager {
-                file,
+                file: Some(file),
                 uuid: header.file_uuid,
                 created_epoch_s: header.created_epoch_s,
                 tail,
+                path: path.to_owned(),
             },
             toc,
         ))
+    }
+
+    /// Write a single-generation compacted file at `path` with the given
+    /// `uuid`, then close it (used by snapshot with a fresh uuid, and by vacuum
+    /// with the source uuid preserved). Fails if `path` already exists.
+    pub(crate) fn create_compacted(
+        path: &Path,
+        uuid: [u8; 16],
+        generation: u64,
+        colls: Vec<CheckpointColl>,
+        codec: Codec,
+        epoch: u64,
+    ) -> Result<()> {
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create_new(true)
+            .open(path)?;
+        lock_file(&file, true)?;
+        let mut pager = Pager {
+            file: Some(file),
+            uuid,
+            created_epoch_s: epoch,
+            tail: HEADER_SIZE as u64,
+            path: path.to_owned(),
+        };
+        pager.checkpoint(generation, colls, codec, epoch)?;
+        Ok(()) // pager dropped here: handle closed, advisory lock released
+    }
+
+    /// Close this pager's handle, atomically move `replacement` onto our path,
+    /// and reopen the committed state (STG-071 vacuum swap). Windows-safe: the
+    /// handle and its advisory lock are dropped *before* the rename, since
+    /// Windows refuses to replace an open file. In-process readers are served
+    /// from memory, so none are invalidated by the swap.
+    pub(crate) fn replace_with(&mut self, replacement: &Path) -> Result<()> {
+        let orig = self.path.clone();
+        // Drop the current handle first (closes it, releases the lock).
+        self.file = None;
+        std::fs::rename(replacement, &orig)?;
+        let mut file = OpenOptions::new().read(true).write(true).open(&orig)?;
+        lock_file(&file, true)?;
+        let (header, _toc, tail) = read_committed(&mut file)?;
+        self.uuid = header.file_uuid;
+        self.created_epoch_s = header.created_epoch_s;
+        self.tail = tail;
+        self.file = Some(file);
+        Ok(())
+    }
+
+    /// The `.veclite` path this pager serves.
+    pub(crate) fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Mutable access to the open handle; `Corrupt` only in the impossible case
+    /// of use during the `replace_with` swap window.
+    fn file(&mut self) -> Result<&mut File> {
+        self.file
+            .as_mut()
+            .ok_or_else(|| VecLiteError::Corrupt("pager file handle is closed".into()))
     }
 
     pub(crate) fn uuid(&self) -> [u8; 16] {
@@ -125,16 +200,21 @@ impl Pager {
         codec: Codec,
         modified_epoch_s: u64,
     ) -> Result<Toc> {
+        let start_tail = self.tail;
+        let uuid = self.uuid;
+        let created_epoch_s = self.created_epoch_s;
+        let file = self.file()?;
+
         // (1) append the new segments.
-        self.file.seek(SeekFrom::Start(self.tail))?;
-        let mut cur = self.tail;
+        file.seek(SeekFrom::Start(start_tail))?;
+        let mut cur = start_tail;
         let mut entries = Vec::with_capacity(colls.len());
         for c in colls {
             let mut refs = Vec::with_capacity(c.segments.len());
             for seg in &c.segments {
                 let chosen = codec_for(seg.seg_type, codec, seg.body.len());
                 let bytes = seg.encode(chosen)?;
-                self.file.write_all(&bytes)?;
+                file.write_all(&bytes)?;
                 refs.push(SegRef {
                     seg_type: seg.seg_type.to_byte(),
                     offset: cur,
@@ -153,7 +233,7 @@ impl Pager {
             entry.sort_replay_order();
             entries.push(entry);
         }
-        self.file.sync_all()?; // (2) fsync segments
+        file.sync_all()?; // (2) fsync segments
 
         // (3) append the new TOC. `free_tail_offset` records where this TOC
         // begins; the authoritative next-append is `toc_offset + toc_len` from
@@ -165,19 +245,19 @@ impl Pager {
             free_tail_offset: toc_start,
         };
         let tbytes = toc.encode()?;
-        self.file.write_all(&tbytes)?;
-        self.file.sync_all()?; // (4) fsync TOC
+        file.write_all(&tbytes)?;
+        file.sync_all()?; // (4) fsync TOC
 
         // (5) rewrite the header to point at the new TOC.
-        let mut header = Header::new(self.uuid, self.created_epoch_s);
+        let mut header = Header::new(uuid, created_epoch_s);
         header.flags = FLAG_CLEAN_CLOSE;
         header.toc_offset = toc_start;
         header.toc_len = tbytes.len() as u64;
         header.toc_crc32 = crc32fast::hash(&tbytes);
         header.modified_epoch_s = modified_epoch_s;
-        self.file.seek(SeekFrom::Start(0))?;
-        self.file.write_all(&header.encode())?;
-        self.file.sync_all()?; // (6) fsync header
+        file.seek(SeekFrom::Start(0))?;
+        file.write_all(&header.encode())?;
+        file.sync_all()?; // (6) fsync header
 
         self.tail = toc_start + tbytes.len() as u64;
         Ok(toc)
@@ -187,9 +267,9 @@ impl Pager {
     /// CRC, STG-021).
     pub(crate) fn read_segment(&mut self, seg: SegRef) -> Result<Segment> {
         let mut buf = vec![0u8; as_usize(seg.len, "segment")?];
-        self.file.seek(SeekFrom::Start(seg.offset))?;
-        self.file
-            .read_exact(&mut buf)
+        let file = self.file()?;
+        file.seek(SeekFrom::Start(seg.offset))?;
+        file.read_exact(&mut buf)
             .map_err(|_| VecLiteError::Corrupt(format!("segment@{}: truncated", seg.offset)))?;
         Ok(Segment::read(&buf, 0, seg.offset)?.0)
     }

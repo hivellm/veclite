@@ -597,6 +597,72 @@ impl Collection {
             tombstone(&mut data, id);
         }
     }
+
+    /// Fraction of allocated slots that are tombstoned (dead), in `0.0..1.0`;
+    /// 0.0 when the collection has no slots. Drives auto-vacuum escalation
+    /// (SPEC-002 STG-072).
+    #[allow(clippy::cast_precision_loss)]
+    pub(crate) fn tombstone_ratio(&self) -> f32 {
+        let data = self.inner.data.read();
+        let total = data.ids.len();
+        if total == 0 {
+            return 0.0;
+        }
+        data.tombstones.len() as f32 / total as f32
+    }
+
+    /// Reclaim tombstoned slots in memory (SPEC-002 STG-071): rebuild the slot
+    /// storage and HNSW graph over only the live points, renumbering slots to
+    /// `0..live`. Clears the tombstone set so a following checkpoint seals a
+    /// minimal set and auto-vacuum does not immediately re-trigger. Stored
+    /// vectors are already validated/normalized, so no re-preparation is needed.
+    pub(crate) fn compact(&self) -> Result<()> {
+        self.guard()?;
+        let mut data = self.inner.data.write();
+        let dim = self.inner.config.dimension;
+
+        // Snapshot live points in slot order before resetting storage.
+        let mut live: Vec<PreparedPoint> = Vec::with_capacity(data.id_to_slot.len());
+        for slot in 0..data.ids.len() {
+            if data.id_to_slot.get(&data.ids[slot]) == Some(&slot) {
+                live.push(PreparedPoint {
+                    id: data.ids[slot].clone(),
+                    vector: data.vectors[slot * dim..(slot + 1) * dim].to_vec(),
+                    sparse: data.sparses[slot].clone(),
+                    payload: data.payloads[slot].clone(),
+                });
+            }
+        }
+
+        data.vectors.clear();
+        data.ids.clear();
+        data.id_to_slot.clear();
+        data.tombstones.clear();
+        data.payloads.clear();
+        data.sparses.clear();
+        data.index = if self.inner.config.metric == Metric::DotProduct {
+            None
+        } else {
+            Some(HnswIndex::new(
+                self.inner.config.metric,
+                dim,
+                self.inner.config.hnsw.m,
+                self.inner.config.hnsw.ef_construction,
+                live.len().max(1),
+            )?)
+        };
+
+        // The quantization refit reads the live set at its fresh slot numbers.
+        let live_for_quant: Vec<(usize, Vec<f32>)> = live
+            .iter()
+            .enumerate()
+            .map(|(slot, p)| (slot, p.vector.clone()))
+            .collect();
+        for p in live {
+            apply_upsert(&mut data, p, dim);
+        }
+        recompute_quantization(&mut data, &self.inner.config, &live_for_quant)
+    }
 }
 
 /// True for metrics whose score is a similarity (higher = closer, sorted
