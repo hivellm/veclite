@@ -55,14 +55,57 @@ impl Point {
     }
 }
 
-/// Sparse vector: parallel `indices`/`values` arrays (SPEC-007 HYB-001;
-/// validation of the invariants lands with hybrid search in phase3c).
+/// Sparse vector: parallel `indices`/`values` arrays (SPEC-007 HYB-001).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SparseVector {
     /// Term indices, strictly increasing.
     pub indices: Vec<u32>,
     /// Weights, one per index.
     pub values: Vec<f32>,
+}
+
+impl SparseVector {
+    /// Enforce the invariants (SPEC-007 HYB-001): `indices` strictly increasing,
+    /// `values.len() == indices.len()`, all values finite.
+    pub(crate) fn validate(&self) -> Result<()> {
+        if self.indices.len() != self.values.len() {
+            return Err(VecLiteError::InvalidArgument(format!(
+                "sparse vector has {} indices but {} values",
+                self.indices.len(),
+                self.values.len()
+            )));
+        }
+        if self.values.iter().any(|v| !v.is_finite()) {
+            return Err(VecLiteError::InvalidArgument(
+                "sparse vector values must be finite".into(),
+            ));
+        }
+        if self.indices.windows(2).any(|w| w[0] >= w[1]) {
+            return Err(VecLiteError::InvalidArgument(
+                "sparse vector indices must be strictly increasing (sorted, unique)".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Dot product over the shared term space (both operands are sorted by
+    /// index, so this is a linear merge). Used for sparse scoring (HYB-003).
+    pub(crate) fn dot(&self, other: &SparseVector) -> f32 {
+        let (mut i, mut j) = (0usize, 0usize);
+        let mut sum = 0.0f32;
+        while i < self.indices.len() && j < other.indices.len() {
+            match self.indices[i].cmp(&other.indices[j]) {
+                std::cmp::Ordering::Less => i += 1,
+                std::cmp::Ordering::Greater => j += 1,
+                std::cmp::Ordering::Equal => {
+                    sum += self.values[i] * other.values[j];
+                    i += 1;
+                    j += 1;
+                }
+            }
+        }
+        sum
+    }
 }
 
 /// One search result (SPEC-004 §4).

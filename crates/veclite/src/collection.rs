@@ -305,6 +305,17 @@ impl Collection {
                 )));
             }
         }
+        if let Some(sparse) = &point.sparse {
+            sparse.validate()?;
+            // Auto-embed collections own the sparse lane; a BYO sparse vector on
+            // one is a mode conflict (SPEC-007 HYB-002). Skipped on replay.
+            if !allow_reserved && self.inner.embedder.is_some() {
+                return Err(VecLiteError::InvalidArgument(
+                    "auto-embed collections manage the sparse lane; do not supply an explicit sparse vector"
+                        .to_owned(),
+                ));
+            }
+        }
         let mut vector = point.vector;
         if self.inner.config.metric == Metric::Cosine {
             let norm = vector
@@ -648,6 +659,184 @@ impl Collection {
         QueryBuilder::new(self, vector)
     }
 
+    /// Sparse dot-product search over the BYO sparse lane (SPEC-007 HYB-003):
+    /// score each live point's sparse vector against `query`, ordered by score
+    /// descending, ties broken by id (bytewise). Only non-zero matches are
+    /// returned.
+    pub fn search_sparse(&self, query: &SparseVector, limit: usize) -> Result<Vec<Hit>> {
+        self.guard()?;
+        if limit == 0 {
+            return Err(VecLiteError::InvalidArgument(
+                "limit must be greater than 0".to_owned(),
+            ));
+        }
+        query.validate()?;
+        let ranked = self.sparse_ranked(query, limit, None);
+        let data = self.inner.data.read();
+        Ok(project_slots(
+            &data,
+            &ranked,
+            self.inner.config.dimension,
+            true,
+            false,
+        ))
+    }
+
+    /// Start a fluent hybrid query fusing the dense and sparse lanes with RRF
+    /// (SPEC-007 §2–3). The builder holds no lock until `run`.
+    pub fn hybrid_query(&self) -> crate::hybrid::HybridQuery<'_> {
+        crate::hybrid::HybridQuery::new(self)
+    }
+
+    /// Ranked `(slot, score)` for the sparse lane, filtered and truncated to
+    /// `limit`, deterministic (score desc, then id). Shared by `search_sparse`
+    /// and the hybrid fuser.
+    fn sparse_ranked(
+        &self,
+        query: &SparseVector,
+        limit: usize,
+        filter: Option<&Filter>,
+    ) -> Vec<(usize, f32)> {
+        let data = self.inner.data.read();
+        let mut scored: Vec<(usize, f32)> = Vec::new();
+        for slot in 0..data.ids.len() {
+            if data.id_to_slot.get(&data.ids[slot]) != Some(&slot) {
+                continue;
+            }
+            if let Some(f) = filter {
+                if !f.matches(data.payloads[slot].as_ref()) {
+                    continue;
+                }
+            }
+            if let Some(sp) = &data.sparses[slot] {
+                let score = sp.dot(query);
+                if score != 0.0 {
+                    scored.push((slot, score));
+                }
+            }
+        }
+        scored.sort_by(|a, b| {
+            b.1.total_cmp(&a.1)
+                .then_with(|| data.ids[a.0].cmp(&data.ids[b.0]))
+        });
+        scored.truncate(limit);
+        scored
+    }
+
+    /// Execute a hybrid query (SPEC-007 §3). A single provided lane degenerates
+    /// to that lane's plain search with its own scores (HYB-010); two lanes are
+    /// fused with reciprocal rank fusion (HYB-020/021).
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn execute_hybrid(
+        &self,
+        dense: Option<&[f32]>,
+        sparse: Option<&SparseVector>,
+        alpha: f32,
+        rrf_k: f32,
+        limit: usize,
+        with_payload: bool,
+        with_vector: bool,
+        filter: Option<&Filter>,
+    ) -> Result<Vec<Hit>> {
+        self.guard()?;
+        if limit == 0 {
+            return Err(VecLiteError::InvalidArgument(
+                "limit must be greater than 0".to_owned(),
+            ));
+        }
+        if let Some(s) = sparse {
+            s.validate()?;
+        }
+        match (dense, sparse) {
+            (None, None) => Err(VecLiteError::InvalidArgument(
+                "a hybrid query needs at least one lane (dense or sparse)".to_owned(),
+            )),
+            // Degenerate: exactly one lane → that lane's plain search (HYB-010).
+            (Some(d), None) => {
+                self.execute_query(d, limit, None, with_payload, with_vector, filter)
+            }
+            (None, Some(s)) => {
+                let ranked = self.sparse_ranked(s, limit, filter);
+                let data = self.inner.data.read();
+                Ok(project_slots(
+                    &data,
+                    &ranked,
+                    self.inner.config.dimension,
+                    with_payload,
+                    with_vector,
+                ))
+            }
+            (Some(d), Some(s)) => {
+                let fetch = limit.saturating_mul(4).max(100);
+                // Dense lane ranked ids (projection off — we only need the order).
+                let dense_hits = self.execute_query(d, fetch, None, false, false, filter)?;
+                let dense_rank: HashMap<&str, usize> = dense_hits
+                    .iter()
+                    .enumerate()
+                    .map(|(i, h)| (h.id.as_str(), i + 1))
+                    .collect();
+                // Sparse lane ranked ids.
+                let sparse_slots = self.sparse_ranked(s, fetch, filter);
+                let data = self.inner.data.read();
+                let sparse_rank: HashMap<&str, usize> = sparse_slots
+                    .iter()
+                    .enumerate()
+                    .map(|(i, (slot, _))| (data.ids[*slot].as_str(), i + 1))
+                    .collect();
+
+                // Fuse over the union of ids (HYB-020).
+                let mut ids: Vec<&str> = dense_rank
+                    .keys()
+                    .chain(sparse_rank.keys())
+                    .copied()
+                    .collect();
+                ids.sort_unstable();
+                ids.dedup();
+
+                let mut fused: Vec<(&str, f32, usize)> = ids
+                    .into_iter()
+                    .map(|id| {
+                        let dr = dense_rank.get(id).copied();
+                        let sr = sparse_rank.get(id).copied();
+                        let d_term = dr.map_or(0.0, |r| alpha / (rrf_k + r as f32));
+                        let s_term = sr.map_or(0.0, |r| (1.0 - alpha) / (rrf_k + r as f32));
+                        (id, d_term + s_term, dr.unwrap_or(usize::MAX))
+                    })
+                    .collect();
+                // Order by fused score desc, ties by dense rank asc, then id (HYB-021).
+                fused.sort_by(|a, b| {
+                    b.1.total_cmp(&a.1)
+                        .then_with(|| a.2.cmp(&b.2))
+                        .then_with(|| a.0.cmp(b.0))
+                });
+                fused.truncate(limit);
+
+                // Project the fused ids from the live data.
+                let dim = self.inner.config.dimension;
+                let hits = fused
+                    .into_iter()
+                    .filter_map(|(id, score, _)| {
+                        data.id_to_slot.get(id).map(|&slot| Hit {
+                            id: id.to_owned(),
+                            score,
+                            payload: if with_payload {
+                                data.payloads[slot].clone()
+                            } else {
+                                None
+                            },
+                            vector: if with_vector {
+                                Some(data.vectors[slot * dim..(slot + 1) * dim].to_vec())
+                            } else {
+                                None
+                            },
+                        })
+                    })
+                    .collect();
+                Ok(hits)
+            }
+        }
+    }
+
     /// Shared search behind `search` and `QueryBuilder::run`. Validates inputs,
     /// normalizes the query for Cosine (CORE-014), gathers candidates from the
     /// HNSW index when present (over-fetching past tombstones) or by exact
@@ -970,6 +1159,33 @@ fn brute_force(
         }
         out.push((slot, score_slot(data, query, metric, dim, slot)));
     }
+}
+
+/// Project ranked `(slot, score)` pairs into `Hit`s (SPEC-004 §4 projection).
+fn project_slots(
+    data: &CollectionData,
+    ranked: &[(usize, f32)],
+    dim: usize,
+    with_payload: bool,
+    with_vector: bool,
+) -> Vec<Hit> {
+    ranked
+        .iter()
+        .map(|&(slot, score)| Hit {
+            id: data.ids[slot].clone(),
+            score,
+            payload: if with_payload {
+                data.payloads[slot].clone()
+            } else {
+                None
+            },
+            vector: if with_vector {
+                Some(data.vectors[slot * dim..(slot + 1) * dim].to_vec())
+            } else {
+                None
+            },
+        })
+        .collect()
 }
 
 /// Score one slot's stored vector against the query, per metric (CORE-035).

@@ -22,6 +22,8 @@ pub mod error;
 // Payload filters (SPEC-006): the Qdrant-style model + evaluation (all targets),
 // with roaring-bitmap payload indexes as a native-only accelerator.
 pub mod filter;
+// Hybrid dense+sparse search with reciprocal rank fusion (SPEC-007).
+pub mod hybrid;
 // HNSW index over the pinned hnsw_rs. Native-only: hnsw_rs cannot build on
 // wasm32 (ADR-0002). Consumed by the collection index integration.
 #[cfg(not(target_arch = "wasm32"))]
@@ -74,6 +76,7 @@ pub use database::VecLite;
 pub use embedding::{DEFAULT_PROVIDER, Embedder, available_providers, build_provider};
 pub use error::{Result, VecLiteError};
 pub use filter::{Condition, Filter, MatchValue, Range};
+pub use hybrid::HybridQuery;
 pub use options::{
     CollectionOptions, Compression, DEFAULT_EMBEDDING_PROVIDER, Durability, HnswOptions, Metric,
     OpenOptions, PayloadIndexKind, Quantization,
