@@ -1,0 +1,16 @@
+{
+  "id": "2026-07-14T22-57-33-phase3d-aliases-persist-via-toc-collentry-aliases-wal-op-scroll-cursor-resolves-deleted-ids-by-scanning-slot-id",
+  "title": "phase3d: aliases persist via TOC (CollEntry.aliases) + WAL op; scroll cursor resolves deleted ids by scanning slot→id",
+  "content": "phase3d added aliases, scroll, search_batch, stats (the text API + chunker were already in phase3b). Notes:\n\n1. Alias persistence uses BOTH layers, mirroring how the rest of the state persists: the WAL (new op 8, wal_body::Alias { create, alias }) so aliases survive crash+replay before a checkpoint, AND the TOC (each collection's CollEntry.aliases, which already existed in the format) so they survive checkpoint+reopen. CollectionInner gained `aliases: RwLock<Vec<String>>`; sealed_live_collections passes it to seal::seal; Persistence::open threads entry.aliases into LoadedState.collections (now a 4-tuple name/coll_id/aliases/loaded); install_collection restores ci.aliases and registers each alias in the DatabaseInner alias DashMap. The database keeps an alias→target-name DashMap for O(1) resolution in collection(). delete_collection drops the collection's aliases from the map; rename_collection re-points them to the new name. Re-point = delete + create (both journaled) — keeps replay unambiguous.\n\n2. scroll cursor = the last returned id (opaque to the caller). Resuming resolves the cursor to a slot with: id_to_slot.get(id) (if still live) OR data.ids.iter().rposition(|x| x==id) (if deleted since — the last slot that carried the id, which was the live one when returned), then starts at slot+1. Because slots are append-only and never reused, this gives stable ordering that covers every live vector exactly once even under concurrent deletes. next_cursor is set to the last point on a full page (there is more), None when the scan reaches the end (exhausted).\n\n3. search_batch is rayon par_iter over queries on native (Collection is Sync via RwLock, concurrent read-only searches are fine), serial iter on wasm (rayon is wasm-excluded).\n\n4. What was NOT new here: upsert_text/search_text/chunker (phase3b). The onnx-absent text rule (EMB-023) rides with the onnx feature (phase3f); the gate-G3 cross-repo conformance corpora are per-spec follow-ups (phase3e filters, phase3f embeddings, phase3g hybrid).",
+  "source": "manual",
+  "relatedTask": "phase3d_text-api-aliases-scroll",
+  "tags": [
+    "phase3d",
+    "aliases",
+    "scroll",
+    "search_batch",
+    "api",
+    "veclite"
+  ],
+  "createdAt": "2026-07-14T22:57:33.649Z"
+}

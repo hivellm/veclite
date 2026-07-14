@@ -174,6 +174,17 @@ Versions 0.x are pre-release: the public API may change between minors until 1.0
   (HYB-011); an auto-embed collection rejects an explicit sparse vector
   (HYB-002). Covered by `tests/hybrid.rs` (validation, degeneration equivalence,
   determinism, fused ordering, filtered hybrid).
+- API surface: aliases, scroll, batch search, stats (task `phase3d`, DAG
+  T3.8–T3.10, SPEC-004 §2/§4). `create_alias`/`delete_alias`/`aliases()` add
+  transparent alias resolution to `collection(name)` for blue-green swaps
+  (CORE-011) — journaled and sealed into the TOC so they survive reopen;
+  deleting a collection drops its aliases and renaming re-points them.
+  `Collection::scroll(after, limit, filter)` paginates live points in stable
+  slot order, covering every live vector exactly once, with optional filtering
+  (API-022 / FLT-032). `search_batch` runs many queries in parallel (rayon on
+  native, serial on wasm; FR-35), and `stats()` reports live/tombstone counts
+  and dimension (FR-08/13). The text-first API (`upsert_text`/`search_text`) and
+  the chunker landed earlier in `phase3b`. Covered by `tests/api.rs`.
 
 ### Fixed
 - **Small-collection search recall** (phase3a): searches now return exact,
