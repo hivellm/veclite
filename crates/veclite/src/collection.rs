@@ -9,8 +9,9 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 
+use crate::embedding::Embedder;
 use crate::error::{Result, VecLiteError};
 use crate::filter::Filter;
 #[cfg(not(target_arch = "wasm32"))]
@@ -58,6 +59,13 @@ pub(crate) struct CollectionInner {
     /// not logged). Never set on wasm32 (no file storage) — dead there.
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     persistence: Option<Arc<dyn WalSink>>,
+    /// Text embedder for an auto-embed collection (SPEC-005), or `None` for a
+    /// BYO-vectors collection. Its vocabulary is a function of the live `_text`
+    /// corpus, rebuilt lazily when `text_dirty` is set.
+    embedder: Option<Mutex<Box<dyn Embedder>>>,
+    /// Set when `_text` changed and the embedder vocabulary/document vectors are
+    /// stale; the next search (or `refit`) recomputes them (SPEC-005 §5).
+    text_dirty: AtomicBool,
     data: RwLock<CollectionData>,
 }
 
@@ -183,15 +191,47 @@ impl CollectionInner {
             CollectionData::empty()
         };
 
+        // Build the text embedder for an auto-embed collection; an unknown
+        // provider fails fast here with `UnsupportedProvider` (EMB-021).
+        let embedder = match &config.embedding_provider {
+            Some(name) => Some(Mutex::new(crate::embedding::build_provider(
+                name,
+                config.dimension,
+            )?)),
+            None => None,
+        };
+
+        // Auto-embed collections start "dirty" so the first search rebuilds the
+        // vocabulary from the loaded/ingested `_text` (mirrors the HNSW rebuild).
+        let text_dirty = AtomicBool::new(embedder.is_some());
+
         Ok(CollectionInner {
             name: RwLock::new(name),
             deleted: AtomicBool::new(false),
             coll_id,
             persistence,
+            embedder,
+            text_dirty,
             data: RwLock::new(data),
             config,
         })
     }
+}
+
+/// Embed `text`, substituting a deterministic non-zero placeholder for an
+/// all-zero result (empty vocabulary or fully out-of-vocabulary text). The
+/// placeholder keeps cosine collections valid until `refit` replaces it with the
+/// real embedding (SPEC-005 §5).
+fn embed_nonzero(embedder: &dyn Embedder, text: &str, dim: usize) -> Result<Vec<f32>> {
+    let v = embedder.embed(text)?;
+    if v.iter().any(|&x| x != 0.0) {
+        return Ok(v);
+    }
+    let mut placeholder = vec![0.0f32; dim];
+    if let Some(first) = placeholder.first_mut() {
+        *first = 1.0;
+    }
+    Ok(placeholder)
 }
 
 /// Handle to a collection. Cheap to clone; `Send + Sync` (CORE-050).
@@ -220,9 +260,12 @@ impl Collection {
         Ok(())
     }
 
-    /// Validate ingest rules (CORE-010, CORE-012..014) and normalize for
-    /// Cosine. Runs outside any lock; on error nothing was modified.
-    fn prepare(&self, point: Point) -> Result<PreparedPoint> {
+    /// Validate ingest rules (CORE-010, CORE-012..014) and normalize for Cosine.
+    /// Runs outside any lock; on error nothing was modified. `allow_reserved` is
+    /// set only for the internal text path and WAL replay, which legitimately
+    /// carry the system `_text` key (SPEC-005 EMB-022); the public path rejects
+    /// reserved `_`-prefixed payload keys.
+    fn prepare_inner(&self, point: Point, allow_reserved: bool) -> Result<PreparedPoint> {
         validate_id(&point.id)?;
         let expected = self.inner.config.dimension;
         if point.vector.len() != expected {
@@ -240,11 +283,13 @@ impl Collection {
         if let Some(payload) = point.payload.as_ref() {
             // Top-level payload keys beginning with `_` are reserved (SPEC-006
             // FLT-002, e.g. `_text`); reject rather than silently store them.
-            if let Some(obj) = payload.as_object() {
-                if let Some(reserved) = obj.keys().find(|k| k.starts_with('_')) {
-                    return Err(VecLiteError::InvalidArgument(format!(
-                        "payload key {reserved:?} is reserved (keys starting with '_')"
-                    )));
+            if !allow_reserved {
+                if let Some(obj) = payload.as_object() {
+                    if let Some(reserved) = obj.keys().find(|k| k.starts_with('_')) {
+                        return Err(VecLiteError::InvalidArgument(format!(
+                            "payload key {reserved:?} is reserved (keys starting with '_')"
+                        )));
+                    }
                 }
             }
             // Payload size limit (SPEC-002 §8 / FLT-001): 16 MiB. Checked on the
@@ -296,6 +341,12 @@ impl Collection {
     /// whole batch is one WAL entry (SPEC-003 WAL-012). Order: validate → log →
     /// apply, so a rejected point never reaches the WAL.
     pub fn upsert_batch(&self, points: Vec<Point>) -> Result<()> {
+        self.upsert_batch_inner(points, false)
+    }
+
+    /// Shared upsert path. `allow_reserved` permits the system `_text` key for
+    /// the text API and WAL replay (SPEC-005 EMB-022).
+    fn upsert_batch_inner(&self, points: Vec<Point>, allow_reserved: bool) -> Result<()> {
         self.guard()?;
         // Encode the WAL body from the originals before validation consumes
         // them (only when persistent; discarded if validation then fails).
@@ -303,13 +354,166 @@ impl Collection {
         let body = self.encode_wal(&points)?;
         let prepared: Vec<PreparedPoint> = points
             .into_iter()
-            .map(|p| self.prepare(p))
+            .map(|p| self.prepare_inner(p, allow_reserved))
             .collect::<Result<_>>()?;
         #[cfg(not(target_arch = "wasm32"))]
         self.log(WalOp::UpsertBatch, body)?;
         self.apply_prepared(prepared);
         #[cfg(not(target_arch = "wasm32"))]
         self.after_write()?;
+        Ok(())
+    }
+
+    /// Insert-or-replace one text document (SPEC-005 §4). The text is embedded
+    /// with the collection's provider and stored under `_text` for later
+    /// `refit`/reopen. `InvalidArgument` on a BYO (non-auto-embed) collection
+    /// (EMB-021).
+    pub fn upsert_text(&self, id: impl Into<String>, text: impl Into<String>) -> Result<()> {
+        self.upsert_text_batch(vec![(id.into(), text.into(), None)])
+    }
+
+    /// Insert-or-replace one text document with a user payload (which MUST NOT
+    /// use reserved `_`-prefixed keys).
+    pub fn upsert_text_with(
+        &self,
+        id: impl Into<String>,
+        text: impl Into<String>,
+        payload: serde_json::Value,
+    ) -> Result<()> {
+        self.upsert_text_batch(vec![(id.into(), text.into(), Some(payload))])
+    }
+
+    /// Insert-or-replace a batch of `(id, text, payload?)` documents (SPEC-005
+    /// §4). Each is embedded now with the current vocabulary; the vocabulary is
+    /// then marked stale so the next search recomputes it exactly from the full
+    /// `_text` corpus (SPEC-005 §5).
+    pub fn upsert_text_batch(
+        &self,
+        items: Vec<(String, String, Option<serde_json::Value>)>,
+    ) -> Result<()> {
+        self.guard()?;
+        let embedder = self.inner.embedder.as_ref().ok_or_else(|| {
+            VecLiteError::InvalidArgument(
+                "text operations require an auto-embed collection (use CollectionOptions::auto_embed)"
+                    .to_owned(),
+            )
+        })?;
+
+        let mut points = Vec::with_capacity(items.len());
+        {
+            let emb = embedder.lock();
+            for (id, text, user_payload) in items {
+                // The user payload may not carry reserved keys.
+                if let Some(obj) = user_payload.as_ref().and_then(|v| v.as_object()) {
+                    if let Some(reserved) = obj.keys().find(|k| k.starts_with('_')) {
+                        return Err(VecLiteError::InvalidArgument(format!(
+                            "payload key {reserved:?} is reserved (keys starting with '_')"
+                        )));
+                    }
+                }
+                let vector = embed_nonzero(&**emb, &text, self.inner.config.dimension)?;
+                let mut payload = user_payload.unwrap_or_else(|| serde_json::json!({}));
+                if let Some(obj) = payload.as_object_mut() {
+                    obj.insert("_text".to_owned(), serde_json::Value::String(text));
+                }
+                points.push(Point {
+                    id,
+                    vector,
+                    sparse: None,
+                    payload: Some(payload),
+                });
+            }
+        }
+        self.upsert_batch_inner(points, true)?;
+        self.inner.text_dirty.store(true, Ordering::Release);
+        Ok(())
+    }
+
+    /// Embed `query` with the collection's provider and search (SPEC-005 §4).
+    /// Recomputes a stale vocabulary first so results reflect the full corpus.
+    /// `InvalidArgument` on a BYO collection.
+    pub fn search_text(&self, query: &str, limit: usize) -> Result<Vec<Hit>> {
+        self.guard()?;
+        if self.inner.embedder.is_none() {
+            return Err(VecLiteError::InvalidArgument(
+                "text search requires an auto-embed collection".to_owned(),
+            ));
+        }
+        self.refit_if_dirty()?;
+        let embedder = self
+            .inner
+            .embedder
+            .as_ref()
+            .ok_or_else(|| VecLiteError::InvalidArgument("no embedder".to_owned()))?;
+        let vector = embedder.lock().embed(query)?;
+        self.search(&vector, limit)
+    }
+
+    /// Recompute the vocabulary from all live `_text` and re-embed every text
+    /// document (SPEC-005 EMB-031/032). Exact, explicit, potentially slow.
+    /// `InvalidArgument` on a BYO collection.
+    pub fn refit(&self) -> Result<()> {
+        self.guard()?;
+        if self.inner.embedder.is_none() {
+            return Err(VecLiteError::InvalidArgument(
+                "refit requires an auto-embed collection".to_owned(),
+            ));
+        }
+        self.do_refit()
+    }
+
+    /// Run [`do_refit`](Self::do_refit) only when `_text` changed since the last
+    /// recompute (lazy, amortizes a batch of text upserts into one rebuild).
+    fn refit_if_dirty(&self) -> Result<()> {
+        if self.inner.text_dirty.swap(false, Ordering::AcqRel) {
+            self.do_refit()?;
+        }
+        Ok(())
+    }
+
+    /// Gather live `_text`, fit the embedder on the full corpus, and re-embed
+    /// every text document so all stored vectors share one vocabulary.
+    fn do_refit(&self) -> Result<()> {
+        let Some(embedder) = self.inner.embedder.as_ref() else {
+            return Ok(());
+        };
+        // Snapshot live text documents in slot order, keeping the FULL payload
+        // (user keys + `_text`) so re-embedding never drops metadata.
+        let live: Vec<(String, String, serde_json::Value)> = {
+            let data = self.inner.data.read();
+            let mut out = Vec::new();
+            for slot in 0..data.ids.len() {
+                if data.id_to_slot.get(&data.ids[slot]) == Some(&slot) {
+                    if let Some(payload) = data.payloads[slot].as_ref() {
+                        if let Some(text) = payload.get("_text").and_then(|t| t.as_str()) {
+                            out.push((data.ids[slot].clone(), text.to_owned(), payload.clone()));
+                        }
+                    }
+                }
+            }
+            out
+        };
+        if live.is_empty() {
+            return Ok(());
+        }
+        // Fit on the full corpus, then re-embed each document with the new vocab.
+        let repoints: Vec<Point> = {
+            let mut emb = embedder.lock();
+            let corpus: Vec<&str> = live.iter().map(|(_, t, _)| t.as_str()).collect();
+            emb.fit(&corpus)?;
+            let mut out = Vec::with_capacity(live.len());
+            for (id, text, payload) in &live {
+                out.push(Point {
+                    id: id.clone(),
+                    vector: embed_nonzero(&**emb, text, self.inner.config.dimension)?,
+                    sparse: None,
+                    payload: Some(payload.clone()),
+                });
+            }
+            out
+        };
+        self.upsert_batch_inner(repoints, true)?;
+        self.inner.text_dirty.store(false, Ordering::Release);
         Ok(())
     }
 
@@ -459,6 +663,9 @@ impl Collection {
         filter: Option<&Filter>,
     ) -> Result<Vec<Hit>> {
         self.guard()?;
+        // Auto-embed collections rebuild a stale vocabulary before any search so
+        // stored vectors and the query share one vocabulary (SPEC-005 §5).
+        self.refit_if_dirty()?;
         // Reject unsupported filter features up front (geo, nested-path keys —
         // FLT-012), even for an otherwise-empty filter.
         if let Some(f) = filter {
@@ -641,10 +848,11 @@ impl Collection {
     }
 
     /// Apply a WAL upsert during recovery — validate + apply, no re-logging.
+    /// Reserved keys are allowed: recovered text documents carry `_text`.
     pub(crate) fn replay_upsert(&self, points: Vec<Point>) -> Result<()> {
         let prepared: Vec<PreparedPoint> = points
             .into_iter()
-            .map(|p| self.prepare(p))
+            .map(|p| self.prepare_inner(p, true))
             .collect::<Result<_>>()?;
         self.apply_prepared(prepared);
         Ok(())

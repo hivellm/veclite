@@ -408,6 +408,11 @@ impl VecLite {
                 options.dimension
             )));
         }
+        // Reject an unknown auto-embed provider before journaling (EMB-021), so a
+        // bad `CreateColl` never enters the WAL.
+        if let Some(provider) = &options.embedding_provider {
+            crate::embedding::build_provider(provider, options.dimension)?;
+        }
         let _guard = self.inner.registry.lock();
         if self.inner.collections.contains_key(name) {
             return Err(VecLiteError::AlreadyExists(name.to_owned()));
