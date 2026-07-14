@@ -1,12 +1,18 @@
 [workspace]
 resolver = "2"
-members = ["crates/veclite"]
+members = ["crates/veclite", "xtask"]
+# Default commands (build/test/clippy without -p) target the library only; xtask
+# is a native dev tool (it uses std::process and cannot build for wasm32), so it
+# is opted out of the default set and the wasm CI job builds `-p veclite`.
+default-members = ["crates/veclite"]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-# Own MSRV (REL-002, ADR-0001): 1.85 is the edition-2024 floor.
-rust-version = "1.85"
+# Own MSRV (REL-002, ADR-0001). Edition 2024 floors at 1.85, but the pinned
+# `hnsw_rs =0.3.4` (CORE-030) uses `is_multiple_of` (stable in 1.87), so 1.87 is
+# the true minimum. Raise this only when a dependency or feature forces it.
+rust-version = "1.87"
 license = "Apache-2.0"
 repository = "https://github.com/hivellm/veclite"
 

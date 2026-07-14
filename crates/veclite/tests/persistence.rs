@@ -215,7 +215,7 @@ fn replay_and_checkpoints_match_model_after_crash() {
             .unwrap_or_else(|e| panic!("{e}"));
         for step in 0..200u32 {
             let id = format!("id{}", rng.next_u64() % 30);
-            if rng.next_u64() % 3 == 0 {
+            if rng.next_u64().is_multiple_of(3) {
                 c.delete(&id).unwrap_or_else(|e| panic!("{e}"));
                 model.remove(&id);
             } else {

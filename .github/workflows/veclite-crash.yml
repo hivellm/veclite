@@ -1,0 +1,74 @@
+name: VecLite Crash Suite (G2)
+
+# The crash-safety gate (SPEC-015 §2, NFR-05): the full suite runs nightly on
+# all three OSes at 10 000 iterations, plus the real kill-9 subprocess harness.
+# A lighter smoke run also executes on pull requests so regressions surface
+# before merge. The per-commit 3-OS test job (rust-test.yml) already runs the
+# crash suite at its default iteration count on every push.
+
+on:
+  schedule:
+    - cron: '0 5 * * *' # nightly, 05:00 UTC
+  workflow_dispatch:
+    inputs:
+      iters:
+        description: In-process crash iterations
+        default: '10000'
+      kills:
+        description: Subprocess kill-9 iterations
+        default: '200'
+  pull_request:
+    branches: [ '**' ]
+    paths:
+      - 'crates/veclite/src/storage/**'
+      - 'crates/veclite/src/persist/**'
+      - 'crates/veclite/tests/crash_safety.rs'
+      - 'xtask/**'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  crash-gate:
+    name: crash suite (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest, windows-latest, macos-latest ]
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: crash-${{ matrix.os }}
+
+      # Nightly / manual: the full NFR-05 gate. Pull-request smoke: a lighter
+      # run so the merge path stays fast (the nightly job carries the 10 000).
+      - name: Run crash gate (cargo xtask crash)
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            ITERS=800; KILLS=60
+          else
+            ITERS="${{ github.event.inputs.iters || '10000' }}"
+            KILLS="${{ github.event.inputs.kills || '200' }}"
+          fi
+          echo "crash gate: $ITERS in-process iterations, $KILLS kills"
+          cargo xtask crash "$ITERS" "$KILLS"
+
+  golden-compat:
+    name: v1 golden-file compatibility (NFR-11)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install stable
+        uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: golden
+      - name: Golden files still open and return recorded results
+        run: cargo test -p veclite --test golden golden_v1_opens_and_returns_recorded_results

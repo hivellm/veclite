@@ -26,7 +26,9 @@ jobs:
           key: wasm32
 
       - name: Build for wasm32
-        run: cargo build --workspace --target wasm32-unknown-unknown
+        # `-p veclite`, not `--workspace`: xtask is a native dev tool and does
+        # not build for wasm32 (SPEC-002/CORE-004 apply to the library only).
+        run: cargo build -p veclite --target wasm32-unknown-unknown
 
   dependency-deny-list:
     name: No network crates in default build (NFR-08)

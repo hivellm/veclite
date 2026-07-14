@@ -22,7 +22,8 @@ pub(crate) const WAL_FORMAT_VERSION: u32 = 1;
 /// 16-byte WAL header: magic(4) · format_version(4) · file_uuid_prefix(8).
 pub(crate) const WAL_HEADER_SIZE: u64 = 16;
 /// Per-entry fixed header: seq(8) · coll_id(4) · op(1) · reserved(3) ·
-/// body_len(4) · body_crc32(4) (SPEC-003 §3).
+/// body_len(4) · crc32(4) (SPEC-003 §3). The crc covers the header fields and
+/// the body (see `entry_crc`).
 const ENTRY_HEADER_SIZE: usize = 24;
 
 /// The eight mutating operations recorded in the WAL (SPEC-003 §3).
@@ -76,8 +77,23 @@ pub(crate) struct WalEntry {
     pub(crate) body: Vec<u8>,
 }
 
+/// Offset of the 20-byte integrity-protected header prefix within an entry:
+/// seq(8) · coll_id(4) · op(1) · reserved(3) · body_len(4). The `crc32` field
+/// at bytes [20..24] covers this prefix **and** the body, so a bit flip in any
+/// header field (not just the body) is caught on replay (SPEC-003 §3).
+const ENTRY_CRC_PREFIX: usize = 20;
+
+/// CRC32 over an entry's header prefix concatenated with its body.
+fn entry_crc(header_prefix: &[u8], body: &[u8]) -> u32 {
+    let mut h = crc32fast::Hasher::new();
+    h.update(header_prefix);
+    h.update(body);
+    h.finalize()
+}
+
 impl WalEntry {
-    /// Serialize the entry (24-byte header + body), CRC over the body.
+    /// Serialize the entry (24-byte header + body); the CRC covers the header
+    /// fields and the body (SPEC-003 §3).
     fn encode(&self) -> Result<Vec<u8>> {
         let body_len = u32::try_from(self.body.len())
             .map_err(|_| VecLiteError::Corrupt("wal: entry body exceeds 4 GiB".to_owned()))?;
@@ -87,7 +103,8 @@ impl WalEntry {
         out.push(self.op.to_byte());
         out.extend_from_slice(&[0u8; 3]); // reserved
         out.extend_from_slice(&body_len.to_le_bytes());
-        out.extend_from_slice(&crc32fast::hash(&self.body).to_le_bytes());
+        debug_assert_eq!(out.len(), ENTRY_CRC_PREFIX);
+        out.extend_from_slice(&entry_crc(&out, &self.body).to_le_bytes());
         out.extend_from_slice(&self.body);
         Ok(out)
     }
@@ -258,14 +275,16 @@ fn decode_entry(all: &[u8], at: usize, expected_seq: u64) -> Option<(WalEntry, u
     let coll_id = le::u32(all, at + 8, "wal").ok()?;
     let op = WalOp::from_byte(all[at + 12]).ok()?;
     let body_len = le::u32(all, at + 16, "wal").ok()? as usize;
-    let body_crc = le::u32(all, at + 20, "wal").ok()?;
+    let stored_crc = le::u32(all, at + 20, "wal").ok()?;
     let body_start = at + ENTRY_HEADER_SIZE;
     let body_end = body_start
         .checked_add(body_len)
         .filter(|&e| e <= all.len())?;
     let body = &all[body_start..body_end];
-    if crc32fast::hash(body) != body_crc {
-        return None; // torn / corrupt body (WAL-011)
+    // The CRC covers the header prefix (seq/coll_id/op/reserved/body_len) plus
+    // the body, so a flip in any header field is a torn/corrupt entry (WAL-011).
+    if entry_crc(&all[at..at + ENTRY_CRC_PREFIX], body) != stored_crc {
+        return None;
     }
     Some((
         WalEntry {

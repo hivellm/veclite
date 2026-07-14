@@ -1,0 +1,4 @@
+# `cargo xtask <cmd>` → runs the native dev-task runner (SPEC-015 §7).
+# e.g. `cargo xtask crash` runs the crash-safety gate (in-process suite + kill-9).
+[alias]
+xtask = "run --release -p xtask --"

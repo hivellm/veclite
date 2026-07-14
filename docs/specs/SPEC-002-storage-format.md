@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Draft — becomes **frozen-normative** at gate G2 ([DAG](../DAG.md)); after that, changes require a format-version bump |
+| **Status** | **Frozen-normative** (format v1, phase2e / gate G2). The on-disk byte layout is stable: committed v1 golden files (`crates/veclite/tests/compat/golden/`) MUST keep opening on every future commit, and any change to the byte format requires a **new format version**, never an edit to v1. |
 | **Phase / tasks** | Phase 2 · T2.1, T2.2, T2.5–T2.9 |
 | **PRD requirements** | FR-03–06, FR-50, FR-53–56; NFR-05, NFR-11 |
 | **Planning source** | [04-storage-format.md](../vectorizer-lite/04-storage-format.md) |
@@ -145,5 +145,14 @@ CollEntry {
 2. **Crash suite** (T2.10, SPEC-015 §4): 10 000 iterations of kill-9 + fault-injection torn writes — reopen always succeeds, all acked-`Full` commits present, zero main-file corruption.
 3. **Bit-flip drills**: random single-bit corruption in each segment type → open fails with `Corrupt` naming the segment; never UB, never a wrong answer. Damaged tail beyond committed TOC → `read_only` and rw open both succeed.
 4. **mmap**: dataset 4× RAM opens and serves searches; warm open of the 1 M-vector reference file < 100 ms (NFR-02).
+
+**Freeze status (phase2e).** Criteria 1–3 are met and enforced in CI: the crash
+suite (`crates/veclite/tests/crash_safety.rs` + `cargo xtask crash`) runs 10 000
+in-process iterations plus a real subprocess kill-9 harness nightly on
+Linux/macOS/Windows, and the v1 golden files are guarded on every run
+(`crates/veclite/tests/golden.rs`). These fix the **byte format**, which is now
+frozen. Criterion 4 (the mmap access path and its warm-open budget) does not
+change any on-disk bytes and is tracked in `phase2f_mmap-hnsw-persistence`
+(ADR-0003); it reads the same frozen v1 layout.
 5. **Windows vacuum**: shrink-in-place under mmap passes on Windows CI.
 6. **Freeze artifact**: this document marked frozen-normative; golden files for v1 committed to `tests/compat/golden/` and read by every subsequent CI run (NFR-11).

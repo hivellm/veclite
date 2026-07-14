@@ -27,8 +27,13 @@ Write-ahead logging with in-memory apply:
 ## 3. Entry format
 
 ```
-| seq u64 | coll_id u32 | op u8 | reserved u8[3] | body_len u32 | body_crc32 u32 | body (MessagePack) |
+| seq u64 | coll_id u32 | op u8 | reserved u8[3] | body_len u32 | crc32 u32 | body (MessagePack) |
 ```
+
+The `crc32` covers the 20-byte header prefix (`seq`, `coll_id`, `op`,
+`reserved`, `body_len`) **and** the body, so a bit flip in any header field —
+not only the body — is detected on replay (phase2e; closed a pre-freeze gap
+where a corrupted `coll_id` was silently misrouted).
 
 | `op` | Name | Body |
 |---|---|---|
@@ -42,7 +47,7 @@ Write-ahead logging with in-memory apply:
 | 8 | `PIDX_DECLARE` | `{ key, kind }` (late-added payload index) |
 
 - **WAL-010** `seq` starts at 1 after each checkpoint and increases by 1 per entry. A gap or non-monotonic `seq` during replay MUST stop replay at the last contiguous entry.
-- **WAL-011** `body_crc32` covers the body bytes. An entry with a bad crc terminates replay: it and everything after it are discarded (torn tail). Entries **before** it are kept — a mid-file crc failure with valid entries after it is impossible under append-only writing and MUST be treated as the torn tail (discard from the bad entry onward).
+- **WAL-011** The entry `crc32` covers the header prefix (`seq`/`coll_id`/`op`/`reserved`/`body_len`) and the body bytes. An entry with a bad crc terminates replay: it and everything after it are discarded (torn tail). Entries **before** it are kept — a mid-file crc failure with valid entries after it is impossible under append-only writing and MUST be treated as the torn tail (discard from the bad entry onward).
 - **WAL-012** The whole entry is the atomic unit: a partially applied batch MUST never be observable, in memory or after recovery.
 
 ## 4. Durability modes

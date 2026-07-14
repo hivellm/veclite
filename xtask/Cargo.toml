@@ -1,0 +1,15 @@
+[package]
+name = "xtask"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+# Native-only dev-task runner (SPEC-015 §7): `cargo xtask crash`. Not shipped,
+# not part of the default workspace build, never targets wasm32.
+[dependencies]
+veclite = { path = "../crates/veclite" }
+
+[lints]
+workspace = true

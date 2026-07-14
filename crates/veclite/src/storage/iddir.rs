@@ -81,7 +81,13 @@ impl IdDir {
             return Err(VecLiteError::Corrupt("iddir: zero buckets".to_owned()));
         }
         let mut at = 4;
-        let mut buckets = Vec::with_capacity(bucket_count);
+        // Cap the pre-allocation by what the input could actually describe: each
+        // bucket needs at least its 4-byte `entry_count`, so a valid encoding
+        // with N buckets is at least 4 + 4N bytes. Without this, an adversarial
+        // `bucket_count` (up to ~4e9) drives a multi-GiB allocation before the
+        // loop's byte reads would reject the truncated input (decode fuzz OOM).
+        let cap_hint = bucket_count.min(bytes.len() / 4);
+        let mut buckets = Vec::with_capacity(cap_hint);
         for _ in 0..bucket_count {
             let entry_count = le::u32(bytes, at, "iddir")? as usize;
             at += 4;
@@ -148,6 +154,21 @@ mod tests {
         ));
         assert!(matches!(
             IdDir::decode(&0u32.to_le_bytes()),
+            Err(VecLiteError::Corrupt(_))
+        ));
+    }
+
+    /// A huge `bucket_count` from adversarial bytes must be rejected as `Corrupt`
+    /// without a giant pre-allocation (regression: decode-fuzz OOM abort). The
+    /// pre-allocation is bounded by the input length, so this returns promptly.
+    #[test]
+    fn absurd_bucket_count_does_not_allocate() {
+        // bucket_count = u32::MAX, then no bucket bodies: the first entry_count
+        // read is out of range → Corrupt, and capacity is capped to bytes.len()/4.
+        let mut bytes = u32::MAX.to_le_bytes().to_vec();
+        bytes.extend_from_slice(&[0u8; 8]); // a little trailing slack
+        assert!(matches!(
+            IdDir::decode(&bytes),
             Err(VecLiteError::Corrupt(_))
         ));
     }

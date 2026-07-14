@@ -112,6 +112,33 @@ Versions 0.x are pre-release: the public API may change between minors until 1.0
   (default 0.25, STG-072). Verified: snapshot-under-write standalone
   consistency, file shrink after a 50 % delete with the pager still live for
   further writes, and the auto-vacuum escalation threshold.
+- Crash-safety gate G2 and format v1 freeze (task `phase2e`, DAG T2.10,
+  SPEC-015 §2, NFR-05/NFR-11). A crash suite (`crates/veclite/tests/crash_safety.rs`)
+  runs randomized upsert/delete/checkpoint workloads in all three durability
+  modes with an oracle model (TST-010), a torn-WAL-tail sweep and a WAL bit-flip
+  sweep (TST-011/012, WAL-011), a torn main-file tail check (STG-003), and
+  whole-file bit-flip drills (TST-012) — every reopen matches the model or fails
+  cleanly with `Corrupt`, never a panic or a silently wrong answer. Iteration
+  count scales via `VECLITE_CRASH_ITERS`. `cargo xtask crash` (new `xtask` crate,
+  SPEC-015 §7) runs the suite at 10 000 iterations plus a **real subprocess
+  kill-9 harness** that SIGKILL/TerminateProcess-es a live `Full`-durability
+  writer at random points and verifies every acked commit survives the reopen.
+  The suite runs nightly on Linux/macOS/Windows (`veclite-crash.yml`, TST-013).
+  Committed v1 golden files (`crates/veclite/tests/compat/golden/`) are guarded
+  on every run (`tests/golden.rs`), and **SPEC-002/SPEC-003 are now
+  frozen-normative**: the on-disk byte format is fixed; changes require a new
+  format version (NFR-11).
+
+### Fixed
+- **WAL entry integrity** (phase2e): the per-entry CRC now covers the fixed
+  header fields (`seq`/`coll_id`/`op`/`body_len`) in addition to the body, so a
+  bit flip in a header field is detected and terminates replay at the torn tail
+  (WAL-011) instead of silently misrouting or dropping the entry. Closed before
+  the format freeze.
+- **Decode OOM** (phase2e): `IdDir::decode` bounded its bucket pre-allocation by
+  the input length, so an adversarial `bucket_count` no longer triggers a
+  multi-GiB allocation (decode-fuzz could abort with an out-of-memory on
+  arbitrary bytes — a corrupt file must fail with `Corrupt`, never OOM).
 
 ### Changed
 - **PRD OQ-1 resolved** (phase1d): the reference hardware profile is pinned in
@@ -128,6 +155,10 @@ Versions 0.x are pre-release: the public API may change between minors until 1.0
   larger-than-RAM benefit) and has no stable graph serialization (so the graph
   is rebuilt from vectors on every open). Both are tracked in
   `phase2f_mmap-hnsw-persistence`, gated on an index-strategy decision.
+- **MSRV raised to 1.87** (phase2e, REL-002): edition 2024 floors at 1.85, but
+  the pinned `hnsw_rs =0.3.4` (CORE-030) uses `is_multiple_of` (stable in 1.87),
+  so 1.87 is the true minimum. `Cargo.toml` `rust-version`, SPEC-016 REL-002,
+  and the MSRV CI job updated accordingly.
 - **vacuum mechanism** (phase2d): v1 `vacuum()` shrinks via a compacted
   temp-file + atomic close→rename→reopen swap (SQLite-VACUUM style) rather than
   the in-place append-then-truncate of SPEC-002 STG-071. This is crash-safe and

@@ -1,0 +1,19 @@
+{
+  "id": "2026-07-14T10-02-08-phase2e-crash-gate-two-robustness-bugs-found-pre-freeze-msrv-is-set-by-hnsw-rs-not-the-edition",
+  "title": "phase2e crash gate: two robustness bugs found pre-freeze + MSRV is set by hnsw_rs, not the edition",
+  "content": "The G2 crash suite surfaced three issues, all fixed before freezing SPEC-002/003:\n\n1. WAL entry header had no integrity protection. The per-entry crc covered only the body; seq is cross-checked (monotonic) and op is validated (from_byte), but coll_id and body_len were trusted. A bit flip in coll_id makes decode_entry return Some with a bogus coll_id, and apply_wal_entry then can't find the collection and SILENTLY DROPS that upsert while replay continues — a non-prefix, silently-wrong recovery. Fix: the crc now covers the 20-byte header prefix (seq/coll_id/op/reserved/body_len) + body (storage/wal.rs entry_crc). A flip in any header field is now a torn tail (discard from there). Lesson: any length/routing field read from disk must be integrity-checked, not just the payload.\n\n2. IdDir::decode OOM. It read bucket_count (u32) from the bytes and did Vec::with_capacity(bucket_count) BEFORE the loop's byte reads would reject a truncated input. An adversarial bucket_count (~4e9) → ~92 GB eager allocation → OOM abort (not a panic, so worse — the \"arbitrary bytes never panic\" fuzz aborted the whole test process). This was FLAKY across OSes because proptest uses a random seed per run: only the ubuntu CI run happened to generate the bad input. Fix: cap the capacity hint by what the input could describe — each bucket needs >=4 bytes, so bucket_count.min(bytes.len()/4). The loop stays correct (self-limiting via byte reads). Added a deterministic regression (absurd_bucket_count_does_not_allocate) so it never depends on proptest luck again. Lesson: never pre-allocate from an untrusted length prefix; bound by remaining input. body.rs already did this (.min(4096)); iddir was the one that didn't.\n\n3. MSRV is set by the dependency graph, not the edition. Declared MSRV was 1.85 (edition-2024 floor) but the pinned hnsw_rs =0.3.4 calls is_multiple_of (stable 1.87), so `cargo build` on 1.85 fails with E0658. The true MSRV is 1.87. Raised rust-version to 1.87 (Cargo.toml + SPEC-016 REL-002 + PRD OQ-2). Lesson: the MSRV CI job builds the whole locked dep tree; a pinned dep's own MSRV can exceed the edition floor. Check `cargo +<msrv> build --workspace` after adding/pinning deps.\n\nAlso: adding an xtask workspace member breaks `cargo build --workspace --target wasm32` (xtask uses std::process). Fix: default-members = [\"crates/veclite\"] and the wasm CI job uses `-p veclite`, not --workspace.",
+  "source": "manual",
+  "relatedTask": "phase2e_crash-suite-format-freeze",
+  "tags": [
+    "phase2e",
+    "crash-safety",
+    "wal",
+    "integrity",
+    "oom",
+    "msrv",
+    "hnsw_rs",
+    "xtask",
+    "veclite"
+  ],
+  "createdAt": "2026-07-14T10:02:08.910Z"
+}
