@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::fs::OpenOptions;
 use std::path::{Path, PathBuf};
 
-use veclite::{CollectionOptions, Metric, Point, Quantization, VecLite};
+use veclite::{CollectionOptions, Metric, Point, Quantization, VecLite, VecLiteError};
 
 /// Deterministic splitmix64 for reproducible op sequences.
 struct Rng(u64);
@@ -98,7 +98,7 @@ fn wal_replay_recovers_uncheckpointed_writes() {
         c.delete("y").unwrap_or_else(|e| panic!("{e}"));
         // Simulate a crash: leak the handle so Drop's checkpoint never runs and
         // the WAL keeps the CREATE + UPSERT + DELETE entries.
-        std::mem::forget(db);
+        db.__test_simulate_crash();
     }
 
     let db = VecLite::open(&path).unwrap_or_else(|e| panic!("{e}"));
@@ -229,7 +229,7 @@ fn replay_and_checkpoints_match_model_after_crash() {
             }
         }
         // Crash after the last op — may be mid-WAL or just after a checkpoint.
-        std::mem::forget(db);
+        db.__test_simulate_crash();
     }
 
     let db = VecLite::open(&path).unwrap_or_else(|e| panic!("{e}"));
@@ -265,7 +265,7 @@ fn truncated_wal_tail_recovers_prior_entries() {
             c.upsert(Point::new(format!("v{i}"), vec![i as f32, 0.0]))
                 .unwrap_or_else(|e| panic!("{e}"));
         }
-        std::mem::forget(db);
+        db.__test_simulate_crash();
     }
     // Tear the last entry by dropping a few bytes off the WAL.
     let wal = wal_path(&path);
@@ -286,6 +286,138 @@ fn truncated_wal_tail_recovers_prior_entries() {
             .unwrap_or_else(|e| panic!("{e}"))
             .len(),
         5
+    );
+    drop(db);
+    cleanup(&path);
+}
+
+/// Task 2.2: a second read-write open of the same file fails fast with `Locked`,
+/// and a read-only open conflicts with the held exclusive lock too (STG-060).
+#[test]
+fn second_open_gets_locked() {
+    let path = db_path("lock");
+    cleanup(&path);
+    let db1 = VecLite::open(&path).unwrap_or_else(|e| panic!("{e}"));
+    assert!(matches!(VecLite::open(&path), Err(VecLiteError::Locked)));
+    assert!(matches!(
+        VecLite::open_with(&path, veclite::OpenOptions::new().read_only(true)),
+        Err(VecLiteError::Locked)
+    ));
+    drop(db1); // releases the lock
+    let db2 = VecLite::open(&path).unwrap_or_else(|e| panic!("{e}"));
+    drop(db2);
+    cleanup(&path);
+}
+
+/// Task 1.5: a read-only database serves reads but rejects every mutation with
+/// `ReadOnly` (STG-062).
+#[test]
+fn read_only_rejects_writes_allows_reads() {
+    let path = db_path("ro");
+    cleanup(&path);
+    {
+        let db = VecLite::open(&path).unwrap_or_else(|e| panic!("{e}"));
+        let c = db
+            .create_collection("docs", opts(3))
+            .unwrap_or_else(|e| panic!("{e}"));
+        c.upsert(Point::new("a", vec![1.0, 2.0, 3.0]))
+            .unwrap_or_else(|e| panic!("{e}"));
+        db.checkpoint().unwrap_or_else(|e| panic!("{e}"));
+    }
+    let db = VecLite::open_with(&path, veclite::OpenOptions::new().read_only(true))
+        .unwrap_or_else(|e| panic!("{e}"));
+    let c = db.collection("docs").unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(c.len(), 1); // reads work
+    assert_eq!(
+        c.search(&[1.0, 2.0, 3.0], 1)
+            .unwrap_or_else(|e| panic!("{e}"))[0]
+            .id,
+        "a"
+    );
+    assert!(matches!(
+        c.upsert(Point::new("b", vec![4.0, 5.0, 6.0])),
+        Err(VecLiteError::ReadOnly)
+    ));
+    assert!(matches!(
+        db.create_collection("x", opts(3)),
+        Err(VecLiteError::ReadOnly)
+    ));
+    drop(db);
+    cleanup(&path);
+}
+
+/// Task 1.5 / WAL-043: a read-only open over a pending WAL fails with
+/// `WalPending`; `read_only_ignore_wal` opens the last checkpoint instead.
+#[test]
+fn read_only_wal_pending_guard() {
+    let path = db_path("ropending");
+    cleanup(&path);
+    {
+        let db = VecLite::open(&path).unwrap_or_else(|e| panic!("{e}"));
+        let c = db
+            .create_collection("docs", opts(2))
+            .unwrap_or_else(|e| panic!("{e}"));
+        c.upsert(Point::new("a", vec![1.0, 2.0]))
+            .unwrap_or_else(|e| panic!("{e}"));
+        db.__test_simulate_crash(); // WAL has uncheckpointed entries
+    }
+    assert!(matches!(
+        VecLite::open_with(&path, veclite::OpenOptions::new().read_only(true)),
+        Err(VecLiteError::WalPending)
+    ));
+    // With ignore, it opens the last checkpoint (gen 0, before the WAL writes).
+    let db = VecLite::open_with(
+        &path,
+        veclite::OpenOptions::new()
+            .read_only(true)
+            .read_only_ignore_wal(true),
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+    assert!(db.list_collections().is_empty());
+    drop(db);
+    cleanup(&path);
+}
+
+/// Task 1.6 / 2.4: damage beyond the committed TOC does not affect opening in
+/// either mode — both read the committed state (STG-003).
+#[test]
+fn damaged_tail_opens_in_both_modes() {
+    let path = db_path("damaged");
+    cleanup(&path);
+    {
+        let db = VecLite::open(&path).unwrap_or_else(|e| panic!("{e}"));
+        let c = db
+            .create_collection("docs", opts(2))
+            .unwrap_or_else(|e| panic!("{e}"));
+        c.upsert(Point::new("a", vec![1.0, 2.0]))
+            .unwrap_or_else(|e| panic!("{e}"));
+        db.checkpoint().unwrap_or_else(|e| panic!("{e}"));
+    }
+    // Append garbage past the committed TOC (an uncommitted torn tail).
+    {
+        let mut f = OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap_or_else(|e| panic!("{e}"));
+        std::io::Write::write_all(&mut f, &[0xABu8; 500]).unwrap_or_else(|e| panic!("{e}"));
+        f.sync_all().unwrap_or_else(|e| panic!("{e}"));
+    }
+    {
+        let db = VecLite::open(&path).unwrap_or_else(|e| panic!("{e}")); // read-write
+        assert_eq!(
+            db.collection("docs")
+                .unwrap_or_else(|e| panic!("{e}"))
+                .len(),
+            1
+        );
+    }
+    let db = VecLite::open_with(&path, veclite::OpenOptions::new().read_only(true))
+        .unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(
+        db.collection("docs")
+            .unwrap_or_else(|e| panic!("{e}"))
+            .len(),
+        1
     );
     drop(db);
     cleanup(&path);

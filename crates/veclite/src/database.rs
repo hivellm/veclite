@@ -251,8 +251,13 @@ impl VecLite {
     #[cfg(not(target_arch = "wasm32"))]
     pub fn open_with(path: impl AsRef<Path>, options: OpenOptions) -> Result<Self> {
         let path = path.as_ref();
-        let (persistence, state) =
-            Persistence::open(path, options.durability, options.wal_size_limit)?;
+        let (persistence, state) = Persistence::open(
+            path,
+            options.durability,
+            options.wal_size_limit,
+            options.read_only,
+            options.read_only_ignore_wal,
+        )?;
         let persistence = Arc::new(persistence);
         let inner = Arc::new(DatabaseInner {
             collections: DashMap::new(),
@@ -290,6 +295,17 @@ impl VecLite {
     #[cfg(not(target_arch = "wasm32"))]
     pub fn checkpoint(&self) -> Result<()> {
         checkpoint_inner(&self.inner)
+    }
+
+    /// Test hook: mark the database crashed and drop it, so the close-time
+    /// checkpoint is skipped and the WAL survives for the next `open` to
+    /// replay. The advisory lock is still released. Not part of the stable API.
+    #[doc(hidden)]
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn __test_simulate_crash(self) {
+        if let Some(p) = &self.inner.persistence {
+            p.mark_crashed();
+        }
     }
 
     /// Create a collection; `AlreadyExists` when the name is taken
@@ -412,8 +428,12 @@ impl VecLite {
 #[cfg(not(target_arch = "wasm32"))]
 impl Drop for VecLite {
     fn drop(&mut self) {
-        if Arc::strong_count(&self.inner) == 1 && self.inner.persistence.is_some() {
-            let _ = checkpoint_inner(&self.inner);
+        if Arc::strong_count(&self.inner) == 1 {
+            if let Some(p) = &self.inner.persistence {
+                if !p.is_crashed() {
+                    let _ = checkpoint_inner(&self.inner);
+                }
+            }
         }
     }
 }

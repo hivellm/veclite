@@ -185,7 +185,7 @@ fn torn_tail_beyond_committed_header_leaves_previous_toc_valid() {
 
     // The header still points at generation 1, so open succeeds and returns it
     // (STG-003): the damaged tail beyond the committed TOC is ignored.
-    let (mut p, toc) = Pager::open(&path).unwrap_or_else(|e| panic!("{e}"));
+    let (mut p, toc) = Pager::open(&path, true).unwrap_or_else(|e| panic!("{e}"));
     assert_eq!(toc.generation, 1);
     let seg = p
         .read_segment(toc.collections[0].live_segments[0])
@@ -223,7 +223,7 @@ fn corruption_in_the_torn_tail_does_not_affect_open() {
             > committed_end
     );
 
-    let (_, toc) = Pager::open(&path).unwrap_or_else(|e| panic!("{e}"));
+    let (_, toc) = Pager::open(&path, true).unwrap_or_else(|e| panic!("{e}"));
     assert_eq!(toc.generation, 2);
     let _ = std::fs::remove_file(&path);
 }

@@ -30,6 +30,7 @@ crc32fast = "1.4"
 roaring = "0.10"
 xxhash-rust = { version = "0.8", features = ["xxh64"] }
 uuid = { version = "1", features = ["v4"] }
+fs4 = "0.13"
 
 [workspace.lints.clippy]
 unwrap_used = "deny"

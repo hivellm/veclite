@@ -39,6 +39,25 @@ fn as_usize(v: u64, ctx: &str) -> Result<usize> {
     usize::try_from(v).map_err(|_| VecLiteError::Corrupt(format!("{ctx}: offset exceeds usize")))
 }
 
+/// Advisory lock on `file` (STG-060): exclusive for read-write, shared for
+/// read-only. On the pager's own handle, so the pager's I/O is unaffected while
+/// another process's handle is blocked; a conflict is `Locked`, not a wait.
+fn lock_file(file: &std::fs::File, exclusive: bool) -> Result<()> {
+    use fs4::fs_std::FileExt;
+    // UFCS: std gained inherent `try_lock_*` in 1.89 (a `TryLockError` API)
+    // that shadows fs4's; those don't exist on our MSRV 1.85 — pin to fs4.
+    let acquired = if exclusive {
+        FileExt::try_lock_exclusive(file)?
+    } else {
+        FileExt::try_lock_shared(file)?
+    };
+    if acquired {
+        Ok(())
+    } else {
+        Err(VecLiteError::Locked)
+    }
+}
+
 impl Pager {
     /// Create a brand-new file with a fresh v4 uuid and an initial empty
     /// checkpoint (generation 0). Fails if the file already exists.
@@ -48,6 +67,7 @@ impl Pager {
             .write(true)
             .create_new(true)
             .open(path)?;
+        lock_file(&file, true)?;
         let mut pager = Pager {
             file,
             uuid: *uuid::Uuid::new_v4().as_bytes(),
@@ -60,8 +80,11 @@ impl Pager {
 
     /// Open an existing file read-write: validate the header, then load and
     /// CRC-check the TOC it points at (STG-010/051).
-    pub(crate) fn open(path: &Path) -> Result<(Pager, Toc)> {
+    pub(crate) fn open(path: &Path, exclusive: bool) -> Result<(Pager, Toc)> {
         let mut file = OpenOptions::new().read(true).write(true).open(path)?;
+        // Lock BEFORE any read (STG-060): another process's exclusive lock must
+        // surface as `Locked`, not a mid-read I/O error.
+        lock_file(&file, exclusive)?;
         let mut hbuf = [0u8; HEADER_SIZE];
         file.seek(SeekFrom::Start(0))?;
         file.read_exact(&mut hbuf)
@@ -211,7 +234,7 @@ mod tests {
         {
             Pager::create(&path, 1000).unwrap_or_else(|e| panic!("{e}"));
         }
-        let (_, toc) = Pager::open(&path).unwrap_or_else(|e| panic!("{e}"));
+        let (_, toc) = Pager::open(&path, true).unwrap_or_else(|e| panic!("{e}"));
         assert_eq!(toc.generation, 0);
         assert!(toc.collections.is_empty());
         let _ = std::fs::remove_file(&path);
@@ -238,7 +261,7 @@ mod tests {
             )
             .unwrap_or_else(|e| panic!("{e}"));
         }
-        let (mut p, toc) = Pager::open(&path).unwrap_or_else(|e| panic!("{e}"));
+        let (mut p, toc) = Pager::open(&path, true).unwrap_or_else(|e| panic!("{e}"));
         assert_eq!(toc.generation, 1);
         assert_eq!(toc.collections.len(), 1);
         let entry = &toc.collections[0];
@@ -276,8 +299,9 @@ mod tests {
             )
             .unwrap_or_else(|e| panic!("{e}"));
         }
+        drop(p); // release the exclusive lock before reopening the same file
         // The latest open sees generation 3 and its segment reads back.
-        let (mut p, toc) = Pager::open(&path).unwrap_or_else(|e| panic!("{e}"));
+        let (mut p, toc) = Pager::open(&path, true).unwrap_or_else(|e| panic!("{e}"));
         assert_eq!(toc.generation, 3);
         let s = p
             .read_segment(toc.collections[0].live_segments[0])

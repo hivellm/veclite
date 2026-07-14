@@ -43,6 +43,7 @@ crc32fast = { workspace = true }
 roaring = { workspace = true }
 xxhash-rust = { workspace = true }
 uuid = { workspace = true }
+fs4 = { workspace = true }
 
 [dev-dependencies]
 proptest.workspace = true

@@ -87,6 +87,18 @@ Versions 0.x are pre-release: the public API may change between minors until 1.0
   search, crash→WAL-replay equals a model over 200 random ops with interleaved
   checkpoints, delete/rename durability, torn-tail recovery, and the stale-WAL
   guard.
+- Single-writer safety and read-only open (task `phase2c`, DAG T2.6/T2.9,
+  SPEC-002 §6, native-only). Open takes an advisory lock on the database file's
+  own handle — exclusive for read-write, shared for read-only (`fs4`) — so a
+  second opener of a locked file fails immediately with `Locked` instead of
+  blocking or corrupting (STG-060). `OpenOptions::read_only(true)` serves reads
+  and searches but rejects every mutation with `ReadOnly`, and refuses to open
+  over a pending (uncheckpointed) WAL with `WalPending` unless
+  `read_only_ignore_wal(true)` opts into reading the last checkpoint (STG-062,
+  WAL-043). Both open modes tolerate a damaged tail beyond the committed TOC,
+  reading the last committed state (STG-003). Covered by four integration
+  tests (lock conflict, read-only read/write matrix, WalPending guard,
+  damaged-tail in both modes).
 
 ### Changed
 - **PRD OQ-1 resolved** (phase1d): the reference hardware profile is pinned in
@@ -97,3 +109,9 @@ Versions 0.x are pre-release: the public API may change between minors until 1.0
   with NFR-08) is replaced by a vendoring policy — needed code is copied into this
   repo with provenance headers, byte-identical encodings enforced by the conformance
   corpus. Quantization/SIMD land with `phase1b`, compression with `phase2a`.
+- **ADR-0003** (phase2c): memory-mapped larger-than-RAM reads (STG-004) and
+  HNSW-graph persistence (STG-063) are deferred while `hnsw_rs =0.3.4` is the
+  index — it keeps a full f32 copy of every vector in RAM (so mmap gives no
+  larger-than-RAM benefit) and has no stable graph serialization (so the graph
+  is rebuilt from vectors on every open). Both are tracked in
+  `phase2f_mmap-hnsw-persistence`, gated on an index-strategy decision.

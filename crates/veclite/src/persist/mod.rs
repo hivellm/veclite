@@ -13,11 +13,12 @@ pub(crate) mod wal_body;
 
 use std::path::Path;
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use parking_lot::Mutex;
 
-use crate::error::Result;
+use crate::error::{Result, VecLiteError};
 use crate::options::Durability;
 use crate::storage::compression::Codec;
 use crate::storage::pager::{CheckpointColl, Pager};
@@ -51,6 +52,11 @@ pub(crate) struct Persistence {
     uuid: [u8; 16],
     durability: Durability,
     wal_size_limit: u64,
+    /// A read-only database rejects every mutation with `ReadOnly` (STG-062).
+    read_only: bool,
+    /// Set to skip the close-time checkpoint (a simulated crash, for tests) —
+    /// the WAL is then left for recovery to replay. The lock still releases.
+    crashed: AtomicBool,
     checkpoint: OnceLock<CheckpointFn>,
 }
 
@@ -63,15 +69,22 @@ pub(crate) struct LoadedState {
 }
 
 impl Persistence {
-    /// Open (or create) the pager + WAL for `path`, load each collection from
-    /// its checkpointed segments, and read (but do not yet apply) the WAL.
+    /// Open (or create) the pager + WAL for `path`, take the advisory lock, load
+    /// each collection from its checkpointed segments, and read (but do not yet
+    /// apply) the WAL. `read_only` takes a shared lock and never replays;
+    /// `read_only_ignore_wal` lets it open past a pending WAL (STG-060/062,
+    /// WAL-043).
     pub(crate) fn open(
         path: &Path,
         durability: Durability,
         wal_size_limit: u64,
+        read_only: bool,
+        read_only_ignore_wal: bool,
     ) -> Result<(Persistence, LoadedState)> {
         let created_epoch_s = now_epoch_s();
-        let (mut pager, toc) = open_pager(path, created_epoch_s)?;
+        // The pager locks its own handle (STG-060): exclusive for read-write,
+        // shared for read-only — before any read, so a conflict is `Locked`.
+        let (mut pager, toc) = open_pager(path, created_epoch_s, !read_only)?;
         let uuid = pager.uuid();
 
         // Reconstruct each collection from its live segments (STG-041 order is
@@ -86,7 +99,19 @@ impl Persistence {
         }
 
         let mut wal = Wal::open(&wal_path(path), uuid)?;
-        let replay = wal.replay()?;
+        let (replay_entries, discarded_tail) = if read_only {
+            // Read-only never replays (WAL-043). A non-empty WAL means there are
+            // uncheckpointed writes a reader would miss → refuse unless the
+            // caller opted to read the last checkpoint.
+            if !wal.is_empty()? && !read_only_ignore_wal {
+                return Err(VecLiteError::WalPending);
+            }
+            (Vec::new(), false)
+        } else {
+            let replay = wal.replay()?;
+            (replay.entries, replay.discarded_tail)
+        };
+
         Ok((
             Persistence {
                 journal: Mutex::new(Journal {
@@ -97,12 +122,14 @@ impl Persistence {
                 uuid,
                 durability,
                 wal_size_limit,
+                read_only,
+                crashed: AtomicBool::new(false),
                 checkpoint: OnceLock::new(),
             },
             LoadedState {
                 collections,
-                replay_entries: replay.entries,
-                discarded_tail: replay.discarded_tail,
+                replay_entries,
+                discarded_tail,
             },
         ))
     }
@@ -115,6 +142,16 @@ impl Persistence {
         self.durability
     }
 
+    /// Mark the database as crashed: the close-time checkpoint is skipped, so
+    /// the WAL survives for recovery (used to test crash recovery).
+    pub(crate) fn mark_crashed(&self) {
+        self.crashed.store(true, Ordering::Release);
+    }
+
+    pub(crate) fn is_crashed(&self) -> bool {
+        self.crashed.load(Ordering::Acquire)
+    }
+
     /// Wire the checkpoint driver (called once, right after the database Arc
     /// exists).
     pub(crate) fn set_checkpoint(&self, f: CheckpointFn) {
@@ -124,6 +161,9 @@ impl Persistence {
     /// Append one mutation to the WAL (SPEC-003 §3). fsync policy per durability
     /// mode is applied inside `Wal::append`.
     pub(crate) fn append(&self, coll_id: u32, op: WalOp, body: Vec<u8>) -> Result<()> {
+        if self.read_only {
+            return Err(VecLiteError::ReadOnly);
+        }
         let mut j = self.journal.lock();
         j.wal.append(coll_id, op, body, self.durability)?;
         Ok(())
@@ -150,6 +190,9 @@ impl Persistence {
     /// truncated only after the header-swap fsync, so a crash recovers to the
     /// pre- or post-checkpoint state, never between (WAL-032).
     pub(crate) fn commit(&self, colls: Vec<CheckpointColl>) -> Result<()> {
+        if self.read_only {
+            return Ok(()); // nothing to persist; a reader never mutates the file
+        }
         let mut j = self.journal.lock();
         j.generation += 1;
         let generation = j.generation;
@@ -179,9 +222,13 @@ fn wal_path(db: &Path) -> std::path::PathBuf {
 
 /// Open an existing `.veclite` file, or create a fresh one with an empty gen-0
 /// TOC. Returns the pager and its current TOC.
-fn open_pager(path: &Path, created_epoch_s: u64) -> Result<(Pager, crate::storage::toc::Toc)> {
+fn open_pager(
+    path: &Path,
+    created_epoch_s: u64,
+    exclusive: bool,
+) -> Result<(Pager, crate::storage::toc::Toc)> {
     if path.exists() {
-        Pager::open(path)
+        Pager::open(path, exclusive)
     } else {
         let pager = Pager::create(path, created_epoch_s)?;
         let toc = crate::storage::toc::Toc {
@@ -210,14 +257,14 @@ mod tests {
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_file(wal_path(&path));
         {
-            let (p, state) = Persistence::open(&path, Durability::Normal, 64 << 20)
+            let (p, state) = Persistence::open(&path, Durability::Normal, 64 << 20, false, false)
                 .unwrap_or_else(|e| panic!("{e}"));
             assert!(state.collections.is_empty());
             assert!(state.replay_entries.is_empty());
             let _ = p;
         }
         // Reopen: empty (no collections, clean WAL).
-        let (_, state) = Persistence::open(&path, Durability::Normal, 64 << 20)
+        let (_, state) = Persistence::open(&path, Durability::Normal, 64 << 20, false, false)
             .unwrap_or_else(|e| panic!("{e}"));
         assert!(state.collections.is_empty());
         assert!(state.replay_entries.is_empty());

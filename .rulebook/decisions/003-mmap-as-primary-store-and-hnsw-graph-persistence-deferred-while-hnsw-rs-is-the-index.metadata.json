@@ -1,0 +1,12 @@
+{
+  "id": 3,
+  "slug": "mmap-as-primary-store-and-hnsw-graph-persistence-deferred-while-hnsw-rs-is-the-index",
+  "title": "mmap-as-primary-store and HNSW-graph persistence deferred while hnsw_rs is the index",
+  "status": "accepted",
+  "date": "2026-07-14",
+  "relatedTasks": [
+    "phase2c_mmap-lock-readonly",
+    "phase2f_mmap-hnsw-persistence"
+  ],
+  "supersededBy": null
+}
