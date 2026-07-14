@@ -8,11 +8,16 @@
 //! reported through [`crate::VecLiteError::Corrupt`] with a locator string
 //! (`"header"`, `"toc"`, `"segment@<offset>"`), never a panic.
 
+pub(crate) mod body;
 pub(crate) mod compression;
+#[cfg(test)]
+mod gates;
 pub(crate) mod header;
+pub(crate) mod iddir;
 pub(crate) mod pager;
 pub(crate) mod segment;
 pub(crate) mod toc;
+pub(crate) mod vectors;
 
 /// Little-endian readers over a byte slice, returning `Corrupt(ctx)` on a short
 /// buffer instead of panicking (STG-010/021). Offsets are caller-checked to be

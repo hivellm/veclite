@@ -61,6 +61,20 @@ Versions 0.x are pre-release: the public API may change between minors until 1.0
   dependency-free HTTP client so no network crate enters the shipped build
   (NFR-08).
 
+- `.veclite` on-disk format v1 storage layer (task `phase2a`, DAG T2.1/T2.2,
+  SPEC-002 §1–5, native-only — gated off wasm32 per CORE-004): the fixed 4 KiB
+  header with `header_crc32` and `min_reader_version` gate; the immutable
+  segment codec (32-byte header, per-segment crc32 naming `segment@<offset>` on
+  mismatch, LZ4/zstd bodies vendored for `.vecdb` byte-compat, VECTORS never
+  compressed); all nine segment bodies (CONFIG/PAYLOAD/PIDX/CONFIG via
+  MessagePack, TOMBSTONE/PIDX via 64-bit roaring, VECTORS fixed-stride with
+  mmap slot addressing, IDDIR xxhash64 hash-bucketed directory, SPARSE, VOCAB,
+  HNSW); the MessagePack TOC with a generation counter and deterministic replay
+  order (STG-041); and the root-pointer-swap commit protocol —
+  segments→fsync→TOC→fsync→header→fsync (STG-050). Property round-trips, decode
+  fuzz (arbitrary bytes never panic), and a commit-crash-sequence test (a torn
+  tail beyond the committed header leaves the previous TOC valid) all pass.
+
 ### Changed
 - **PRD OQ-1 resolved** (phase1d): the reference hardware profile is pinned in
   [docs/benchmarks.md](docs/benchmarks.md) — a desktop AMD Ryzen 9 7950X3D class
