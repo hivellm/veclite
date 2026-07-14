@@ -12,6 +12,9 @@
 
 pub mod collection;
 pub mod database;
+// Text-embedding providers (SPEC-005): pure-Rust sparse embedders (bm25 default)
+// behind the `Embedder` trait. All targets — no native or network deps.
+pub mod embedding;
 pub mod error;
 // Payload filters (SPEC-006): the Qdrant-style model + evaluation (all targets),
 // with roaring-bitmap payload indexes as a native-only accelerator.
@@ -65,6 +68,7 @@ mod recall;
 
 pub use collection::Collection;
 pub use database::VecLite;
+pub use embedding::{DEFAULT_PROVIDER, Embedder, available_providers, build_provider};
 pub use error::{Result, VecLiteError};
 pub use filter::{Condition, Filter, MatchValue, Range};
 pub use options::{
