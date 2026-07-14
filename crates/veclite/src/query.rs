@@ -8,19 +8,12 @@
 
 use crate::collection::Collection;
 use crate::error::Result;
+use crate::filter::Filter;
 use crate::point::Hit;
 
 /// Default result limit when the builder's `limit` is left untouched
 /// (SPEC-004 §5).
 pub(crate) const DEFAULT_LIMIT: usize = 10;
-
-/// Opaque payload filter (SPEC-004 §5). The type is declared here so the
-/// builder slot exists; its conditions and evaluation land in phase3a
-/// (SPEC-006). It has no public constructor yet, so a query cannot carry one.
-#[derive(Clone, Debug)]
-pub struct Filter {
-    _private: (),
-}
 
 /// Fluent k-NN query over a [`Collection`] (SPEC-004 §5).
 ///
@@ -81,8 +74,8 @@ impl<'a> QueryBuilder<'a> {
         self
     }
 
-    /// Attach a payload filter. Declared for API stability; evaluation lands in
-    /// phase3a (SPEC-006). `Filter` has no public constructor yet.
+    /// Attach a payload filter (SPEC-006). Only points whose payload satisfies
+    /// the filter are returned; an empty filter matches everything.
     #[must_use]
     pub fn filter(mut self, filter: Filter) -> Self {
         self.filter = Some(filter);

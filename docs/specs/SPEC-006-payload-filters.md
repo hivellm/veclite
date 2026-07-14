@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Draft |
+| **Status** | Implemented (phase3a): filter model + server-parity semantics + declared payload indexes + exact filtered execution. Runtime `create_payload_index` (PIDX_DECLARE) and the HNSW over-fetch post-filter strategy are tracked in `phase3e_filter-runtime-index-hnsw-prefilter`; filtered `scroll` (FLT-032) lands with `scroll` in phase3d. |
 | **Phase / tasks** | Phase 3 · T3.1–T3.3 ([DAG](../DAG.md)) |
 | **PRD requirements** | FR-24, FR-32, FR-33 |
 | **Planning source** | [01-vision §feature matrix](../vectorizer-lite/01-vision-and-scope.md), server sources `db/payload_index.rs`, `models/qdrant/filter.rs`, `filter_processor.rs` |

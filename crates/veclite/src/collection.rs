@@ -12,6 +12,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use parking_lot::RwLock;
 
 use crate::error::{Result, VecLiteError};
+use crate::filter::Filter;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::filter::index::PayloadIndexes;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::index::HnswIndex;
 use crate::options::{CollectionOptions, Metric, Quantization};
@@ -20,7 +23,7 @@ use crate::persist::wal_body;
 use crate::point::{Hit, Point, SparseVector, validate_id};
 use crate::quantization::traits::{QuantizationMethod, QuantizationParams};
 use crate::quantization::{BinaryQuantization, ScalarQuantization};
-use crate::query::{Filter, QueryBuilder};
+use crate::query::QueryBuilder;
 use crate::simd::{cosine_similarity, dot_product, euclidean_distance};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::storage::wal::WalOp;
@@ -84,11 +87,16 @@ struct CollectionData {
     codes: Vec<u8>,
     /// Parameters to decode `codes`; `None` exactly when `codes` is empty.
     quant_params: Option<QuantizationParams>,
+    /// Declared payload indexes (SPEC-006 §3), maintained per write and used to
+    /// pre-filter selective queries. Empty when no index is declared. Native
+    /// only (roaring); wasm32 filters by scan.
+    #[cfg(not(target_arch = "wasm32"))]
+    payload_indexes: PayloadIndexes,
 }
 
 impl CollectionData {
     #[cfg(not(target_arch = "wasm32"))]
-    fn empty(index: Option<HnswIndex>) -> Self {
+    fn empty(index: Option<HnswIndex>, payload_indexes: PayloadIndexes) -> Self {
         CollectionData {
             vectors: Vec::new(),
             ids: Vec::new(),
@@ -99,6 +107,7 @@ impl CollectionData {
             index,
             codes: Vec::new(),
             quant_params: None,
+            payload_indexes,
         }
     }
 
@@ -126,6 +135,9 @@ const INITIAL_INDEX_CAPACITY: usize = 1024;
 /// `execute_query` so the brute-force/wasm path rejects out-of-range
 /// `ef_search` the same way the index path does.
 const EF_SEARCH_BOUNDS: std::ops::RangeInclusive<usize> = 1..=4096;
+
+/// Maximum payload size, checked on the serialized form (SPEC-002 §8, FLT-001).
+const MAX_PAYLOAD_BYTES: usize = 16 * 1024 * 1024;
 
 impl CollectionInner {
     /// Build a new collection's shared state, including its HNSW index
@@ -163,7 +175,7 @@ impl CollectionInner {
                     capacity.max(INITIAL_INDEX_CAPACITY),
                 )?),
             };
-            CollectionData::empty(index)
+            CollectionData::empty(index, PayloadIndexes::new(&config.payload_indexes))
         };
         #[cfg(target_arch = "wasm32")]
         let data = {
@@ -224,6 +236,29 @@ impl Collection {
                 "vector for id {:?} contains NaN or infinite values",
                 point.id
             )));
+        }
+        if let Some(payload) = point.payload.as_ref() {
+            // Top-level payload keys beginning with `_` are reserved (SPEC-006
+            // FLT-002, e.g. `_text`); reject rather than silently store them.
+            if let Some(obj) = payload.as_object() {
+                if let Some(reserved) = obj.keys().find(|k| k.starts_with('_')) {
+                    return Err(VecLiteError::InvalidArgument(format!(
+                        "payload key {reserved:?} is reserved (keys starting with '_')"
+                    )));
+                }
+            }
+            // Payload size limit (SPEC-002 §8 / FLT-001): 16 MiB. Checked on the
+            // serialized (uncompressed) form — a conservative bound, since the
+            // stored form is compressed.
+            let size = serde_json::to_vec(payload)
+                .map(|b| b.len())
+                .unwrap_or(usize::MAX);
+            if size > MAX_PAYLOAD_BYTES {
+                return Err(VecLiteError::InvalidArgument(format!(
+                    "payload for id {:?} is {size} bytes, over the {MAX_PAYLOAD_BYTES}-byte limit",
+                    point.id
+                )));
+            }
         }
         let mut vector = point.vector;
         if self.inner.config.metric == Metric::Cosine {
@@ -424,10 +459,11 @@ impl Collection {
         filter: Option<&Filter>,
     ) -> Result<Vec<Hit>> {
         self.guard()?;
-        // Payload-filter evaluation lands in phase3a (SPEC-006); the builder
-        // slot is declared but `Filter` has no public constructor yet, so this
-        // is inert.
-        let _ = filter;
+        // Reject unsupported filter features up front (geo, nested-path keys —
+        // FLT-012), even for an otherwise-empty filter.
+        if let Some(f) = filter {
+            f.validate()?;
+        }
         if limit == 0 {
             return Err(VecLiteError::InvalidArgument(
                 "limit must be greater than 0".to_owned(),
@@ -486,23 +522,47 @@ impl Collection {
         }
 
         let mut scored: Vec<(usize, f32)> = Vec::new();
-        #[cfg(not(target_arch = "wasm32"))]
-        match &data.index {
-            Some(index) => {
-                let fetch = limit + data.tombstones.len();
-                for (slot, distance) in index.search(q, fetch, ef_search)? {
-                    if data.id_to_slot.get(&data.ids[slot]) == Some(&slot) {
-                        scored.push((slot, distance_to_score(metric, distance)));
-                        if scored.len() == limit {
-                            break;
+        // An empty filter matches everything, so it takes the fast (index)
+        // path; only a filter with at least one clause diverts to the exact
+        // filtered path (SPEC-006 §4).
+        let active =
+            filter.filter(|f| !(f.must.is_empty() && f.should.is_empty() && f.must_not.is_empty()));
+        match active {
+            Some(f) => filtered_scored(&data, q, metric, dim, f, &mut scored),
+            None => {
+                #[cfg(not(target_arch = "wasm32"))]
+                match &data.index {
+                    // For a small live set (no more points than we are fetching),
+                    // the HNSW approximation can drop the farthest candidates;
+                    // exact brute force is both correct and cheaper. Larger sets
+                    // use the index.
+                    Some(_) if data.id_to_slot.len() <= limit + data.tombstones.len() => {
+                        brute_force(&data, q, metric, dim, &mut scored);
+                    }
+                    Some(index) => {
+                        let fetch = limit + data.tombstones.len();
+                        for (slot, distance) in index.search(q, fetch, ef_search)? {
+                            if data.id_to_slot.get(&data.ids[slot]) == Some(&slot) {
+                                scored.push((slot, distance_to_score(metric, distance)));
+                                if scored.len() == limit {
+                                    break;
+                                }
+                            }
+                        }
+                        // HNSW is approximate and can under-return; if it yielded
+                        // fewer than the available results, fall back to exact so
+                        // `search` always returns `min(limit, live)` (CORE-035).
+                        if scored.len() < limit.min(data.id_to_slot.len()) {
+                            scored.clear();
+                            brute_force(&data, q, metric, dim, &mut scored);
                         }
                     }
+                    None => brute_force(&data, q, metric, dim, &mut scored),
                 }
+                #[cfg(target_arch = "wasm32")]
+                brute_force(&data, q, metric, dim, &mut scored);
             }
-            None => brute_force(&data, q, metric, dim, &mut scored),
         }
-        #[cfg(target_arch = "wasm32")]
-        brute_force(&data, q, metric, dim, &mut scored);
 
         // Order per CORE-035, then truncate to the limit.
         if metric_is_similarity(metric) {
@@ -640,6 +700,9 @@ impl Collection {
         data.tombstones.clear();
         data.payloads.clear();
         data.sparses.clear();
+        // Slots are renumbered, so the payload indexes are rebuilt from scratch
+        // (apply_upsert below re-inserts each live point at its fresh slot).
+        data.payload_indexes = PayloadIndexes::new(&self.inner.config.payload_indexes);
         data.index = if self.inner.config.metric == Metric::DotProduct {
             None
         } else {
@@ -697,13 +760,58 @@ fn brute_force(
         if data.id_to_slot.get(&data.ids[slot]) != Some(&slot) {
             continue; // tombstoned or replaced by a newer slot
         }
-        let v = &data.vectors[slot * dim..(slot + 1) * dim];
-        let score = match metric {
-            Metric::Cosine => cosine_similarity(query, v),
-            Metric::Euclidean => euclidean_distance(query, v),
-            Metric::DotProduct => dot_product(query, v),
-        };
-        out.push((slot, score));
+        out.push((slot, score_slot(data, query, metric, dim, slot)));
+    }
+}
+
+/// Score one slot's stored vector against the query, per metric (CORE-035).
+fn score_slot(
+    data: &CollectionData,
+    query: &[f32],
+    metric: Metric,
+    dim: usize,
+    slot: usize,
+) -> f32 {
+    let v = &data.vectors[slot * dim..(slot + 1) * dim];
+    match metric {
+        Metric::Cosine => cosine_similarity(query, v),
+        Metric::Euclidean => euclidean_distance(query, v),
+        Metric::DotProduct => dot_product(query, v),
+    }
+}
+
+/// Exact filtered scoring (SPEC-006 §4). When a payload index yields a candidate
+/// superset for the `must` clause, only those slots are considered (pre-filter);
+/// otherwise every live slot is scanned (post-filter). Either way the **full**
+/// filter is applied to each slot, so the result set is identical to a scan
+/// (FLT-022/031). Exact brute-force scoring keeps all metrics correct.
+fn filtered_scored(
+    data: &CollectionData,
+    query: &[f32],
+    metric: Metric,
+    dim: usize,
+    filter: &Filter,
+    out: &mut Vec<(usize, f32)>,
+) {
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(candidates) = data.payload_indexes.candidates(filter) {
+        for s in candidates.iter() {
+            let slot = s as usize;
+            if slot < data.ids.len()
+                && data.id_to_slot.get(&data.ids[slot]) == Some(&slot)
+                && filter.matches(data.payloads[slot].as_ref())
+            {
+                out.push((slot, score_slot(data, query, metric, dim, slot)));
+            }
+        }
+        return;
+    }
+    for slot in 0..data.ids.len() {
+        if data.id_to_slot.get(&data.ids[slot]) == Some(&slot)
+            && filter.matches(data.payloads[slot].as_ref())
+        {
+            out.push((slot, score_slot(data, query, metric, dim, slot)));
+        }
     }
 }
 
@@ -713,6 +821,9 @@ fn tombstone(data: &mut CollectionData, id: &str) -> bool {
     match data.id_to_slot.remove(id) {
         Some(slot) => {
             data.tombstones.insert(slot);
+            #[cfg(not(target_arch = "wasm32"))]
+            data.payload_indexes
+                .remove(slot as u64, data.payloads[slot].as_ref());
             data.payloads[slot] = None;
             data.sparses[slot] = None;
             true
@@ -726,6 +837,9 @@ fn tombstone(data: &mut CollectionData, id: &str) -> bool {
 fn apply_upsert(data: &mut CollectionData, p: PreparedPoint, dim: usize) {
     if let Some(slot) = data.id_to_slot.remove(&p.id) {
         data.tombstones.insert(slot);
+        #[cfg(not(target_arch = "wasm32"))]
+        data.payload_indexes
+            .remove(slot as u64, data.payloads[slot].as_ref());
         data.payloads[slot] = None;
         data.sparses[slot] = None;
     }
@@ -736,6 +850,9 @@ fn apply_upsert(data: &mut CollectionData, p: PreparedPoint, dim: usize) {
     data.payloads.push(p.payload);
     data.sparses.push(p.sparse);
     data.id_to_slot.insert(p.id, slot);
+    #[cfg(not(target_arch = "wasm32"))]
+    data.payload_indexes
+        .insert(slot as u64, data.payloads[slot].as_ref());
 
     // The replaced-id path above already tombstoned the old slot; hnsw_rs
     // has no delete API, so that stale node stays in the graph until

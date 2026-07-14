@@ -13,6 +13,9 @@
 pub mod collection;
 pub mod database;
 pub mod error;
+// Payload filters (SPEC-006): the Qdrant-style model + evaluation (all targets),
+// with roaring-bitmap payload indexes as a native-only accelerator.
+pub mod filter;
 // HNSW index over the pinned hnsw_rs. Native-only: hnsw_rs cannot build on
 // wasm32 (ADR-0002). Consumed by the collection index integration.
 #[cfg(not(target_arch = "wasm32"))]
@@ -63,9 +66,10 @@ mod recall;
 pub use collection::Collection;
 pub use database::VecLite;
 pub use error::{Result, VecLiteError};
+pub use filter::{Condition, Filter, MatchValue, Range};
 pub use options::{
     CollectionOptions, Compression, DEFAULT_EMBEDDING_PROVIDER, Durability, HnswOptions, Metric,
     OpenOptions, PayloadIndexKind, Quantization,
 };
 pub use point::{Hit, Point, SparseVector};
-pub use query::{Filter, QueryBuilder};
+pub use query::QueryBuilder;

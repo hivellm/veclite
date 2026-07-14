@@ -1,0 +1,16 @@
+# phase3a filters: index = candidate superset + always apply full filter (free FLT-031); small-graph HNSW under-return fix
+**Source**: manual
+**Date**: 2026-07-14
+**Related Task**: phase3a_payload-filters
+**Tags**: phase3a, filters, payload-index, roaring, hnsw, search-recall, veclite
+phase3a delivered payload filters (SPEC-006). Two design choices worth keeping:
+
+1. Index/scan equivalence (FLT-022/031) comes for free if the index only ever produces a CANDIDATE SUPERSET and the caller ALWAYS applies the full Filter::matches afterward. PayloadIndexes::candidates(filter) intersects the roaring bitmaps of only the index-answerable `must` conditions (Eq/In/Range/Exists on a declared key). That intersection is a superset of true matches (a real match satisfies every must, hence the indexed ones), so post-applying the full filter to each candidate yields EXACTLY the scan result — regardless of should/must_not/unindexed-must/nested. Pre-filter (candidates) vs post-filter (full live scan) then differ only in work, never in results. This sidesteps the whole "keep the index consistent with query semantics" trap.
+
+2. Payload indexes need no on-disk PIDX segments: like the HNSW graph, they rebuild from the loaded payloads on open. install_collection -> replay_upsert -> apply_upsert already feeds every point into PayloadIndexes, and CollectionData is built with PayloadIndexes::new(&config.payload_indexes) from the CONFIG-persisted declarations. So declared-at-creation indexes survive reopen with zero persistence code. (Runtime create_payload_index still needs PIDX_DECLARE WAL wiring -> phase3e.)
+
+3. Index maintenance is per-write (unlike quantization which is batch-only): apply_upsert removes the replaced slot's old payload from the index and adds the new slot; tombstone removes; compact rebuilds fresh (it renumbers slots). All native-only (roaring is wasm-excluded) via cfg gates; wasm filters by scan.
+
+4. Filtered queries use exact brute-force scoring over candidates/live (correct for every metric incl. cosine/euclidean that normally use HNSW). The HNSW over-fetch post-filter (FLT-030 speed for large non-selective filters) is deferred to phase3e — correctness is complete without it.
+
+5. Fixed a long-standing flaky search failure (surfaced repeatedly in parallel `cargo test`): hnsw_rs is approximate and can UNDER-RETURN or drop the farthest candidate when k approaches the live count. Fixes in execute_query's unfiltered fast path: (a) if live <= limit+tombstones, brute-force (exact + cheaper); (b) if the HNSW loop yields fewer than min(limit, live), clear and brute-force. So search always returns min(limit, live) correctly ordered. Recall gates still exercise HNSW on larger graphs. Lesson: never assert exact HNSW top-k on tiny graphs; make small collections exact.

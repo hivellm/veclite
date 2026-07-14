@@ -128,8 +128,30 @@ Versions 0.x are pre-release: the public API may change between minors until 1.0
   on every run (`tests/golden.rs`), and **SPEC-002/SPEC-003 are now
   frozen-normative**: the on-disk byte format is fixed; changes require a new
   format version (NFR-11).
+- Payload filters (task `phase3a`, DAG T3.1–T3.3, SPEC-006). A Qdrant-style
+  filter model — `Filter { must, should, must_not }` over `Condition::{Eq, In,
+  Range, Exists, Nested}` with `MatchValue`/`Range` — with server-parity
+  combination and type semantics (FLT-010/011): `must` AND, `should` OR (when
+  non-empty), `must_not` NAND; integer/float JSON-number equality; `Range` on
+  numerics only; `Exists` = key presence (matches `null`). Filters are built in
+  Rust or parsed from a portable JSON document (`Filter::from_json`); geo
+  conditions and nested-path keys are rejected with `InvalidArgument`, never
+  ignored (FLT-012). `Collection::query(v).filter(f)` applies them. Payload
+  indexes (`Keyword`/`Integer`/`Float`) declared via `CollectionOptions::
+  payload_index` build roaring-bitmap `value → slots` maps that pre-filter
+  selective queries; they are accelerators only — results are identical to a
+  payload scan (FLT-022) and the index rebuilds from payloads on open. Top-level
+  `_`-prefixed payload keys are reserved (FLT-002) and payloads over 16 MiB are
+  rejected. Covered by a conformance corpus, index/scan-equivalence, pre-filter
+  vs brute-force, reserved-key, and unsupported-feature tests (`tests/filters.rs`,
+  gate G3 criteria 1–5).
 
 ### Fixed
+- **Small-collection search recall** (phase3a): searches now return exact,
+  correctly ordered results when the live set is no larger than the requested
+  count, and fall back to exact brute force whenever the HNSW index
+  under-returns — `search` always yields `min(limit, live)` results (previously
+  a tiny/approximate graph could drop the farthest candidate).
 - **WAL entry integrity** (phase2e): the per-entry CRC now covers the fixed
   header fields (`seq`/`coll_id`/`op`/`body_len`) in addition to the body, so a
   bit flip in a header field is detected and terminates replay at the torn tail

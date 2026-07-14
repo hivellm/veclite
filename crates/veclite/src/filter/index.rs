@@ -1,0 +1,301 @@
+//! In-memory payload indexes (SPEC-006 §3): `value → roaring bitmap of slots`
+//! for `Keyword`/`Integer`/`Float` keys. They are **accelerators, not gates**
+//! (FLT-022): `candidates` returns a *superset* of the matching slots for the
+//! `must` clause (the caller always applies the full `Filter` afterward, so the
+//! result set is identical with or without an index — FLT-031). Native-only:
+//! `roaring` is not built for wasm32.
+//!
+//! Persistence is by rebuild: like the HNSW graph, indexes are reconstructed
+//! from the loaded payloads on open rather than stored as PIDX segments.
+
+use std::collections::{BTreeMap, HashMap};
+
+use roaring::RoaringTreemap;
+use serde_json::Value;
+
+use super::{Condition, Filter, MatchValue};
+use crate::options::PayloadIndexKind;
+
+/// Total-order wrapper for `f64` index keys (BTreeMap needs `Ord`; NaN never
+/// enters — payloads reject non-finite numbers via JSON, and only finite `as_f64`
+/// values are inserted).
+#[derive(Clone, Copy, PartialEq)]
+struct OrdF64(f64);
+impl Eq for OrdF64 {}
+impl PartialOrd for OrdF64 {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl Ord for OrdF64 {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.0.total_cmp(&other.0)
+    }
+}
+
+/// One key's index; the variant matches the declared [`PayloadIndexKind`].
+enum KeyIndex {
+    Keyword(HashMap<String, RoaringTreemap>),
+    Integer(BTreeMap<i64, RoaringTreemap>),
+    Float(BTreeMap<OrdF64, RoaringTreemap>),
+}
+
+impl KeyIndex {
+    fn empty(kind: PayloadIndexKind) -> Self {
+        match kind {
+            PayloadIndexKind::Keyword => KeyIndex::Keyword(HashMap::new()),
+            PayloadIndexKind::Integer => KeyIndex::Integer(BTreeMap::new()),
+            PayloadIndexKind::Float => KeyIndex::Float(BTreeMap::new()),
+        }
+    }
+
+    fn add(&mut self, value: &Value, slot: u64) {
+        match self {
+            KeyIndex::Keyword(m) => {
+                if let Some(s) = value.as_str() {
+                    m.entry(s.to_owned()).or_default().insert(slot);
+                }
+            }
+            KeyIndex::Integer(m) => {
+                if let Some(i) = value.as_i64() {
+                    m.entry(i).or_default().insert(slot);
+                }
+            }
+            KeyIndex::Float(m) => {
+                if let Some(f) = value.as_f64() {
+                    m.entry(OrdF64(f)).or_default().insert(slot);
+                }
+            }
+        }
+    }
+
+    fn remove(&mut self, value: &Value, slot: u64) {
+        match self {
+            KeyIndex::Keyword(m) => {
+                if let Some(s) = value.as_str() {
+                    if let Some(b) = m.get_mut(s) {
+                        b.remove(slot);
+                    }
+                }
+            }
+            KeyIndex::Integer(m) => {
+                if let Some(i) = value.as_i64() {
+                    if let Some(b) = m.get_mut(&i) {
+                        b.remove(slot);
+                    }
+                }
+            }
+            KeyIndex::Float(m) => {
+                if let Some(f) = value.as_f64() {
+                    if let Some(b) = m.get_mut(&OrdF64(f)) {
+                        b.remove(slot);
+                    }
+                }
+            }
+        }
+    }
+
+    /// All slots that have any indexed value for this key (an `Exists` answer).
+    fn all_slots(&self) -> RoaringTreemap {
+        let mut out = RoaringTreemap::new();
+        match self {
+            KeyIndex::Keyword(m) => m.values().for_each(|b| out |= b),
+            KeyIndex::Integer(m) => m.values().for_each(|b| out |= b),
+            KeyIndex::Float(m) => m.values().for_each(|b| out |= b),
+        }
+        out
+    }
+}
+
+/// The set of payload indexes declared for a collection.
+pub(crate) struct PayloadIndexes {
+    by_key: HashMap<String, KeyIndex>,
+}
+
+impl PayloadIndexes {
+    /// Build empty indexes for the declared `(key, kind)` set (CONFIG-derived).
+    pub(crate) fn new(declared: &[(String, PayloadIndexKind)]) -> Self {
+        let by_key = declared
+            .iter()
+            .map(|(k, kind)| (k.clone(), KeyIndex::empty(*kind)))
+            .collect();
+        PayloadIndexes { by_key }
+    }
+
+    /// Add a point's payload to every declared index.
+    pub(crate) fn insert(&mut self, slot: u64, payload: Option<&Value>) {
+        if self.by_key.is_empty() {
+            return;
+        }
+        let Some(obj) = payload.and_then(Value::as_object) else {
+            return;
+        };
+        for (key, idx) in &mut self.by_key {
+            if let Some(v) = obj.get(key) {
+                idx.add(v, slot);
+            }
+        }
+    }
+
+    /// Remove a tombstoned/replaced point's payload from every index.
+    pub(crate) fn remove(&mut self, slot: u64, payload: Option<&Value>) {
+        if self.by_key.is_empty() {
+            return;
+        }
+        let Some(obj) = payload.and_then(Value::as_object) else {
+            return;
+        };
+        for (key, idx) in &mut self.by_key {
+            if let Some(v) = obj.get(key) {
+                idx.remove(v, slot);
+            }
+        }
+    }
+
+    /// A superset of the slots matching `filter.must`, from the index-answerable
+    /// conditions only, or `None` when no `must` condition is index-answerable
+    /// (so the caller should post-filter without acceleration). The caller MUST
+    /// still apply the full filter to each candidate (FLT-031).
+    pub(crate) fn candidates(&self, filter: &Filter) -> Option<RoaringTreemap> {
+        let mut acc: Option<RoaringTreemap> = None;
+        for cond in &filter.must {
+            if let Some(bitmap) = self.answer(cond) {
+                acc = Some(match acc {
+                    None => bitmap,
+                    Some(a) => a & bitmap,
+                });
+            }
+        }
+        acc
+    }
+
+    /// The slot bitmap a single condition selects, if its key is indexed and the
+    /// condition kind is answerable; `None` otherwise (fall back to scan).
+    fn answer(&self, cond: &Condition) -> Option<RoaringTreemap> {
+        match cond {
+            Condition::Eq { key, value } => {
+                let idx = self.by_key.get(key)?;
+                Some(eq_bitmap(idx, value))
+            }
+            Condition::In { key, values } => {
+                let idx = self.by_key.get(key)?;
+                let mut out = RoaringTreemap::new();
+                for v in values {
+                    out |= eq_bitmap(idx, v);
+                }
+                Some(out)
+            }
+            Condition::Range { key, range } => {
+                let idx = self.by_key.get(key)?;
+                range_bitmap(idx, range)
+            }
+            Condition::Exists { key } => self.by_key.get(key).map(KeyIndex::all_slots),
+            Condition::Nested(_) => None,
+        }
+    }
+}
+
+/// Exact-match bitmap for a value within one key's index (empty if the kind and
+/// value type disagree or the value is absent).
+fn eq_bitmap(idx: &KeyIndex, value: &MatchValue) -> RoaringTreemap {
+    match (idx, value) {
+        (KeyIndex::Keyword(m), MatchValue::Keyword(s)) => m.get(s).cloned().unwrap_or_default(),
+        (KeyIndex::Integer(m), MatchValue::Integer(i)) => m.get(i).cloned().unwrap_or_default(),
+        (KeyIndex::Float(m), MatchValue::Integer(i)) => {
+            m.get(&OrdF64(*i as f64)).cloned().unwrap_or_default()
+        }
+        _ => RoaringTreemap::new(),
+    }
+}
+
+/// Range bitmap over an integer or float index; `None` for a keyword index
+/// (range is not answerable by it — fall back to scan).
+fn range_bitmap(idx: &KeyIndex, range: &super::Range) -> Option<RoaringTreemap> {
+    let mut out = RoaringTreemap::new();
+    match idx {
+        KeyIndex::Integer(m) => {
+            for (k, b) in m {
+                if range.contains(*k as f64) {
+                    out |= b;
+                }
+            }
+            Some(out)
+        }
+        KeyIndex::Float(m) => {
+            for (k, b) in m {
+                if range.contains(k.0) {
+                    out |= b;
+                }
+            }
+            Some(out)
+        }
+        KeyIndex::Keyword(_) => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::filter::{Condition, Filter, Range};
+    use serde_json::json;
+
+    fn indexes() -> PayloadIndexes {
+        PayloadIndexes::new(&[
+            ("lang".to_owned(), PayloadIndexKind::Keyword),
+            ("year".to_owned(), PayloadIndexKind::Integer),
+        ])
+    }
+
+    fn build() -> PayloadIndexes {
+        let mut ix = indexes();
+        ix.insert(0, Some(&json!({"lang": "en", "year": 2024})));
+        ix.insert(1, Some(&json!({"lang": "pt", "year": 2020})));
+        ix.insert(2, Some(&json!({"lang": "en", "year": 2018})));
+        ix
+    }
+
+    fn slots(b: &RoaringTreemap) -> Vec<u64> {
+        b.iter().collect()
+    }
+
+    #[test]
+    fn eq_candidates() {
+        let ix = build();
+        let f = Filter::new().must(Condition::eq("lang", "en"));
+        assert_eq!(
+            slots(&ix.candidates(&f).unwrap_or_else(|| panic!("indexed"))),
+            vec![0, 2]
+        );
+    }
+
+    #[test]
+    fn range_and_intersection() {
+        let ix = build();
+        // lang=en AND year>=2021 → only slot 0
+        let f = Filter::new()
+            .must(Condition::eq("lang", "en"))
+            .must(Condition::range("year", Range::new().gte(2021.0)));
+        assert_eq!(
+            slots(&ix.candidates(&f).unwrap_or_else(|| panic!("indexed"))),
+            vec![0]
+        );
+    }
+
+    #[test]
+    fn unindexed_key_returns_none() {
+        let ix = build();
+        let f = Filter::new().must(Condition::eq("author", "x"));
+        assert!(ix.candidates(&f).is_none());
+    }
+
+    #[test]
+    fn remove_updates_candidates() {
+        let mut ix = build();
+        ix.remove(0, Some(&json!({"lang": "en", "year": 2024})));
+        let f = Filter::new().must(Condition::eq("lang", "en"));
+        assert_eq!(
+            slots(&ix.candidates(&f).unwrap_or_else(|| panic!("indexed"))),
+            vec![2]
+        );
+    }
+}
