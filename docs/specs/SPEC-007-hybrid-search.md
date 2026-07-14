@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Draft |
+| **Status** | Implemented (phase3c): SparseVector validation, sparse dot-product search, the hybrid_query() builder, deterministic RRF fusion (formula + tie-breaking, HYB-020/021), single-lane degeneration, and filtered hybrid. SPARSE segment persistence (HYB-030/031), the auto-embed `.text()` lane (HYB-011), and the server conformance corpus (HYB-022) are tracked in `phase3g_sparse-persistence-conformance`. |
 | **Phase / tasks** | Phase 3 · T3.4, T3.7 ([DAG](../DAG.md)) |
 | **PRD requirements** | FR-34 |
 | **Planning source** | [05-embeddings.md §hybrid](../vectorizer-lite/05-embeddings.md), server sources `db/hybrid_search.rs`, `models/sparse_vector.rs` |

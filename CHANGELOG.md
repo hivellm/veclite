@@ -160,6 +160,20 @@ Versions 0.x are pre-release: the public API may change between minors until 1.0
   UTF-8-safe `veclite::chunk::Chunker` (word/sentence boundaries, overlap;
   EMB-050/051) rounds it out. Covered by provider unit tests, a chunker UTF-8
   fuzz, and `tests/auto_embed.rs`.
+- Hybrid dense+sparse search with RRF fusion (task `phase3c`, DAG T3.4/T3.7,
+  SPEC-007). `SparseVector` gains validation (strictly increasing indices,
+  matching lengths, finite values — HYB-001) and a shared-term-space dot
+  product; `Collection::search_sparse` ranks the BYO sparse lane. The
+  `hybrid_query()` builder fuses the dense and sparse lanes with reciprocal rank
+  fusion (§3): each lane fetches `max(limit×4, 100)` candidates and the fused
+  score is `alpha/(rrf_k + rank_dense) + (1−alpha)/(rrf_k + rank_sparse)` (an
+  absent lane contributes 0), ordered by fused score then dense rank then
+  bytewise id — fully deterministic (defaults `alpha=0.5`, `rrf_k=60`,
+  HYB-020/021). A single provided lane degenerates to that lane's plain search
+  with its own scores (HYB-010); the payload filter applies to both lanes
+  (HYB-011); an auto-embed collection rejects an explicit sparse vector
+  (HYB-002). Covered by `tests/hybrid.rs` (validation, degeneration equivalence,
+  determinism, fused ordering, filtered hybrid).
 
 ### Fixed
 - **Small-collection search recall** (phase3a): searches now return exact,
