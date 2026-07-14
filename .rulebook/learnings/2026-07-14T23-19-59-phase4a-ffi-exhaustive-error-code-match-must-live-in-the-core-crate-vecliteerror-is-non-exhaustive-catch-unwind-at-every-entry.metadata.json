@@ -1,0 +1,16 @@
+{
+  "id": "2026-07-14T23-19-59-phase4a-ffi-exhaustive-error-code-match-must-live-in-the-core-crate-vecliteerror-is-non-exhaustive-catch-unwind-at-every-entry",
+  "title": "phase4a FFI: exhaustive error-code match must live in the core crate (VecLiteError is #[non_exhaustive]); catch_unwind at every entry",
+  "content": "phase4a built the veclite-ffi C ABI core (SPEC-008). Key points:\n\n1. #[non_exhaustive] forces the exhaustive error→code match into the DEFINING crate. VecLiteError is #[non_exhaustive], so any match on it in the ffi crate REQUIRES a wildcard `_` arm — which defeats SPEC-008 acceptance 3 (\"adding a variant without a code fails the build\"). Fix: put the exhaustive match on VecLiteError::ffi_code(&self) -> i32 INSIDE the veclite crate (within the defining crate, #[non_exhaustive] doesn't force a wildcard, so the match is truly exhaustive and adding a variant breaks the build). The ffi crate just calls e.ffi_code() and mirrors the numbers as public VL_ERR_* consts, cross-checked by a test.\n\n2. Panic safety (FFI-003): a single `fn ffi<F: FnOnce()->Result<()>>(f) -> i32` wraps every entry point body in std::panic::catch_unwind(AssertUnwindSafe(f)); Ok(())→0, Err(e)→{set thread-local message; e.ffi_code()}, panic→{message; VL_ERR_INTERNAL}. Every extern fn is `#[unsafe(no_mangle)] pub unsafe extern \"C\"` (edition 2024 requires the `unsafe(no_mangle)` attribute form) and delegates to ffi(). In edition 2024 the body of an `unsafe fn` is NOT an implicit unsafe block — each raw-pointer op needs its own `unsafe {}`.\n\n3. Handles = Box::into_raw of a wrapper struct (vl_db{db:VecLite}, vl_collection{c:Collection}); free = Box::from_raw. Null handles → InvalidArgument (can't distinguish null from use-after-free safely; generation tags are a debug-build nicety deferred). vl_buf owns a Box<[u8]> (into_boxed_slice so cap==len; free via Box::from_raw(ptr::slice_from_raw_parts_mut(data,len)) — use ptr::slice_from_raw_parts_mut, not slice::from_raw_parts_mut, to avoid the clippy implicit-cast warning). vl_hits owns Vec<HitOwned{id:CString, score, payload:Vec<u8> (pre-encoded per codec), vector:Option<Vec<f32>>}> so vl_hit_view can hand out borrowed pointers valid until vl_hits_free (FFI-010, zero-copy reads).\n\n4. Workspace wiring: veclite-ffi is a native cdylib+staticlib+lib member, NOT in default-members, so `cargo build` and the wasm `-p veclite` job ignore it; `cargo test --workspace` and the MSRV `cargo build --workspace` include it (builds on 1.87). crate-type includes \"lib\" so the crate's own integration tests can link and call the extern fns as a C caller would. Repr(C) result-struct fields (vl_buf, vl_hit_view) are pub — they're the ABI and integration tests read them.\n\n5. Split: the cbindgen golden header (FFI-006), cargo public-api freeze snapshot (API-062, the T4.1 milestone), the remaining functions (batch/hybrid/scroll/chunk/reindex/refit/payload_index/snapshot/vacuum/db_info), and the ASan/Valgrind/TSan C programs need external tooling → phase4g. The panic-safe, error-mapped core + a strong function subset + Rust-driven tests are the correct foundation delivered here.",
+  "source": "manual",
+  "relatedTask": "phase4a_ffi-c-abi",
+  "tags": [
+    "phase4a",
+    "ffi",
+    "c-abi",
+    "catch_unwind",
+    "error-codes",
+    "veclite"
+  ],
+  "createdAt": "2026-07-14T23:19:59.334Z"
+}

@@ -185,6 +185,19 @@ Versions 0.x are pre-release: the public API may change between minors until 1.0
   native, serial on wasm; FR-35), and `stats()` reports live/tombstone counts
   and dimension (FR-08/13). The text-first API (`upsert_text`/`search_text`) and
   the chunker landed earlier in `phase3b`. Covered by `tests/api.rs`.
+- C ABI core (`veclite-ffi` crate, task `phase4a`, DAG T4.1/T4.2, SPEC-008). A
+  handle-based C ABI (cdylib + staticlib): every entry point is wrapped in
+  `catch_unwind` → `VL_ERR_INTERNAL` with a thread-local last-error message
+  (FFI-003/020), so a panic never unwinds across the boundary. Error codes are
+  1:1 with `VecLiteError` via a new exhaustive `VecLiteError::ffi_code()` (adding
+  a variant without a code fails the build — acceptance 3). Structured data
+  crosses as JSON or MessagePack per a codec flag; vectors as `(*const f32,
+  len)`; library objects freed only by the matching `vl_*_free`. The core
+  surface covers lifecycle, collections, aliases, writes, `get`/`search`/
+  `search_text`, borrowed result views, and version/error meta. Five Rust-side
+  tests drive the `extern "C"` functions as a C caller would. The cbindgen golden
+  header, the `cargo public-api` freeze snapshot, the remaining functions, and
+  the ASan/TSan C tests are tracked in `phase4g`.
 
 ### Fixed
 - **Small-collection search recall** (phase3a): searches now return exact,

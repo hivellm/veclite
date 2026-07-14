@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Draft — the ABI freezes with the 1.0.0 release; additive-only within a major |
+| **Status** | Core implemented (phase4a): the `veclite-ffi` crate (cdylib+staticlib), panic-safe entry points (catch_unwind → VL_ERR_INTERNAL), error codes 1:1 with `VecLiteError` (exhaustive `ffi_code`), handles + vl_buf/vl_hit_view, codec flag, and lifecycle/collections/aliases/writes/get/search surface. The cbindgen golden header (FFI-006), the `cargo public-api` freeze (API-062), the remaining functions, and the ASan/TSan C tests are tracked in `phase4g_ffi-header-freeze-full-surface`. Freezes with 1.0.0; additive-only within a major. |
 | **Phase / tasks** | Phase 4 · T4.1, T4.2 ([DAG](../DAG.md)) — **T4.1 is the Rust API freeze event** |
 | **PRD requirements** | FR-60; NFR-09, NFR-12 |
 | **Planning source** | [06-sdk-bindings.md §C ABI](../vectorizer-lite/06-sdk-bindings.md) |
