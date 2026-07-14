@@ -52,7 +52,7 @@ impl WalOp {
         }
     }
 
-    fn from_byte(b: u8) -> Result<WalOp> {
+    pub(crate) fn from_byte(b: u8) -> Result<WalOp> {
         Ok(match b {
             1 => WalOp::UpsertBatch,
             2 => WalOp::DeleteBatch,
@@ -224,9 +224,14 @@ impl Wal {
         Ok(())
     }
 
+    /// Current file size in bytes (header + entries).
+    pub(crate) fn size(&mut self) -> Result<u64> {
+        Ok(self.file.seek(SeekFrom::End(0))?)
+    }
+
     /// True when the WAL holds no entries (only the header).
     pub(crate) fn is_empty(&mut self) -> Result<bool> {
-        Ok(self.file.seek(SeekFrom::End(0))? <= WAL_HEADER_SIZE)
+        Ok(self.size()? <= WAL_HEADER_SIZE)
     }
 }
 

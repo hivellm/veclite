@@ -15,11 +15,29 @@ use crate::error::{Result, VecLiteError};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::index::HnswIndex;
 use crate::options::{CollectionOptions, Metric, Quantization};
+#[cfg(not(target_arch = "wasm32"))]
+use crate::persist::wal_body;
 use crate::point::{Hit, Point, SparseVector, validate_id};
 use crate::quantization::traits::{QuantizationMethod, QuantizationParams};
 use crate::quantization::{BinaryQuantization, ScalarQuantization};
 use crate::query::{Filter, QueryBuilder};
 use crate::simd::{cosine_similarity, dot_product, euclidean_distance};
+#[cfg(not(target_arch = "wasm32"))]
+use crate::storage::wal::WalOp;
+
+/// Sink for write-ahead-log records, implemented by the persistence layer. The
+/// trait keeps the collection decoupled from the (native-only) `Persistence`
+/// type: a memory collection holds `None`, a file-backed one holds the shared
+/// journal. `op` is the WAL op byte (`WalOp::to_byte`). On wasm32 there is no
+/// persistence, so it is never implemented — dead there by design.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+pub(crate) trait WalSink: Send + Sync {
+    /// Append one mutation to the WAL before it is applied to memory.
+    fn log(&self, coll_id: u32, op: u8, body: Vec<u8>) -> Result<()>;
+    /// Called after a write is applied: drives a checkpoint if the WAL crossed
+    /// its size threshold (WAL-030a).
+    fn after_write(&self) -> Result<()>;
+}
 
 /// Shared state behind every [`Collection`] handle for one collection.
 pub(crate) struct CollectionInner {
@@ -27,9 +45,16 @@ pub(crate) struct CollectionInner {
     pub(crate) name: RwLock<String>,
     /// Immutable configuration (CORE-016).
     pub(crate) config: CollectionOptions,
+    /// Registry id, stamped in WAL entries and CONFIG segments. 0 for memory
+    /// collections (no persistence).
+    pub(crate) coll_id: u32,
     /// Set by `delete_collection`; stale handles then fail with
     /// `CollectionNotFound` (CORE-021).
     pub(crate) deleted: AtomicBool,
+    /// The database's shared WAL, or `None` for a memory collection (writes are
+    /// not logged). Never set on wasm32 (no file storage) — dead there.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    persistence: Option<Arc<dyn WalSink>>,
     data: RwLock<CollectionData>,
 }
 
@@ -92,9 +117,9 @@ impl CollectionData {
     }
 }
 
-/// Allocation hint handed to a freshly created HNSW graph (native only).
-/// Not a hard cap — hnsw_rs reallocates past it (SPEC-001 CORE-030).
-#[cfg(not(target_arch = "wasm32"))]
+/// Allocation hint handed to a freshly created HNSW graph. Not a hard cap —
+/// hnsw_rs reallocates past it (SPEC-001 CORE-030). Referenced on all targets
+/// as the default capacity arg; ignored on wasm32 (no index).
 const INITIAL_INDEX_CAPACITY: usize = 1024;
 
 /// Per-query candidate-list bounds (SPEC-001 CORE-031). Enforced in
@@ -107,7 +132,25 @@ impl CollectionInner {
     /// (native only). Propagates `HnswIndex::new`'s `m`/`ef_construction`
     /// bounds check (SPEC-001 CORE-031); `DotProduct` collections get no
     /// index (ADR-0002 — `DistDot` panics on unnormalized vectors).
-    pub(crate) fn new(name: String, config: CollectionOptions) -> Result<Self> {
+    pub(crate) fn new(
+        name: String,
+        config: CollectionOptions,
+        coll_id: u32,
+        persistence: Option<Arc<dyn WalSink>>,
+    ) -> Result<Self> {
+        Self::with_capacity(name, config, coll_id, persistence, INITIAL_INDEX_CAPACITY)
+    }
+
+    /// As [`new`](Self::new) but with an explicit HNSW capacity hint — used when
+    /// loading a collection whose live count is already known (avoids an early
+    /// graph reallocation).
+    pub(crate) fn with_capacity(
+        name: String,
+        config: CollectionOptions,
+        coll_id: u32,
+        persistence: Option<Arc<dyn WalSink>>,
+        capacity: usize,
+    ) -> Result<Self> {
         #[cfg(not(target_arch = "wasm32"))]
         let data = {
             let index = match config.metric {
@@ -117,17 +160,22 @@ impl CollectionInner {
                     config.dimension,
                     config.hnsw.m,
                     config.hnsw.ef_construction,
-                    INITIAL_INDEX_CAPACITY,
+                    capacity.max(INITIAL_INDEX_CAPACITY),
                 )?),
             };
             CollectionData::empty(index)
         };
         #[cfg(target_arch = "wasm32")]
-        let data = CollectionData::empty();
+        let data = {
+            let _ = capacity;
+            CollectionData::empty()
+        };
 
         Ok(CollectionInner {
             name: RwLock::new(name),
             deleted: AtomicBool::new(false),
+            coll_id,
+            persistence,
             data: RwLock::new(data),
             config,
         })
@@ -205,27 +253,38 @@ impl Collection {
 
     /// Insert-or-replace one point (SPEC-004 API-020).
     pub fn upsert(&self, point: Point) -> Result<()> {
-        self.guard()?;
-        let prepared = self.prepare(point)?;
-        let mut data = self.inner.data.write();
-        apply_upsert(&mut data, prepared, self.inner.config.dimension);
-        Ok(())
+        self.upsert_batch(vec![point])
     }
 
-    /// Insert-or-replace a batch. The batch is the atomic unit: every point
-    /// is validated before any is applied, and all become visible together
-    /// (SPEC-003 WAL-012 semantics).
+    /// Insert-or-replace a batch. The batch is the atomic unit: every point is
+    /// validated before any is applied, all become visible together, and the
+    /// whole batch is one WAL entry (SPEC-003 WAL-012). Order: validate → log →
+    /// apply, so a rejected point never reaches the WAL.
     pub fn upsert_batch(&self, points: Vec<Point>) -> Result<()> {
         self.guard()?;
+        // Encode the WAL body from the originals before validation consumes
+        // them (only when persistent; discarded if validation then fails).
+        #[cfg(not(target_arch = "wasm32"))]
+        let body = self.encode_wal(&points)?;
         let prepared: Vec<PreparedPoint> = points
             .into_iter()
             .map(|p| self.prepare(p))
             .collect::<Result<_>>()?;
+        #[cfg(not(target_arch = "wasm32"))]
+        self.log(WalOp::UpsertBatch, body)?;
+        self.apply_prepared(prepared);
+        #[cfg(not(target_arch = "wasm32"))]
+        self.after_write()?;
+        Ok(())
+    }
+
+    /// Apply validated points under the write lock (shared by the public path
+    /// and WAL replay — replay skips the log/after-write around this).
+    fn apply_prepared(&self, prepared: Vec<PreparedPoint>) {
         let mut data = self.inner.data.write();
         for p in prepared {
             apply_upsert(&mut data, p, self.inner.config.dimension);
         }
-        Ok(())
     }
 
     /// Fetch a point by id; `None` when absent (API-021). Cosine collections
@@ -247,17 +306,33 @@ impl Collection {
 
     /// Delete by id; `false` when the id was absent (API-021).
     pub fn delete(&self, id: &str) -> Result<bool> {
-        self.guard()?;
-        let mut data = self.inner.data.write();
-        Ok(tombstone(&mut data, id))
+        Ok(self.delete_batch(&[id])? == 1)
     }
 
-    /// Delete a batch of ids; returns how many existed. One atomic unit,
+    /// Delete a batch of ids; returns how many existed. One atomic WAL entry,
     /// like `upsert_batch`.
     pub fn delete_batch(&self, ids: &[&str]) -> Result<usize> {
         self.guard()?;
-        let mut data = self.inner.data.write();
-        Ok(ids.iter().filter(|id| tombstone(&mut data, id)).count())
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let body = self
+                .inner
+                .persistence
+                .as_ref()
+                .map(|_| {
+                    let owned: Vec<String> = ids.iter().map(|s| (*s).to_owned()).collect();
+                    wal_body::encode(&owned)
+                })
+                .transpose()?;
+            self.log(WalOp::DeleteBatch, body)?;
+        }
+        let removed = {
+            let mut data = self.inner.data.write();
+            ids.iter().filter(|id| tombstone(&mut data, id)).count()
+        };
+        #[cfg(not(target_arch = "wasm32"))]
+        self.after_write()?;
+        Ok(removed)
     }
 
     /// Number of live vectors. Returns 0 after the collection was deleted
@@ -458,6 +533,72 @@ impl Collection {
     }
 }
 
+/// Persistence hooks (native-only): WAL logging around writes, the live-point
+/// snapshot a checkpoint seals, and the replay paths recovery drives.
+#[cfg(not(target_arch = "wasm32"))]
+impl Collection {
+    /// Encode an upsert batch for the WAL, or `None` for a memory collection.
+    fn encode_wal(&self, points: &[Point]) -> Result<Option<Vec<u8>>> {
+        if self.inner.persistence.is_some() {
+            Ok(Some(wal_body::encode(points)?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Append a WAL entry when a body was produced (persistent collection).
+    fn log(&self, op: WalOp, body: Option<Vec<u8>>) -> Result<()> {
+        if let (Some(p), Some(body)) = (&self.inner.persistence, body) {
+            p.log(self.inner.coll_id, op.to_byte(), body)?;
+        }
+        Ok(())
+    }
+
+    /// Drive a checkpoint if the WAL crossed its threshold (WAL-030a).
+    fn after_write(&self) -> Result<()> {
+        if let Some(p) = &self.inner.persistence {
+            p.after_write()?;
+        }
+        Ok(())
+    }
+
+    /// Live points `(id, dense vector, payload)` in slot order — the input a
+    /// checkpoint seals (sparse not yet persisted, phase3c).
+    pub(crate) fn live_points(&self) -> Vec<crate::persist::seal::LivePoint> {
+        let data = self.inner.data.read();
+        let dim = self.inner.config.dimension;
+        let mut out = Vec::with_capacity(data.id_to_slot.len());
+        for slot in 0..data.ids.len() {
+            if data.id_to_slot.get(&data.ids[slot]) == Some(&slot) {
+                out.push((
+                    data.ids[slot].clone(),
+                    data.vectors[slot * dim..(slot + 1) * dim].to_vec(),
+                    data.payloads[slot].clone(),
+                ));
+            }
+        }
+        out
+    }
+
+    /// Apply a WAL upsert during recovery — validate + apply, no re-logging.
+    pub(crate) fn replay_upsert(&self, points: Vec<Point>) -> Result<()> {
+        let prepared: Vec<PreparedPoint> = points
+            .into_iter()
+            .map(|p| self.prepare(p))
+            .collect::<Result<_>>()?;
+        self.apply_prepared(prepared);
+        Ok(())
+    }
+
+    /// Apply a WAL delete during recovery.
+    pub(crate) fn replay_delete(&self, ids: &[String]) {
+        let mut data = self.inner.data.write();
+        for id in ids {
+            tombstone(&mut data, id);
+        }
+    }
+}
+
 /// True for metrics whose score is a similarity (higher = closer, sorted
 /// descending); false for distance metrics sorted ascending (CORE-035).
 fn metric_is_similarity(metric: Metric) -> bool {
@@ -599,6 +740,8 @@ mod tests {
                 CollectionInner::new(
                     "t".into(),
                     CollectionOptions::new(dimension, metric).quantization(Quantization::None),
+                    0,
+                    None,
                 )
                 .unwrap_or_else(|e| panic!("{e}")),
             ),

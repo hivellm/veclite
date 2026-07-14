@@ -7,8 +7,9 @@ use serde::{Deserialize, Serialize};
 use crate::error::{Result, VecLiteError};
 use crate::storage::body::StoredConfig;
 
-/// MessagePack-encode a WAL body.
-pub(crate) fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>> {
+/// MessagePack-encode a WAL body. `?Sized` so a slice (`&[Point]`) encodes
+/// directly — it decodes back as the corresponding `Vec`.
+pub(crate) fn encode<T: Serialize + ?Sized>(value: &T) -> Result<Vec<u8>> {
     rmp_serde::to_vec(value).map_err(|e| VecLiteError::Corrupt(format!("wal body encode: {e}")))
 }
 

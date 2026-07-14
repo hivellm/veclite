@@ -74,6 +74,19 @@ Versions 0.x are pre-release: the public API may change between minors until 1.0
   segments→fsync→TOC→fsync→header→fsync (STG-050). Property round-trips, decode
   fuzz (arbitrary bytes never panic), and a commit-crash-sequence test (a torn
   tail beyond the committed header leaves the previous TOC valid) all pass.
+- Durable single-file database: `VecLite::open(path)` / `open_with(path, opts)`
+  and `db.checkpoint()` (task `phase2b`, DAG T2.3/T2.4, SPEC-003, native-only).
+  The `<db>.veclite-wal` sidecar logs every mutation (8 op types, MessagePack
+  bodies) with a uuid-prefix stale-sidecar guard; the three `Durability` modes
+  wire into every write (`Full` fsyncs each append). A checkpoint seals the
+  live state into segments via the commit protocol then truncates the WAL after
+  the header-swap fsync (WAL-031/032); it triggers on the WAL size limit,
+  `checkpoint()`, or last-handle drop. Recovery replays a non-clean WAL in seq
+  order, discarding a torn tail and applying entries idempotently
+  (WAL-040..042). Verified end-to-end: checkpoint→reopen with rebuilt HNSW
+  search, crash→WAL-replay equals a model over 200 random ops with interleaved
+  checkpoints, delete/rename durability, torn-tail recovery, and the stale-WAL
+  guard.
 
 ### Changed
 - **PRD OQ-1 resolved** (phase1d): the reference hardware profile is pinned in

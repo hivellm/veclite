@@ -1,0 +1,18 @@
+# phase2b persistence wiring: WalSink trait decoupling, log-then-apply, idempotent replay, Drop checkpoint
+**Source**: manual
+**Date**: 2026-07-14
+**Related Task**: phase2b_wal-recovery-checkpoint
+**Tags**: persistence, wal, crash-safety, rust, recovery, phase2b
+Making VecLite persistent (SPEC-003) — the architecture that kept the tested phase1a engine intact:
+
+1. WalSink trait (in collection.rs, all-targets) decouples CollectionInner from the native-only Persistence type: CollectionInner holds `Option<Arc<dyn WalSink>>` (None for memory, Some for file-backed), so `new(name, config, coll_id, persistence)` has ONE signature across targets — no cfg-split constructor. Persistence (persist/mod.rs) impls WalSink. The trait takes the op as a u8 byte (WalOp::to_byte) so it needn't reference the native-only WalOp. On wasm the trait/field are dead → `#[cfg_attr(target_arch=\"wasm32\", allow(dead_code))]`.
+
+2. Write path order = validate → log → apply (WAL model §1): encode the WAL body from the ORIGINAL points before prepare() consumes them (only if persistent), validate, THEN log, THEN apply_prepared (shared write-lock apply). A rejected point never reaches the WAL. upsert delegates to upsert_batch(vec![point]); delete to delete_batch. after_write() checks the WAL size and drives a checkpoint (WAL-030a) via a Weak<DatabaseInner> closure stored in Persistence (set after the DB Arc exists), so no ref cycle.
+
+3. Replay is idempotent (WAL-042) — this is what makes crash-during-checkpoint safe (WAL-032): if a crash lands after the header swap but before WAL truncate, replay re-applies entries already in the checkpoint, and upsert-by-id / delete-by-id / create-by-coll_id-check are all idempotent. replay_upsert/replay_delete apply WITHOUT logging (no infinite loop). collection_by_id iterates the DashMap (fine for replay).
+
+4. Checkpoint (checkpoint_inner, database.rs): gather each non-deleted collection's live_points() → seal::seal → Persistence::commit (pager.checkpoint + wal.truncate). Full-rewrite/compacting checkpoint (dead slots dropped) — simpler than incremental delta; correct, reclaims tombstones as a side effect; vacuum's truncation is phase2d. HNSW is NOT persisted — rebuilt from vectors on load via replay_upsert (STG-063).
+
+5. Close: `impl Drop for VecLite` checkpoints only when Arc::strong_count(inner)==1 (last handle) AND persistence.is_some(). Collection handles hold Persistence (not DatabaseInner) and the trigger holds a Weak, so neither inflates the count. Drop swallows errors, leaving a recoverable WAL (WAL-051). pager.checkpoint always sets FLAG_CLEAN_CLOSE, so a clean close → empty WAL → no replay on reopen (WAL-040).
+
+6. Crash tests use std::mem::forget(db) to skip Drop's checkpoint, leaving WAL entries for the reopen to replay. Model test: 200 random upsert/delete with a checkpoint every 17 ops, forget, reopen, assert state==HashMap model. Torn-tail: truncate the WAL file a few bytes, reopen → prior entries intact. Stale-WAL: write a 16-byte foreign-magic WAL → ignored (WAL-002). All native-only (VecLite::open is cfg(not(wasm32))).
