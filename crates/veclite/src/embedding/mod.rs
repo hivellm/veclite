@@ -10,6 +10,9 @@
 //! land in follow-up increments (see `phase3b`).
 
 pub mod bm25;
+pub mod bow;
+pub mod char_ngram;
+pub mod tfidf;
 
 use crate::error::{Result, VecLiteError};
 
@@ -40,16 +43,18 @@ pub trait Embedder: Send + Sync {
     fn import_state(&mut self, state: &[u8]) -> Result<()>;
 }
 
-/// Built-in provider ids available in the default build. `tfidf`/`bow`/
-/// `char_ngram` are reserved here and implemented in a follow-up increment; only
-/// the ids in [`available_providers`] resolve today.
+/// The default auto-embed provider (SPEC-005 §2).
 pub const DEFAULT_PROVIDER: &str = "bm25";
 
-/// The provider ids this build can construct right now (drives the
-/// `UnsupportedProvider` error's `available` list — SPEC-005 EMB-021).
+/// The built-in sparse provider ids available in the default build (drives the
+/// `UnsupportedProvider` error's `available` list — SPEC-005 EMB-021). `svd`
+/// (feature-gated) and `fastembed:*` (onnx) are added by their features.
 #[must_use]
 pub fn available_providers() -> Vec<String> {
-    vec!["bm25".to_owned()]
+    ["bm25", "tfidf", "bow", "char_ngram"]
+        .into_iter()
+        .map(str::to_owned)
+        .collect()
 }
 
 /// Construct a built-in provider by id, or fail with `UnsupportedProvider`
@@ -57,6 +62,12 @@ pub fn available_providers() -> Vec<String> {
 pub fn build_provider(provider: &str, dimension: usize) -> Result<Box<dyn Embedder>> {
     match provider {
         "bm25" => Ok(Box::new(bm25::Bm25::new(dimension))),
+        "tfidf" => Ok(Box::new(tfidf::TfIdf::new(dimension))),
+        "bow" => Ok(Box::new(bow::BagOfWords::new(dimension))),
+        "char_ngram" => Ok(Box::new(char_ngram::CharNgram::new(
+            dimension,
+            char_ngram::DEFAULT_N,
+        ))),
         other => Err(VecLiteError::UnsupportedProvider {
             requested: other.to_owned(),
             available: available_providers(),

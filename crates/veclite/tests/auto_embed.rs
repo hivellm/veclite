@@ -139,6 +139,21 @@ fn reopen_preserves_search_text_results() {
 }
 
 #[test]
+fn other_providers_work_via_auto_embed() {
+    let db = VecLite::memory();
+    for provider in ["tfidf", "bow", "char_ngram"] {
+        let c = db
+            .create_collection(provider, CollectionOptions::auto_embed(provider, 128))
+            .unwrap_or_else(|e| panic!("{provider}: {e}"));
+        seed(&c);
+        let hits = c
+            .search_text("loyal animals that bark", 1)
+            .unwrap_or_else(|e| panic!("{provider}: {e}"));
+        assert_eq!(hits[0].id, "dogs", "provider {provider}");
+    }
+}
+
+#[test]
 fn refit_is_explicit_and_keeps_search_working() {
     let db = VecLite::memory();
     let c = db
