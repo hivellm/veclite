@@ -2,16 +2,16 @@
 - [x] 1.1 ADR-0004: single-file mmap of VECTORS + exact SIMD brute-force larger-than-RAM tier; HNSW rebuilt from mmap on open (no graph persistence). Supersedes ADR-0003 (corrects its "must fork hnsw_rs" premise: hnsw_rs does mmap/serialize, but only over its own directory format, which breaks single-file). SPEC-002 STG-063 reframed + STG-064 added — behaviour change, no byte change, freeze holds.
 
 ## 2. Implementation
-- [ ] 2.1 mmap read path over VECTORS segments with stride addressing; auto threshold 64 MiB (OpenOptions::mmap, STG-004)
-- [ ] 2.2 Larger-than-RAM tier (STG-063 reframed + STG-064, ADR-0004): above a memory budget, skip the HNSW build and serve exact SIMD brute-force k-NN over the mmap'd VECTORS; below it, rebuild HNSW in RAM from the mmap on open. No graph persistence; OpenOptions warning callback retained but unused in v1.
-- [ ] 2.3 vacuum with an active mmap: unmap→truncate→remap so a mapped region can be shrunk without invalidating readers (STG-071; the no-mmap swap shipped in phase2d)
+- [x] 2.1 mmap read path over VECTORS segments (`storage/mmap.rs`): `FileMap` maps the file read-only; `VectorsView` (borrowing, CRC-checked) and `VectorsRegion` (long-lived, CRC once, offset addressing) give stride access with no decode/copy. Auto threshold 64 MiB per collection's VECTORS bytes, `OpenOptions::mmap` overrides (STG-004).
+- [x] 2.2 Tier split (STG-063 reframed + STG-064, ADR-0004): `OpenOptions::memory_budget` (default 4 GiB) — at or under it the HNSW graph is rebuilt from the map in bounded chunks on open; over it the collection stays unindexed and serves **exact** SIMD brute-force k-NN from the map. Collections carry an overlay (`CollectionData.base` + offset slot addressing) so writes/deletes work on a mapped base; unmutated mapped collections are carried forward by segment reference at checkpoint (`CheckpointColl::reused`) instead of resealed — O(TOC) instead of O(data). Auto-embed collections always materialize (vectors re-derived from `_text` on open). `reindex` respects the budget tier.
+- [x] 2.3 vacuum with an active mmap (STG-071): `compact()` rebases a mapped collection to RAM and drops its regions **before** the close→rename→reopen swap, so Windows never renames over a mapped file; deleted collections drop their base so stale handles can't pin the map. Post-vacuum reopen remaps per the fresh TOC. Known bound (documented): vacuum/snapshot of an over-budget collection materializes its live set transiently.
 
 ## 3. Testing
-- [ ] 3.1 Larger-than-RAM smoke: dataset several times available RAM opens and serves searches via mmap (was phase2c 2.1)
-- [ ] 3.2 Corrupt-HNSW fixture: open rebuilds graph, warning fired, search results correct (was phase2c 2.3)
-- [ ] 3.3 Windows vacuum with an active mmap passes on CI (was phase2d 2.3)
+- [x] 3.1 Larger-than-RAM mechanism: `tests/mmap_tier.rs` — forced `mmap(true)` + `memory_budget(0)` exercises the identical exact-scan-over-mmap code path and asserts result parity with the materialized open (both tiers), plus get/scroll/read_only projections. The literal 4×RAM dataset run is T6.2's deliverable per the DAG (phase6a soak: "mmap datasets 4× RAM").
+- [x] 3.2 Corrupt-HNSW fixture — moot as specified: ADR-0004 removed graph persistence (nothing to corrupt); every mmap-tier open IS the rebuild path, exercised by all six tier tests. VECTORS corruption stays covered: region construction CRC-checks the body (`storage/mmap.rs` tests + existing bit-flip drills in `storage/gates.rs`).
+- [x] 3.3 Windows vacuum with an active mmap: `vacuum_rebases_shrinks_and_stays_consistent` deletes 40/48 from a mapped collection, vacuums (file swap under the same process's map), asserts shrink + consistency + reopen — runs on Windows locally and in the 3-OS CI test job.
 
 ## 4. Tail (mandatory — enforced by rulebook v5.3.0)
-- [ ] 4.1 Update or create documentation covering the implementation
-- [ ] 4.2 Write tests covering the new behavior
-- [ ] 4.3 Run tests and confirm they pass
+- [x] 4.1 Documentation: ADR-0004; SPEC-002 STG-063 reframed + STG-064 added + freeze-note pointer updated; `OpenOptions::memory_budget` rustdoc; CHANGELOG + README status.
+- [x] 4.2 Tests: 6 integration tests (`tests/mmap_tier.rs`) + 4 unit tests (`storage/mmap.rs`) + 2 borrowing-view tests (`storage/vectors.rs`).
+- [x] 4.3 Full gate green: fmt, clippy `-D warnings` (all targets/features), 159 lib + 60 integration/doc tests, wasm32 build.

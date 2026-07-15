@@ -158,6 +158,7 @@ fn one_seg_coll(gen_marker: u8) -> CheckpointColl {
             coll_id: 0,
             body: vec![gen_marker; 800],
         }],
+        reused: None,
     }
 }
 

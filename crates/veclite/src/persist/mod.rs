@@ -12,8 +12,8 @@ pub(crate) mod seal;
 pub(crate) mod wal_body;
 
 use std::path::Path;
-use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use parking_lot::Mutex;
@@ -21,7 +21,9 @@ use parking_lot::Mutex;
 use crate::error::{Result, VecLiteError};
 use crate::options::Durability;
 use crate::storage::compression::Codec;
+use crate::storage::mmap::FileMap;
 use crate::storage::pager::{CheckpointColl, Pager};
+use crate::storage::segment::SegmentType;
 use crate::storage::wal::{Wal, WalEntry, WalOp};
 
 /// Seconds since the Unix epoch, saturating on a pre-1970 clock (never panics).
@@ -72,33 +74,106 @@ pub(crate) struct LoadedState {
     pub(crate) discarded_tail: bool,
 }
 
+/// `Persistence::open` knobs, mirroring the relevant `OpenOptions` fields.
+pub(crate) struct OpenConfig {
+    pub(crate) durability: Durability,
+    pub(crate) wal_size_limit: u64,
+    pub(crate) auto_vacuum_threshold: f32,
+    pub(crate) read_only: bool,
+    pub(crate) read_only_ignore_wal: bool,
+    /// `None` = auto: mmap a collection whose VECTORS exceed 64 MiB (SPEC-004 §1).
+    pub(crate) mmap: Option<bool>,
+    /// STG-064 tier split: mapped collections at most this large rebuild HNSW.
+    pub(crate) memory_budget: u64,
+}
+
+/// Auto-mmap threshold (SPEC-004 §1): collections whose VECTORS segments exceed
+/// this stay in the file map instead of being materialized.
+const MMAP_AUTO_THRESHOLD: u64 = 64 * 1024 * 1024;
+
 impl Persistence {
     /// Open (or create) the pager + WAL for `path`, take the advisory lock, load
     /// each collection from its checkpointed segments, and read (but do not yet
     /// apply) the WAL. `read_only` takes a shared lock and never replays;
     /// `read_only_ignore_wal` lets it open past a pending WAL (STG-060/062,
     /// WAL-043).
-    pub(crate) fn open(
-        path: &Path,
-        durability: Durability,
-        wal_size_limit: u64,
-        auto_vacuum_threshold: f32,
-        read_only: bool,
-        read_only_ignore_wal: bool,
-    ) -> Result<(Persistence, LoadedState)> {
+    pub(crate) fn open(path: &Path, cfg: &OpenConfig) -> Result<(Persistence, LoadedState)> {
         let created_epoch_s = now_epoch_s();
+        let read_only = cfg.read_only;
         // The pager locks its own handle (STG-060): exclusive for read-write,
         // shared for read-only — before any read, so a conflict is `Locked`.
         let (mut pager, toc) = open_pager(path, created_epoch_s, !read_only)?;
         let uuid = pager.uuid();
 
         // Reconstruct each collection from its live segments (STG-041 order is
-        // already baked into the TOC).
+        // already baked into the TOC). VECTORS segments large enough for the
+        // mmap tier (STG-004, ADR-0004) stay in the file map; everything else
+        // is materialized as before.
+        let mut filemap: Option<Arc<FileMap>> = None;
         let mut collections = Vec::with_capacity(toc.collections.len());
         for entry in &toc.collections {
             let mut segments = Vec::with_capacity(entry.live_segments.len());
+            let mut vec_refs = Vec::new();
             for seg_ref in &entry.live_segments {
-                segments.push(pager.read_segment(*seg_ref)?);
+                if seg_ref.seg_type == SegmentType::Vectors.to_byte() {
+                    vec_refs.push(*seg_ref);
+                } else {
+                    segments.push(pager.read_segment(*seg_ref)?);
+                }
+            }
+            let vectors_bytes: u64 = vec_refs.iter().map(|r| r.len).sum();
+            let use_mmap =
+                !vec_refs.is_empty() && cfg.mmap.unwrap_or(vectors_bytes > MMAP_AUTO_THRESHOLD);
+            if use_mmap {
+                let map = match &filemap {
+                    Some(m) => Arc::clone(m),
+                    None => {
+                        let m = Arc::new(FileMap::map(pager.path())?);
+                        filemap = Some(Arc::clone(&m));
+                        m
+                    }
+                };
+                let mut regions = Vec::with_capacity(vec_refs.len());
+                for r in &vec_refs {
+                    regions.push(map.vectors_region(*r)?);
+                }
+                let slot_count = regions
+                    .iter()
+                    .map(|g| g.first_slot() + g.count())
+                    .max()
+                    .unwrap_or(0);
+                let slot_count = usize::try_from(slot_count)
+                    .map_err(|_| VecLiteError::Corrupt("load: slot count exceeds usize".into()))?;
+                let (options, ids, payloads) = seal::load_based(&segments, slot_count)?;
+                // Auto-embed collections re-derive every vector from `_text` on
+                // open (their vocabulary is a function of the live corpus), so
+                // the map saves nothing — they always materialize.
+                if options.embedding_provider.is_none() {
+                    let indexed = vectors_bytes <= cfg.memory_budget;
+                    collections.push((
+                        entry.name.clone(),
+                        entry.coll_id,
+                        entry.aliases.clone(),
+                        seal::LoadedCollection {
+                            options,
+                            points: Vec::new(),
+                            base: Some(seal::LoadedBase {
+                                regions,
+                                slot_count,
+                                ids,
+                                payloads,
+                                seg_refs: entry.live_segments.clone(),
+                                vector_count: entry.vector_count,
+                                tombstone_count: entry.tombstone_count,
+                                indexed,
+                            }),
+                        },
+                    ));
+                    continue;
+                }
+            }
+            for r in &vec_refs {
+                segments.push(pager.read_segment(*r)?);
             }
             collections.push((
                 entry.name.clone(),
@@ -113,7 +188,7 @@ impl Persistence {
             // Read-only never replays (WAL-043). A non-empty WAL means there are
             // uncheckpointed writes a reader would miss → refuse unless the
             // caller opted to read the last checkpoint.
-            if !wal.is_empty()? && !read_only_ignore_wal {
+            if !wal.is_empty()? && !cfg.read_only_ignore_wal {
                 return Err(VecLiteError::WalPending);
             }
             (Vec::new(), false)
@@ -130,9 +205,9 @@ impl Persistence {
                     generation: toc.generation,
                 }),
                 uuid,
-                durability,
-                wal_size_limit,
-                auto_vacuum_threshold,
+                durability: cfg.durability,
+                wal_size_limit: cfg.wal_size_limit,
+                auto_vacuum_threshold: cfg.auto_vacuum_threshold,
                 read_only,
                 crashed: AtomicBool::new(false),
                 checkpoint: OnceLock::new(),
@@ -309,22 +384,31 @@ mod tests {
         ))
     }
 
+    fn cfg() -> OpenConfig {
+        OpenConfig {
+            durability: Durability::Normal,
+            wal_size_limit: 64 << 20,
+            auto_vacuum_threshold: 0.25,
+            read_only: false,
+            read_only_ignore_wal: false,
+            mmap: None,
+            memory_budget: crate::options::DEFAULT_MEMORY_BUDGET,
+        }
+    }
+
     #[test]
     fn open_fresh_then_reopen() {
         let path = tmp("fresh");
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_file(wal_path(&path));
         {
-            let (p, state) =
-                Persistence::open(&path, Durability::Normal, 64 << 20, 0.25, false, false)
-                    .unwrap_or_else(|e| panic!("{e}"));
+            let (p, state) = Persistence::open(&path, &cfg()).unwrap_or_else(|e| panic!("{e}"));
             assert!(state.collections.is_empty());
             assert!(state.replay_entries.is_empty());
             let _ = p;
         }
         // Reopen: empty (no collections, clean WAL).
-        let (_, state) = Persistence::open(&path, Durability::Normal, 64 << 20, 0.25, false, false)
-            .unwrap_or_else(|e| panic!("{e}"));
+        let (_, state) = Persistence::open(&path, &cfg()).unwrap_or_else(|e| panic!("{e}"));
         assert!(state.collections.is_empty());
         assert!(state.replay_entries.is_empty());
         let _ = std::fs::remove_file(&path);

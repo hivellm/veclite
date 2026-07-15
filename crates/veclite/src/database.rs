@@ -87,12 +87,16 @@ fn install_collection(
     loaded: seal::LoadedCollection,
 ) -> Result<()> {
     let sink: Arc<dyn WalSink> = Arc::clone(persistence) as Arc<dyn WalSink>;
+    let capacity = loaded
+        .base
+        .as_ref()
+        .map_or(loaded.points.len(), |b| b.slot_count);
     let cinner = Arc::new(CollectionInner::with_capacity(
         name.clone(),
         loaded.options,
         coll_id,
         Some(sink),
-        loaded.points.len(),
+        capacity,
     )?);
     // Restore the collection's aliases and register them for resolution.
     *cinner.aliases.write() = aliases.clone();
@@ -102,17 +106,22 @@ fn install_collection(
     let handle = Collection {
         inner: Arc::clone(&cinner),
     };
-    let points: Vec<Point> = loaded
-        .points
-        .into_iter()
-        .map(|(id, vector, payload)| Point {
-            id,
-            vector,
-            sparse: None,
-            payload,
-        })
-        .collect();
-    handle.replay_upsert(points)?;
+    if let Some(base) = loaded.base {
+        // mmap tier (ADR-0004): vectors stay in the file map.
+        handle.install_base(base)?;
+    } else {
+        let points: Vec<Point> = loaded
+            .points
+            .into_iter()
+            .map(|(id, vector, payload)| Point {
+                id,
+                vector,
+                sparse: None,
+                payload,
+            })
+            .collect();
+        handle.replay_upsert(points)?;
+    }
     inner.collections.insert(name, cinner);
     Ok(())
 }
@@ -142,6 +151,7 @@ fn apply_wal_entry(
                 seal::LoadedCollection {
                     options,
                     points: Vec::new(),
+                    base: None,
                 },
             )?;
         }
@@ -206,9 +216,16 @@ fn apply_wal_entry(
 }
 
 /// Seal every live collection's current state into `CheckpointColl`s — the
-/// input shared by checkpoint, vacuum, and snapshot.
+/// input shared by checkpoint, vacuum, and snapshot. `allow_reuse` lets an
+/// unmutated mmap-tier collection be carried forward by segment reference
+/// (ADR-0004) — valid only when committing into the **same** file, so
+/// checkpoint passes `true` while snapshot and vacuum (fresh files, all
+/// offsets invalidated) pass `false`.
 #[cfg(not(target_arch = "wasm32"))]
-fn sealed_live_collections(inner: &Arc<DatabaseInner>) -> Result<Vec<CheckpointColl>> {
+fn sealed_live_collections(
+    inner: &Arc<DatabaseInner>,
+    allow_reuse: bool,
+) -> Result<Vec<CheckpointColl>> {
     let epoch = now_epoch_s();
     let mut colls = Vec::new();
     for entry in inner.collections.iter() {
@@ -219,9 +236,23 @@ fn sealed_live_collections(inner: &Arc<DatabaseInner>) -> Result<Vec<CheckpointC
         let handle = Collection {
             inner: Arc::clone(ci),
         };
-        let live = handle.live_points();
         let name = ci.name.read().clone();
         let aliases = ci.aliases.read().clone();
+        if allow_reuse {
+            if let Some((refs, vector_count, tombstone_count)) = handle.clean_reuse() {
+                colls.push(CheckpointColl {
+                    coll_id: ci.coll_id,
+                    name,
+                    aliases,
+                    vector_count,
+                    tombstone_count,
+                    segments: Vec::new(),
+                    reused: Some(refs),
+                });
+                continue;
+            }
+        }
+        let live = handle.live_points();
         colls.push(seal::seal(
             ci.coll_id, name, aliases, &ci.config, &live, epoch,
         )?);
@@ -236,7 +267,7 @@ fn checkpoint_inner(inner: &Arc<DatabaseInner>) -> Result<()> {
     let Some(persistence) = &inner.persistence else {
         return Ok(());
     };
-    persistence.commit(sealed_live_collections(inner)?)
+    persistence.commit(sealed_live_collections(inner, true)?)
 }
 
 /// Checkpoint, then escalate to a vacuum when a collection has churned past the
@@ -292,7 +323,7 @@ fn vacuum_inner(inner: &Arc<DatabaseInner>) -> Result<()> {
         }
         .compact()?;
     }
-    persistence.vacuum(sealed_live_collections(inner)?)
+    persistence.vacuum(sealed_live_collections(inner, false)?)
 }
 
 /// Database handle. Cheap to clone; `Send + Sync` (CORE-050). Multiple
@@ -342,11 +373,15 @@ impl VecLite {
         let path = path.as_ref();
         let (persistence, state) = Persistence::open(
             path,
-            options.durability,
-            options.wal_size_limit,
-            options.auto_vacuum_threshold,
-            options.read_only,
-            options.read_only_ignore_wal,
+            &crate::persist::OpenConfig {
+                durability: options.durability,
+                wal_size_limit: options.wal_size_limit,
+                auto_vacuum_threshold: options.auto_vacuum_threshold,
+                read_only: options.read_only,
+                read_only_ignore_wal: options.read_only_ignore_wal,
+                mmap: options.mmap,
+                memory_budget: options.memory_budget,
+            },
         )?;
         let persistence = Arc::new(persistence);
         let inner = Arc::new(DatabaseInner {
@@ -400,7 +435,7 @@ impl VecLite {
         // Flush acked state first (STG-070 "run a checkpoint"); a memory
         // database has nothing to flush.
         checkpoint_inner(&self.inner)?;
-        Persistence::write_snapshot(path.as_ref(), sealed_live_collections(&self.inner)?)
+        Persistence::write_snapshot(path.as_ref(), sealed_live_collections(&self.inner, false)?)
     }
 
     /// Reclaim dead space in place (SPEC-002 STG-071): compact live data and
@@ -574,6 +609,13 @@ impl VecLite {
         let _ = coll_id;
         if let Some((_, inner)) = self.inner.collections.remove(name) {
             inner.deleted.store(true, Ordering::Release);
+            // Release a deleted collection's mmap base so a lingering handle
+            // cannot pin the file mapping across a vacuum swap (STG-071).
+            #[cfg(not(target_arch = "wasm32"))]
+            Collection {
+                inner: Arc::clone(&inner),
+            }
+            .drop_base_unchecked();
             // Drop any aliases that resolved to this collection.
             for alias in inner.aliases.read().iter() {
                 self.inner.aliases.remove(alias);

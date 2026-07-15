@@ -9,6 +9,18 @@ Versions 0.x are pre-release: the public API may change between minors until 1.0
 ## [Unreleased]
 
 ### Added
+- mmap primary read path + larger-than-RAM tier (task `phase2f`, ADR-0004,
+  SPEC-002 STG-004/063/064): collections whose VECTORS exceed 64 MiB (or with
+  `OpenOptions::mmap(true)`) keep their vector bytes in a read-only file map —
+  stride addressing, no decode, per-body CRC verified once. Under the new
+  `OpenOptions::memory_budget` (default 4 GiB) the HNSW graph is rebuilt from
+  the map in bounded chunks on open; over it the collection serves **exact**
+  SIMD brute-force k-NN straight from the map. Writes overlay the mapped base;
+  unmutated mapped collections are carried forward by segment reference at
+  checkpoint (O(TOC), nothing rewritten); vacuum rebases the map before the
+  file swap (Windows-safe). ADR-0004 supersedes ADR-0003 — no graph
+  persistence in v1 (hnsw_rs's on-disk format is version-unstable and
+  directory-shaped); the byte format is untouched and the v1 freeze holds.
 - Cargo workspace bootstrap (`crates/veclite`), edition 2024, provisional MSRV 1.85,
   workspace lints denying `unwrap`/`expect` in library code (task `phase0a`, DAG T0.1/T0.3).
 - `VecLiteError` with the full stable variant set and pinned display strings (SPEC-004 §6).

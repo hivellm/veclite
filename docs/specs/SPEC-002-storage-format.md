@@ -153,7 +153,9 @@ in-process iterations plus a real subprocess kill-9 harness nightly on
 Linux/macOS/Windows, and the v1 golden files are guarded on every run
 (`crates/veclite/tests/golden.rs`). These fix the **byte format**, which is now
 frozen. Criterion 4 (the mmap access path and its warm-open budget) does not
-change any on-disk bytes and is tracked in `phase2f_mmap-hnsw-persistence`
-(ADR-0004); it reads the same frozen v1 layout.
+change any on-disk bytes and was delivered in `phase2f_mmap-hnsw-persistence`
+(ADR-0004): STG-004 mmap addressing with the STG-064 tier split, reading the
+same frozen v1 layout; the at-scale 4×RAM run lands with the phase-6 soak
+(DAG T6.2).
 5. **Windows vacuum**: shrink-in-place under mmap passes on Windows CI.
 6. **Freeze artifact**: this document marked frozen-normative; golden files for v1 committed to `tests/compat/golden/` and read by every subsequent CI run (NFR-11).

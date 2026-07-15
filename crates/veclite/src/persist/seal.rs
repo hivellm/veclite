@@ -20,10 +20,37 @@ use crate::storage::vectors::{Encoding, VectorsBody};
 /// persisted (phase3c).
 pub(crate) type LivePoint = (String, Vec<f32>, Option<Value>);
 
-/// A collection reconstructed from its segments.
+/// A collection reconstructed from its segments. Exactly one of `points` /
+/// `base` carries the vectors: the materialized tier fills `points`; the mmap
+/// tier (STG-004, ADR-0004) leaves `points` empty and hands the vector
+/// regions plus slot metadata in `base`.
 pub(crate) struct LoadedCollection {
     pub(crate) options: CollectionOptions,
     pub(crate) points: Vec<LivePoint>,
+    pub(crate) base: Option<LoadedBase>,
+}
+
+/// The mmap tier's load product (ADR-0004): slot metadata in RAM, vector bytes
+/// left in the file map. `seg_refs` keeps the collection's committed segment
+/// references so an unmutated collection can be carried forward by reference at
+/// the next checkpoint instead of resealed.
+pub(crate) struct LoadedBase {
+    /// Mapped VECTORS windows, covering slots `0..slot_count` contiguously.
+    pub(crate) regions: Vec<crate::storage::mmap::VectorsRegion>,
+    /// Total slots (live + dead) addressed by `regions`.
+    pub(crate) slot_count: usize,
+    /// Slot → id; `None` marks a dead slot (absent from the IDDIR).
+    pub(crate) ids: Vec<Option<String>>,
+    /// Slot → payload.
+    pub(crate) payloads: Vec<Option<Value>>,
+    /// The committed live segments (replay order), for clean carry-forward.
+    pub(crate) seg_refs: Vec<crate::storage::toc::SegRef>,
+    pub(crate) vector_count: u64,
+    pub(crate) tombstone_count: u64,
+    /// Whether the mapped vectors fit `OpenOptions::memory_budget` — build the
+    /// in-RAM HNSW when true, serve exact scans from the map when false
+    /// (STG-064).
+    pub(crate) indexed: bool,
 }
 
 /// Bucket count heuristic: ~1 entry/bucket, clamped to a sane floor.
@@ -108,6 +135,7 @@ pub(crate) fn seal(
         vector_count: live.len() as u64,
         tombstone_count: 0,
         segments,
+        reused: None,
     })
 }
 
@@ -173,7 +201,57 @@ pub(crate) fn load(segments: &[Segment]) -> Result<LoadedCollection> {
         debug_assert_eq!(vector.len(), dim);
         points.push((id, vector, payloads[slot].take()));
     }
-    Ok(LoadedCollection { options, points })
+    Ok(LoadedCollection {
+        options,
+        points,
+        base: None,
+    })
+}
+
+/// `load_based`'s product: collection options plus slot → id / payload tables.
+pub(crate) type BasedMeta = (CollectionOptions, Vec<Option<String>>, Vec<Option<Value>>);
+
+/// Reconstruct a collection's config and slot metadata **without** its vectors
+/// — the mmap-tier load (ADR-0004). `segments` carries every live segment
+/// except VECTORS (those stay in the file map); `slot_count` is the total slot
+/// range covered by the mapped regions. Slots absent from the IDDIR are dead
+/// (`ids[slot] = None`) — with carry-forward a checkpoint may commit an
+/// uncompacted base, so a sparse IDDIR is data, not corruption.
+pub(crate) fn load_based(segments: &[Segment], slot_count: usize) -> Result<BasedMeta> {
+    let mut stored: Option<StoredConfig> = None;
+    let mut iddir: Option<IdDir> = None;
+    let mut payload = PayloadBlock {
+        entries: Vec::new(),
+    };
+    for seg in segments {
+        match seg.seg_type {
+            SegmentType::Config => stored = Some(StoredConfig::decode(&seg.body)?),
+            SegmentType::Iddir => iddir = Some(IdDir::decode(&seg.body)?),
+            SegmentType::Payload => payload = PayloadBlock::decode(&seg.body)?,
+            _ => {}
+        }
+    }
+    let stored = stored.ok_or_else(|| VecLiteError::Corrupt("load: missing CONFIG".to_owned()))?;
+    let iddir = iddir.ok_or_else(|| VecLiteError::Corrupt("load: missing IDDIR".to_owned()))?;
+    let options = config::from_stored(&stored)?;
+
+    let mut ids: Vec<Option<String>> = vec![None; slot_count];
+    for (id, slot) in iddir.entries() {
+        let s = usize::try_from(slot)
+            .ok()
+            .filter(|&s| s < slot_count)
+            .ok_or_else(|| VecLiteError::Corrupt("load: IDDIR slot out of range".to_owned()))?;
+        ids[s] = Some(id.to_owned());
+    }
+    let mut payloads: Vec<Option<Value>> = vec![None; slot_count];
+    for (slot, value) in payload.entries {
+        if let Ok(s) = usize::try_from(slot) {
+            if s < slot_count {
+                payloads[s] = Some(value);
+            }
+        }
+    }
+    Ok((options, ids, payloads))
 }
 
 #[cfg(test)]

@@ -9,6 +9,11 @@ use std::path::PathBuf;
 /// Default auto-embedding provider (server parity — SPEC-004 §3).
 pub const DEFAULT_EMBEDDING_PROVIDER: &str = "bm25";
 
+/// Default [`OpenOptions::memory_budget`]: 4 GiB of mapped vector bytes may be
+/// indexed in RAM; past that a collection serves exact scans from the mmap
+/// (SPEC-002 STG-064, ADR-0004).
+pub const DEFAULT_MEMORY_BUDGET: u64 = 4 * 1024 * 1024 * 1024;
+
 /// Distance metric for a collection (SPEC-001 CORE-015).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Metric {
@@ -193,6 +198,10 @@ pub struct OpenOptions {
     pub(crate) read_only: bool,
     /// `None` = auto: mmap files larger than 64 MiB (SPEC-004 §1).
     pub(crate) mmap: Option<bool>,
+    /// In-RAM index budget for mmap'd collections (SPEC-002 STG-064,
+    /// ADR-0004): a collection whose mmap'd vectors exceed this many bytes
+    /// skips the HNSW build and serves exact brute-force k-NN from the map.
+    pub(crate) memory_budget: u64,
     pub(crate) durability: Durability,
     pub(crate) background_checkpoint: bool,
     pub(crate) wal_size_limit: u64,
@@ -206,6 +215,7 @@ impl Default for OpenOptions {
         OpenOptions {
             read_only: false,
             mmap: None,
+            memory_budget: DEFAULT_MEMORY_BUDGET,
             durability: Durability::default(),
             background_checkpoint: false,
             wal_size_limit: 64 * 1024 * 1024,
@@ -231,6 +241,16 @@ impl OpenOptions {
     /// Force mmap reads on or off. Default: auto (files > 64 MiB).
     pub fn mmap(mut self, v: bool) -> Self {
         self.mmap = Some(v);
+        self
+    }
+
+    /// In-RAM index budget for mmap'd collections (SPEC-002 STG-064): when a
+    /// collection's mapped vectors exceed this many bytes, open skips the HNSW
+    /// build and serves **exact** brute-force k-NN straight from the map —
+    /// this is the larger-than-RAM tier (ADR-0004). Below the budget the graph
+    /// is rebuilt in RAM and ANN search is served as usual. Default: 4 GiB.
+    pub fn memory_budget(mut self, bytes: u64) -> Self {
+        self.memory_budget = bytes;
         self
     }
 

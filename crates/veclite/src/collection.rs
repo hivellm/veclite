@@ -20,12 +20,18 @@ use crate::filter::index::PayloadIndexes;
 use crate::index::HnswIndex;
 use crate::options::{CollectionOptions, Metric, Quantization};
 #[cfg(not(target_arch = "wasm32"))]
+use crate::persist::seal::LoadedBase;
+#[cfg(not(target_arch = "wasm32"))]
 use crate::persist::wal_body;
 use crate::point::{Hit, Point, SparseVector, validate_id};
 use crate::quantization::traits::{QuantizationMethod, QuantizationParams};
 use crate::quantization::{BinaryQuantization, ScalarQuantization};
 use crate::query::QueryBuilder;
 use crate::simd::{cosine_similarity, dot_product, euclidean_distance};
+#[cfg(not(target_arch = "wasm32"))]
+use crate::storage::mmap::VectorsRegion;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::storage::toc::SegRef;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::storage::wal::WalOp;
 
@@ -103,6 +109,43 @@ struct CollectionData {
     /// only (roaring); wasm32 filters by scan.
     #[cfg(not(target_arch = "wasm32"))]
     payload_indexes: PayloadIndexes,
+    /// mmap tier (STG-004/064, ADR-0004): slots `0..base.count` read their
+    /// vector bytes from the file map; `vectors` then holds only overlay slots
+    /// (`base.count..`), indexed at `(slot - base.count) * dim`. `None` for
+    /// memory / materialized collections — every slot lives in `vectors`.
+    #[cfg(not(target_arch = "wasm32"))]
+    base: Option<BaseTier>,
+    /// Any mutation since load sets this; a clean mmap-tier collection is
+    /// carried forward by segment reference at checkpoint instead of resealed.
+    #[cfg(not(target_arch = "wasm32"))]
+    dirty: bool,
+}
+
+/// The mmap tier of a loaded collection (ADR-0004): mapped vector windows plus
+/// the committed segment references for clean carry-forward.
+#[cfg(not(target_arch = "wasm32"))]
+struct BaseTier {
+    regions: Vec<VectorsRegion>,
+    /// Slots `0..count` (live + dead) are served from `regions`.
+    count: usize,
+    /// The committed live segments backing this base (replay order).
+    seg_refs: Vec<SegRef>,
+    vector_count: u64,
+    tombstone_count: u64,
+    /// False when the mapped vectors exceed the memory budget — no HNSW is
+    /// built and search is an exact scan over the map (STG-064).
+    indexed: bool,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl BaseTier {
+    /// Decode base `slot`'s vector into `out`; `false` if unmapped.
+    fn read_into(&self, slot: u64, out: &mut Vec<f32>) -> bool {
+        self.regions
+            .iter()
+            .find(|r| slot >= r.first_slot() && slot < r.first_slot() + r.count())
+            .is_some_and(|r| r.read_f32_into(slot, out))
+    }
 }
 
 impl CollectionData {
@@ -119,7 +162,65 @@ impl CollectionData {
             codes: Vec::new(),
             quant_params: None,
             payload_indexes,
+            base: None,
+            dirty: false,
         }
+    }
+
+    /// Slots below this read vectors from the mmap base; at or above, from the
+    /// in-RAM overlay (`vectors`, offset by this count).
+    fn base_count(&self) -> usize {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.base.as_ref().map_or(0, |b| b.count)
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            0
+        }
+    }
+
+    /// Borrow `slot`'s vector: a direct slice for overlay slots, a decode into
+    /// `scratch` for mmap-base slots. The hot path for scoring — one reused
+    /// scratch buffer per query, zero per-record allocation.
+    #[cfg_attr(target_arch = "wasm32", allow(unused_variables))] // no base tier there
+    fn vector_at<'a>(&'a self, slot: usize, dim: usize, scratch: &'a mut Vec<f32>) -> &'a [f32] {
+        let bc = self.base_count();
+        if slot >= bc {
+            let o = slot - bc;
+            return &self.vectors[o * dim..(o + 1) * dim];
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(base) = &self.base {
+            if base.read_into(slot as u64, scratch) {
+                return &scratch[..];
+            }
+        }
+        // Unreachable by construction: slot < base_count implies a mapped
+        // region covers it. Empty rather than a panic on a broken invariant.
+        debug_assert!(false, "slot {slot} below base_count but unmapped");
+        &[]
+    }
+
+    /// Owned copy of `slot`'s vector, from whichever tier holds it.
+    // The `return` inside the cfg block is required — the wasm arm replaces it.
+    #[allow(clippy::needless_return)]
+    fn copy_vector(&self, slot: usize, dim: usize) -> Vec<f32> {
+        let bc = self.base_count();
+        if slot >= bc {
+            let o = slot - bc;
+            return self.vectors[o * dim..(o + 1) * dim].to_vec();
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let mut out = Vec::with_capacity(dim);
+            if let Some(base) = &self.base {
+                base.read_into(slot as u64, &mut out);
+            }
+            return out;
+        }
+        #[cfg(target_arch = "wasm32")]
+        unreachable!("wasm32 has no mmap base tier")
     }
 
     #[cfg(target_arch = "wasm32")]
@@ -576,7 +677,7 @@ impl Collection {
         let dim = self.inner.config.dimension;
         Ok(Some(Point {
             id: data.ids[slot].clone(),
-            vector: data.vectors[slot * dim..(slot + 1) * dim].to_vec(),
+            vector: data.copy_vector(slot, dim),
             sparse: data.sparses[slot].clone(),
             payload: data.payloads[slot].clone(),
         }))
@@ -646,13 +747,17 @@ impl Collection {
         let mut live: Vec<(usize, Vec<f32>)> = Vec::new();
         for (slot, id) in data.ids.iter().enumerate() {
             if data.id_to_slot.get(id) == Some(&slot) {
-                live.push((slot, data.vectors[slot * dim..(slot + 1) * dim].to_vec()));
+                live.push((slot, data.copy_vector(slot, dim)));
             }
         }
 
         #[cfg(not(target_arch = "wasm32"))]
         {
-            data.index = if self.inner.config.metric == Metric::DotProduct {
+            // An over-budget mmap collection stays unindexed (STG-064): building
+            // the graph would materialize every vector into RAM — exactly what
+            // the tier exists to avoid. Exact scans keep serving it.
+            let budget_gated = data.base.as_ref().is_some_and(|b| !b.indexed);
+            data.index = if self.inner.config.metric == Metric::DotProduct || budget_gated {
                 None
             } else {
                 let fresh = HnswIndex::new(
@@ -767,7 +872,7 @@ impl Collection {
             }
             points.push(Point {
                 id: data.ids[slot].clone(),
-                vector: data.vectors[slot * dim..(slot + 1) * dim].to_vec(),
+                vector: data.copy_vector(slot, dim),
                 sparse: data.sparses[slot].clone(),
                 payload: data.payloads[slot].clone(),
             });
@@ -946,7 +1051,7 @@ impl Collection {
                                 None
                             },
                             vector: if with_vector {
-                                Some(data.vectors[slot * dim..(slot + 1) * dim].to_vec())
+                                Some(data.copy_vector(slot, dim))
                             } else {
                                 None
                             },
@@ -1100,7 +1205,7 @@ impl Collection {
                     None
                 },
                 vector: if with_vector {
-                    Some(data.vectors[slot * dim..(slot + 1) * dim].to_vec())
+                    Some(data.copy_vector(slot, dim))
                 } else {
                     None
                 },
@@ -1149,12 +1254,127 @@ impl Collection {
             if data.id_to_slot.get(&data.ids[slot]) == Some(&slot) {
                 out.push((
                     data.ids[slot].clone(),
-                    data.vectors[slot * dim..(slot + 1) * dim].to_vec(),
+                    data.copy_vector(slot, dim),
                     data.payloads[slot].clone(),
                 ));
             }
         }
         out
+    }
+
+    /// Install a loaded mmap base (ADR-0004): slot metadata into RAM, vector
+    /// bytes left in the file map. Under the memory budget the HNSW graph is
+    /// rebuilt from the map in chunks (STG-063 reframed); over it the
+    /// collection stays unindexed and serves exact scans (STG-064).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn install_base(&self, base: LoadedBase) -> Result<()> {
+        let dim = self.inner.config.dimension;
+        let n = base.slot_count;
+        let mut guard = self.inner.data.write();
+        // Plain `&mut` so the borrow checker can split disjoint fields (the
+        // payload-index inserts borrow `payloads` while mutating `payload_indexes`).
+        let data = &mut *guard;
+
+        data.vectors = Vec::new();
+        data.ids = Vec::with_capacity(n);
+        data.id_to_slot = HashMap::with_capacity(n);
+        data.tombstones = HashSet::new();
+        data.payloads = base.payloads;
+        data.sparses = vec![None; n];
+        data.payload_indexes = PayloadIndexes::new(&self.inner.config.payload_indexes);
+        for (slot, id) in base.ids.into_iter().enumerate() {
+            match id {
+                Some(id) => {
+                    data.id_to_slot.insert(id.clone(), slot);
+                    data.ids.push(id);
+                    data.payload_indexes
+                        .insert(slot as u64, data.payloads[slot].as_ref());
+                }
+                None => {
+                    // Dead slot (absent from the IDDIR): keep positional
+                    // numbering, mark tombstoned. Empty ids are invalid
+                    // (CORE-010), so this can never shadow a live id.
+                    data.ids.push(String::new());
+                    data.tombstones.insert(slot);
+                }
+            }
+        }
+
+        data.index = if base.indexed && self.inner.config.metric != Metric::DotProduct {
+            let fresh = HnswIndex::new(
+                self.inner.config.metric,
+                dim,
+                self.inner.config.hnsw.m,
+                self.inner.config.hnsw.ef_construction,
+                data.id_to_slot.len().max(1),
+            )?;
+            // Rebuild from the map in bounded chunks — the graph keeps its own
+            // copy (hnsw_rs), but this loop never materializes the whole set.
+            const CHUNK: usize = 8192;
+            let mut batch: Vec<(usize, Vec<f32>)> = Vec::with_capacity(CHUNK);
+            for slot in 0..n {
+                if data.id_to_slot.get(&data.ids[slot]) != Some(&slot) {
+                    continue;
+                }
+                let mut v = Vec::with_capacity(dim);
+                if base
+                    .regions
+                    .iter()
+                    .find(|r| {
+                        (slot as u64) >= r.first_slot()
+                            && (slot as u64) < r.first_slot() + r.count()
+                    })
+                    .is_some_and(|r| r.read_f32_into(slot as u64, &mut v))
+                {
+                    batch.push((slot, v));
+                }
+                if batch.len() == CHUNK {
+                    fresh.insert_batch(&batch);
+                    batch.clear();
+                }
+            }
+            if !batch.is_empty() {
+                fresh.insert_batch(&batch);
+            }
+            Some(fresh)
+        } else {
+            None
+        };
+
+        data.codes = Vec::new();
+        data.quant_params = None;
+        data.base = Some(BaseTier {
+            regions: base.regions,
+            count: n,
+            seg_refs: base.seg_refs,
+            vector_count: base.vector_count,
+            tombstone_count: base.tombstone_count,
+            indexed: base.indexed,
+        });
+        data.dirty = false;
+        Ok(())
+    }
+
+    /// Clean carry-forward check (ADR-0004): an mmap-tier collection with no
+    /// mutations since load returns its committed segment references and TOC
+    /// counts — the checkpoint references them in place instead of resealing.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn clean_reuse(&self) -> Option<(Vec<SegRef>, u64, u64)> {
+        let data = self.inner.data.read();
+        if data.dirty {
+            return None;
+        }
+        data.base
+            .as_ref()
+            .map(|b| (b.seg_refs.clone(), b.vector_count, b.tombstone_count))
+    }
+
+    /// Release the mmap base (if any), materializing nothing — used when the
+    /// collection is deleted so a lingering handle cannot pin the file mapping
+    /// across a vacuum's rename-over swap (STG-071).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn drop_base_unchecked(&self) {
+        self.inner.data.write().base = None;
     }
 
     /// Apply a WAL upsert during recovery — validate + apply, no re-logging.
@@ -1205,7 +1425,7 @@ impl Collection {
             if data.id_to_slot.get(&data.ids[slot]) == Some(&slot) {
                 live.push(PreparedPoint {
                     id: data.ids[slot].clone(),
-                    vector: data.vectors[slot * dim..(slot + 1) * dim].to_vec(),
+                    vector: data.copy_vector(slot, dim),
                     sparse: data.sparses[slot].clone(),
                     payload: data.payloads[slot].clone(),
                 });
@@ -1218,6 +1438,11 @@ impl Collection {
         data.tombstones.clear();
         data.payloads.clear();
         data.sparses.clear();
+        // Rebase to RAM: compaction renumbers slots, so the mmap base (whose
+        // slot addressing is positional) is dropped — this also releases the
+        // file mapping before vacuum's rename-over swap (STG-071, Windows).
+        data.base = None;
+        data.dirty = true;
         // Slots are renumbered, so the payload indexes are rebuilt from scratch
         // (apply_upsert below re-inserts each live point at its fresh slot).
         data.payload_indexes = PayloadIndexes::new(&self.inner.config.payload_indexes);
@@ -1274,11 +1499,15 @@ fn brute_force(
     dim: usize,
     out: &mut Vec<(usize, f32)>,
 ) {
+    let mut scratch = Vec::with_capacity(dim);
     for slot in 0..data.ids.len() {
         if data.id_to_slot.get(&data.ids[slot]) != Some(&slot) {
             continue; // tombstoned or replaced by a newer slot
         }
-        out.push((slot, score_slot(data, query, metric, dim, slot)));
+        out.push((
+            slot,
+            score_slot(data, query, metric, dim, slot, &mut scratch),
+        ));
     }
 }
 
@@ -1301,7 +1530,7 @@ fn project_slots(
                 None
             },
             vector: if with_vector {
-                Some(data.vectors[slot * dim..(slot + 1) * dim].to_vec())
+                Some(data.copy_vector(slot, dim))
             } else {
                 None
             },
@@ -1310,14 +1539,17 @@ fn project_slots(
 }
 
 /// Score one slot's stored vector against the query, per metric (CORE-035).
+/// `scratch` is a caller-reused decode buffer for mmap-base slots — the same
+/// kernels run on either tier, so scores are bit-identical (ADR-0004).
 fn score_slot(
     data: &CollectionData,
     query: &[f32],
     metric: Metric,
     dim: usize,
     slot: usize,
+    scratch: &mut Vec<f32>,
 ) -> f32 {
-    let v = &data.vectors[slot * dim..(slot + 1) * dim];
+    let v = data.vector_at(slot, dim, scratch);
     match metric {
         Metric::Cosine => cosine_similarity(query, v),
         Metric::Euclidean => euclidean_distance(query, v),
@@ -1338,6 +1570,7 @@ fn filtered_scored(
     filter: &Filter,
     out: &mut Vec<(usize, f32)>,
 ) {
+    let mut scratch = Vec::with_capacity(dim);
     #[cfg(not(target_arch = "wasm32"))]
     if let Some(candidates) = data.payload_indexes.candidates(filter) {
         for s in candidates.iter() {
@@ -1346,7 +1579,10 @@ fn filtered_scored(
                 && data.id_to_slot.get(&data.ids[slot]) == Some(&slot)
                 && filter.matches(data.payloads[slot].as_ref())
             {
-                out.push((slot, score_slot(data, query, metric, dim, slot)));
+                out.push((
+                    slot,
+                    score_slot(data, query, metric, dim, slot, &mut scratch),
+                ));
             }
         }
         return;
@@ -1355,7 +1591,10 @@ fn filtered_scored(
         if data.id_to_slot.get(&data.ids[slot]) == Some(&slot)
             && filter.matches(data.payloads[slot].as_ref())
         {
-            out.push((slot, score_slot(data, query, metric, dim, slot)));
+            out.push((
+                slot,
+                score_slot(data, query, metric, dim, slot, &mut scratch),
+            ));
         }
     }
 }
@@ -1367,8 +1606,11 @@ fn tombstone(data: &mut CollectionData, id: &str) -> bool {
         Some(slot) => {
             data.tombstones.insert(slot);
             #[cfg(not(target_arch = "wasm32"))]
-            data.payload_indexes
-                .remove(slot as u64, data.payloads[slot].as_ref());
+            {
+                data.payload_indexes
+                    .remove(slot as u64, data.payloads[slot].as_ref());
+                data.dirty = true;
+            }
             data.payloads[slot] = None;
             data.sparses[slot] = None;
             true
@@ -1389,22 +1631,26 @@ fn apply_upsert(data: &mut CollectionData, p: PreparedPoint, dim: usize) {
         data.sparses[slot] = None;
     }
     let slot = data.ids.len();
-    debug_assert_eq!(data.vectors.len(), slot * dim);
+    let overlay = slot - data.base_count();
+    debug_assert_eq!(data.vectors.len(), overlay * dim);
     data.vectors.extend_from_slice(&p.vector);
     data.ids.push(p.id.clone());
     data.payloads.push(p.payload);
     data.sparses.push(p.sparse);
     data.id_to_slot.insert(p.id, slot);
     #[cfg(not(target_arch = "wasm32"))]
-    data.payload_indexes
-        .insert(slot as u64, data.payloads[slot].as_ref());
+    {
+        data.payload_indexes
+            .insert(slot as u64, data.payloads[slot].as_ref());
+        data.dirty = true;
+    }
 
     // The replaced-id path above already tombstoned the old slot; hnsw_rs
     // has no delete API, so that stale node stays in the graph until
     // `reindex` — the search layer filters it out by liveness instead.
     #[cfg(not(target_arch = "wasm32"))]
     if let Some(index) = &data.index {
-        index.insert(&data.vectors[slot * dim..(slot + 1) * dim], slot);
+        index.insert(&data.vectors[overlay * dim..(overlay + 1) * dim], slot);
     }
 }
 

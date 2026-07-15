@@ -11,6 +11,7 @@
 //! (STG-071); that coordination lives in the persistence layer.
 
 use std::path::Path;
+use std::sync::Arc;
 
 use memmap2::Mmap;
 
@@ -18,7 +19,7 @@ use crate::error::{Result, VecLiteError};
 use crate::storage::compression::Codec;
 use crate::storage::segment::{SEGMENT_HEADER_SIZE, SegmentType};
 use crate::storage::toc::SegRef;
-use crate::storage::vectors::VectorsView;
+use crate::storage::vectors::{Encoding, VectorsView};
 
 /// A read-only memory map of an entire `.veclite` file. Segment bodies are
 /// borrowed directly from the mapping; the borrow is tied to `&self`, so the
@@ -79,14 +80,18 @@ impl FileMap {
             buf[at + 15],
         ]))
         .map_err(|_| VecLiteError::Corrupt(format!("{}: body length exceeds usize", loc())))?;
-        let body_crc32 = u32::from_le_bytes([buf[at + 24], buf[at + 25], buf[at + 26], buf[at + 27]]);
+        let body_crc32 =
+            u32::from_le_bytes([buf[at + 24], buf[at + 25], buf[at + 26], buf[at + 27]]);
         let body_end = header_end
             .checked_add(stored_len)
             .filter(|&e| e <= buf.len())
             .ok_or_else(|| VecLiteError::Corrupt(format!("{}: body past end of file", loc())))?;
         let body = &buf[header_end..body_end];
         if crc32fast::hash(body) != body_crc32 {
-            return Err(VecLiteError::Corrupt(format!("{}: body crc mismatch", loc())));
+            return Err(VecLiteError::Corrupt(format!(
+                "{}: body crc mismatch",
+                loc()
+            )));
         }
         Ok(body)
     }
@@ -102,6 +107,100 @@ impl FileMap {
         }
         VectorsView::parse(self.segment_body(seg)?)
     }
+
+    /// Build a long-lived [`VectorsRegion`] over the VECTORS segment referenced
+    /// by `seg`. The body CRC is verified **once** here (STG-021); the region
+    /// then addresses records by stored offsets with no per-access re-hash.
+    /// Only the `F32` encoding is served by the v1 mmap tier (the encoding seal
+    /// writes); others are `Corrupt`.
+    pub(crate) fn vectors_region(self: &Arc<Self>, seg: SegRef) -> Result<VectorsRegion> {
+        let view = self.vectors_view(seg)?;
+        if view.encoding != Encoding::F32 {
+            return Err(VecLiteError::Corrupt(format!(
+                "segment@{}: mmap tier requires the F32 encoding",
+                seg.offset
+            )));
+        }
+        // Translate the view's record block into absolute map offsets: the
+        // borrow starts somewhere inside `self.mmap`; recover its position.
+        let base = self.mmap.as_ptr() as usize;
+        let records = view
+            .record(view.first_slot)
+            .map(|r| r.as_ptr() as usize - base)
+            .unwrap_or(self.mmap.len()); // empty segment: no records to address
+        Ok(VectorsRegion {
+            map: Arc::clone(self),
+            records_start: records,
+            stride: view.stride(),
+            dimension: view.dimension,
+            first_slot: view.first_slot,
+            count: view.count,
+        })
+    }
+}
+
+/// A validated, long-lived window over one mmap'd VECTORS segment (STG-004,
+/// ADR-0004). Holds the [`FileMap`] alive via `Arc`; addressing is offset
+/// arithmetic into the mapping — no decode, no CRC re-hash, no copy until the
+/// caller decodes a record's `f32`s.
+pub(crate) struct VectorsRegion {
+    map: Arc<FileMap>,
+    /// Absolute byte offset of the first record within the mapping.
+    records_start: usize,
+    stride: usize,
+    dimension: u32,
+    first_slot: u64,
+    count: u64,
+}
+
+impl VectorsRegion {
+    pub(crate) fn first_slot(&self) -> u64 {
+        self.first_slot
+    }
+
+    pub(crate) fn count(&self) -> u64 {
+        self.count
+    }
+
+    pub(crate) fn dimension(&self) -> u32 {
+        self.dimension
+    }
+
+    /// Total record bytes this region serves (the resident-memory cost it
+    /// avoids).
+    pub(crate) fn byte_len(&self) -> u64 {
+        self.count * self.stride as u64
+    }
+
+    /// Raw record bytes for `slot`, or `None` outside
+    /// `first_slot .. first_slot + count`.
+    pub(crate) fn record(&self, slot: u64) -> Option<&[u8]> {
+        let index = slot.checked_sub(self.first_slot)?;
+        if index >= self.count {
+            return None;
+        }
+        let start = self
+            .records_start
+            .checked_add(usize::try_from(index).ok()?.checked_mul(self.stride)?)?;
+        let end = start.checked_add(self.stride)?;
+        self.map.mmap.get(start..end)
+    }
+
+    /// Decode `slot`'s `f32` components into `out` (cleared first). Returns
+    /// `false` for an out-of-range slot. The little-endian decode is the only
+    /// copy on this path, into a caller-reused scratch buffer.
+    pub(crate) fn read_f32_into(&self, slot: u64, out: &mut Vec<f32>) -> bool {
+        let Some(bytes) = self.record(slot) else {
+            return false;
+        };
+        out.clear();
+        out.extend(
+            bytes
+                .chunks_exact(4)
+                .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])),
+        );
+        true
+    }
 }
 
 #[cfg(test)]
@@ -112,7 +211,10 @@ mod tests {
     use crate::storage::vectors::{Encoding, VectorsBody};
 
     fn tmp(name: &str) -> std::path::PathBuf {
-        std::env::temp_dir().join(format!("veclite-mmap-{}-{name}.veclite", std::process::id()))
+        std::env::temp_dir().join(format!(
+            "veclite-mmap-{}-{name}.veclite",
+            std::process::id()
+        ))
     }
 
     fn vectors_seg(coll_id: u32, dim: u32, vecs: &[Vec<f32>]) -> Segment {
@@ -159,6 +261,7 @@ mod tests {
                     vector_count: 3,
                     tombstone_count: 0,
                     segments: vec![seg],
+                    reused: None,
                 }],
                 Codec::Lz4,
                 1001,

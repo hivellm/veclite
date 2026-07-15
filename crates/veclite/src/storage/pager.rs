@@ -24,6 +24,12 @@ pub(crate) struct CheckpointColl {
     pub(crate) vector_count: u64,
     pub(crate) tombstone_count: u64,
     pub(crate) segments: Vec<Segment>,
+    /// Carry-forward (ADR-0004): when set, the collection is unchanged since
+    /// its segments were committed — the new TOC references them in place and
+    /// nothing is rewritten. Valid only within the same file (segments are
+    /// immutable, STG-002); never set for snapshot/vacuum targets, whose fresh
+    /// files invalidate every offset. `segments` must be empty when set.
+    pub(crate) reused: Option<Vec<SegRef>>,
 }
 
 /// Owns the open `.veclite` file and tracks the next append offset. The handle
@@ -210,6 +216,22 @@ impl Pager {
         let mut cur = start_tail;
         let mut entries = Vec::with_capacity(colls.len());
         for c in colls {
+            if let Some(refs) = c.reused {
+                // Carry-forward: the committed segments are immutable and still
+                // live in this same file — reference them, write nothing.
+                debug_assert!(c.segments.is_empty());
+                let mut entry = CollEntry {
+                    coll_id: c.coll_id,
+                    name: c.name,
+                    aliases: c.aliases,
+                    vector_count: c.vector_count,
+                    tombstone_count: c.tombstone_count,
+                    live_segments: refs,
+                };
+                entry.sort_replay_order();
+                entries.push(entry);
+                continue;
+            }
             let mut refs = Vec::with_capacity(c.segments.len());
             for seg in &c.segments {
                 let chosen = codec_for(seg.seg_type, codec, seg.body.len());
@@ -304,6 +326,7 @@ mod tests {
             vector_count: segs.len() as u64,
             tombstone_count: 0,
             segments: segs,
+            reused: None,
         }
     }
 
