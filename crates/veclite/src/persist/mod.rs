@@ -157,6 +157,7 @@ impl Persistence {
                         seal::LoadedCollection {
                             options,
                             points: Vec::new(),
+                            vocab: None, // auto-embed never maps; vocab is a load() concern
                             base: Some(seal::LoadedBase {
                                 regions,
                                 slot_count,

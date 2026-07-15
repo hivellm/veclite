@@ -174,41 +174,95 @@ fn planner_strategies_match_the_exact_scan_baseline() {
 
     let query = [777.3f32, 2.0];
     let limit = 12;
-    for key in ["rare", "common", "unindexed"] {
-        let filter =
-            Filter::from_json(&serde_json::json!({"must":[{"key": key, "match":{"value":"yes"}}]}))
-                .unwrap_or_else(|e| panic!("{e}"));
-
-        // Exact baseline, computed by hand over the same corpus.
-        let matches = |i: u32| match key {
-            "rare" => i.is_multiple_of(97),
-            "common" => !i.is_multiple_of(10),
-            _ => i.is_multiple_of(3),
-        };
-        let mut baseline: Vec<(f32, u32)> = (0..n)
-            .filter(|&i| matches(i))
+    let matches = |key: &str, i: u32| match key {
+        "rare" => i.is_multiple_of(97),
+        "common" => !i.is_multiple_of(10),
+        _ => i.is_multiple_of(3),
+    };
+    let baseline = |key: &str, take: usize| -> Vec<String> {
+        let mut all: Vec<(f32, u32)> = (0..n)
+            .filter(|&i| matches(key, i))
             .map(|i| {
                 let dx = i as f32 - query[0];
                 let dy = (i % 7) as f32 - query[1];
                 (dx * dx + dy * dy, i)
             })
             .collect();
-        baseline.sort_by(|a, b| a.0.total_cmp(&b.0));
-        let want: Vec<String> = baseline
-            .iter()
-            .take(limit)
+        all.sort_by(|a, b| a.0.total_cmp(&b.0));
+        all.iter()
+            .take(take)
             .map(|(_, i)| format!("k{i}"))
-            .collect();
+            .collect()
+    };
 
+    // Selective pre-filter (~1% candidates): exact by construction — the
+    // result MUST equal the hand-computed scan baseline (FLT-031).
+    let rare_filter =
+        Filter::from_json(&serde_json::json!({"must":[{"key":"rare","match":{"value":"yes"}}]}))
+            .unwrap_or_else(|e| panic!("{e}"));
+    let hits = c
+        .query(&query)
+        .limit(limit)
+        .filter(rare_filter)
+        .run()
+        .unwrap_or_else(|e| panic!("{e}"));
+    let got: Vec<String> = hits.into_iter().map(|h| h.id).collect();
+    assert_eq!(got, baseline("rare", limit), "pre-filter must be exact");
+
+    // Non-selective / unindexed keys route to HNSW over-fetch post-filter,
+    // which follows the same approximation contract as unfiltered ANN search
+    // (the graph's level assignment is randomized). Assert the contract: the
+    // requested count, every hit genuinely matching the filter, exact scores,
+    // and metric ordering.
+    for key in ["common", "unindexed"] {
+        let filter =
+            Filter::from_json(&serde_json::json!({"must":[{"key": key, "match":{"value":"yes"}}]}))
+                .unwrap_or_else(|e| panic!("{e}"));
         let hits = c
             .query(&query)
             .limit(limit)
             .filter(filter)
             .run()
             .unwrap_or_else(|e| panic!("{e}"));
-        let got: Vec<String> = hits.into_iter().map(|h| h.id).collect();
-        assert_eq!(got, want, "strategy mismatch for key {key:?}");
+        assert_eq!(hits.len(), limit, "post-filter must fill the limit");
+        let mut prev = f32::NEG_INFINITY;
+        for h in &hits {
+            let i: u32 = h.id[1..].parse().unwrap_or_else(|e| panic!("{e}"));
+            assert!(matches(key, i), "{key}: {} must match the filter", h.id);
+            let dx = i as f32 - query[0];
+            let dy = (i % 7) as f32 - query[1];
+            let exact = (dx * dx + dy * dy).sqrt();
+            assert!(
+                (h.score - exact).abs() <= exact * 1e-5,
+                "{key}: score {} vs exact {exact}",
+                h.score
+            );
+            assert!(h.score >= prev, "{key}: ascending distance order");
+            prev = h.score;
+        }
     }
+
+    // Exhaustion path: an unindexed filter whose total matches (~667) fall
+    // short of the limit forces the adaptive growth to run dry, and the
+    // exact-scan fallback makes the result deterministically identical to the
+    // baseline (FLT-031).
+    let all_unindexed = c
+        .query(&query)
+        .limit(700)
+        .filter(
+            Filter::from_json(
+                &serde_json::json!({"must":[{"key":"unindexed","match":{"value":"yes"}}]}),
+            )
+            .unwrap_or_else(|e| panic!("{e}")),
+        )
+        .run()
+        .unwrap_or_else(|e| panic!("{e}"));
+    let got: Vec<String> = all_unindexed.into_iter().map(|h| h.id).collect();
+    assert_eq!(
+        got,
+        baseline("unindexed", 700),
+        "exhaustion fallback must be exact"
+    );
 
     // Filter matching nothing: every strategy agrees on empty.
     let none = c

@@ -68,14 +68,35 @@ pub(crate) struct CollectionInner {
     /// not logged). Never set on wasm32 (no file storage) — dead there.
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     persistence: Option<Arc<dyn WalSink>>,
-    /// Text embedder for an auto-embed collection (SPEC-005), or `None` for a
-    /// BYO-vectors collection. Its vocabulary is a function of the live `_text`
-    /// corpus, rebuilt lazily when `text_dirty` is set.
-    embedder: Option<Mutex<Box<dyn Embedder>>>,
+    /// Text embedder slot for an auto-embed collection (SPEC-005); `None` for
+    /// BYO-vectors collections. Behind a lock so a provider registered after
+    /// open can bind to a deferred collection (EMB-011).
+    embedder: RwLock<EmbedderSlot>,
+    /// VOCAB state loaded for a collection whose provider is `Missing` —
+    /// imported when the provider binds, re-sealed at checkpoints meanwhile so
+    /// the state is never lost (EMB-011/023).
+    pending_vocab: Mutex<Option<Vec<u8>>>,
     /// Set when `_text` changed and the embedder vocabulary/document vectors are
     /// stale; the next search (or `refit`) recomputes them (SPEC-005 §5).
     text_dirty: AtomicBool,
     data: RwLock<CollectionData>,
+}
+
+/// A shared text-embedder instance: one per collection for built-ins, one per
+/// registered name shared by every collection referencing it (EMB-011).
+pub(crate) type SharedEmbedder = Arc<Mutex<Box<dyn Embedder>>>;
+
+/// The state of a collection's embedding provider.
+pub(crate) enum EmbedderSlot {
+    /// BYO-vectors collection — no text machinery.
+    None,
+    /// Auto-embed with a live provider.
+    Ready(SharedEmbedder),
+    /// Auto-embed whose provider is unavailable in this process: an
+    /// unregistered custom name (EMB-011) or `fastembed:*` without the `onnx`
+    /// feature (EMB-023). Open succeeded; vector operations work; text
+    /// operations fail with `UnsupportedProvider` until the provider binds.
+    Missing(String),
 }
 
 /// Slot-major in-memory storage.
@@ -251,11 +272,19 @@ const EF_SEARCH_BOUNDS: std::ops::RangeInclusive<usize> = 1..=4096;
 /// Maximum payload size, checked on the serialized form (SPEC-002 §8, FLT-001).
 const MAX_PAYLOAD_BYTES: usize = 16 * 1024 * 1024;
 
+/// Live sets at or below this size are searched by exact brute force even when
+/// an HNSW graph exists: the scan is faster than a graph traversal there, and
+/// tiny randomly-leveled graphs are the classic source of approximate misses
+/// (CORE-035 determinism).
+#[cfg(not(target_arch = "wasm32"))]
+const SMALL_EXACT_MAX: usize = 256;
+
 impl CollectionInner {
     /// Build a new collection's shared state, including its HNSW index
     /// (native only). Propagates `HnswIndex::new`'s `m`/`ef_construction`
     /// bounds check (SPEC-001 CORE-031); `DotProduct` collections get no
     /// index (ADR-0002 — `DistDot` panics on unnormalized vectors).
+    #[cfg_attr(not(test), allow(dead_code))] // constructor used by unit tests
     pub(crate) fn new(
         name: String,
         config: CollectionOptions,
@@ -274,6 +303,31 @@ impl CollectionInner {
         coll_id: u32,
         persistence: Option<Arc<dyn WalSink>>,
         capacity: usize,
+    ) -> Result<Self> {
+        // Build the text embedder fail-fast: an unknown provider is
+        // `UnsupportedProvider` here (EMB-021). The load path resolves
+        // leniently instead (registered/deferred providers) via
+        // [`with_embedder`](Self::with_embedder).
+        let slot = match &config.embedding_provider {
+            Some(name) => EmbedderSlot::Ready(Arc::new(Mutex::new(
+                crate::embedding::build_provider(name, config.dimension)?,
+            ))),
+            None => EmbedderSlot::None,
+        };
+        Self::with_embedder(name, config, coll_id, persistence, capacity, slot)
+    }
+
+    /// As [`with_capacity`](Self::with_capacity) but with the embedder slot
+    /// resolved by the caller — the open path passes `Ready` (built-in or
+    /// registered provider) or `Missing` (EMB-011/023 deferral) so a reopen
+    /// never fails on an unavailable provider.
+    pub(crate) fn with_embedder(
+        name: String,
+        config: CollectionOptions,
+        coll_id: u32,
+        persistence: Option<Arc<dyn WalSink>>,
+        capacity: usize,
+        slot: EmbedderSlot,
     ) -> Result<Self> {
         #[cfg(not(target_arch = "wasm32"))]
         let data = {
@@ -295,28 +349,18 @@ impl CollectionInner {
             CollectionData::empty()
         };
 
-        // Build the text embedder for an auto-embed collection; an unknown
-        // provider fails fast here with `UnsupportedProvider` (EMB-021).
-        let embedder = match &config.embedding_provider {
-            Some(name) => Some(Mutex::new(crate::embedding::build_provider(
-                name,
-                config.dimension,
-            )?)),
-            None => None,
-        };
-
-        // Auto-embed collections start "dirty" so the first search rebuilds the
-        // vocabulary from the loaded/ingested `_text` (mirrors the HNSW rebuild).
-        let text_dirty = AtomicBool::new(embedder.is_some());
-
         Ok(CollectionInner {
             name: RwLock::new(name),
             aliases: RwLock::new(Vec::new()),
             deleted: AtomicBool::new(false),
             coll_id,
             persistence,
-            embedder,
-            text_dirty,
+            embedder: RwLock::new(slot),
+            pending_vocab: Mutex::new(None),
+            // Incremental vocabulary updates (EMB-030) keep the state fresh as
+            // documents arrive; the open path marks legacy files (text docs
+            // but no VOCAB segment) dirty so their first search refits.
+            text_dirty: AtomicBool::new(false),
             data: RwLock::new(data),
             config,
         })
@@ -393,6 +437,98 @@ impl Collection {
         Ok(())
     }
 
+    /// The live embedder, if the slot is `Ready`.
+    fn embedder_ready(&self) -> Option<SharedEmbedder> {
+        match &*self.inner.embedder.read() {
+            EmbedderSlot::Ready(e) => Some(Arc::clone(e)),
+            _ => None,
+        }
+    }
+
+    /// The embedder a text operation requires: `InvalidArgument` on a BYO
+    /// collection; `UnsupportedProvider` naming the remedy when the provider
+    /// is unavailable in this process (EMB-011/023).
+    fn text_embedder(&self) -> Result<SharedEmbedder> {
+        match &*self.inner.embedder.read() {
+            EmbedderSlot::Ready(e) => Ok(Arc::clone(e)),
+            EmbedderSlot::Missing(name) => {
+                let remedy = if crate::embedding::is_onnx_provider(name) {
+                    format!(
+                        "provider {name:?} requires a build with the `onnx` feature; \
+                         vector-level reads and searches keep working"
+                    )
+                } else {
+                    format!(
+                        "provider {name:?} is not registered in this process; call \
+                         Database::register_embedder({name:?}, ...) before text operations"
+                    )
+                };
+                Err(VecLiteError::UnsupportedProvider {
+                    requested: remedy,
+                    available: crate::embedding::available_providers(),
+                })
+            }
+            EmbedderSlot::None => Err(VecLiteError::InvalidArgument(
+                "text operations require an auto-embed collection (use CollectionOptions::auto_embed)"
+                    .to_owned(),
+            )),
+        }
+    }
+
+    /// Bind a registered provider to this collection's `Missing` slot
+    /// (EMB-011), importing any VOCAB state carried through open. No-op unless
+    /// the slot is `Missing(name)`.
+    pub(crate) fn bind_embedder(&self, name: &str, embedder: &SharedEmbedder) -> Result<()> {
+        {
+            let slot = self.inner.embedder.read();
+            match &*slot {
+                EmbedderSlot::Missing(n) if n == name => {}
+                _ => return Ok(()),
+            }
+        }
+        if let Some(state) = self.inner.pending_vocab.lock().take() {
+            embedder.lock().import_state(&state)?;
+        }
+        *self.inner.embedder.write() = EmbedderSlot::Ready(Arc::clone(embedder));
+        Ok(())
+    }
+
+    /// Import checkpointed VOCAB state (open / WAL `VOCAB_UPDATE` replay). A
+    /// `Missing` slot stashes the bytes for the eventual bind instead.
+    pub(crate) fn replay_import_vocab(&self, state: &[u8]) -> Result<()> {
+        match &*self.inner.embedder.read() {
+            EmbedderSlot::Ready(e) => {
+                e.lock().import_state(state)?;
+                self.inner.text_dirty.store(false, Ordering::Release);
+            }
+            EmbedderSlot::Missing(_) => {
+                *self.inner.pending_vocab.lock() = Some(state.to_vec());
+            }
+            EmbedderSlot::None => {}
+        }
+        Ok(())
+    }
+
+    /// Current VOCAB state for sealing: the live provider's export, or the
+    /// pending bytes carried for a `Missing` provider (never dropped by a
+    /// checkpoint that cannot re-derive them).
+    pub(crate) fn export_vocab_state(&self) -> Result<Option<Vec<u8>>> {
+        match &*self.inner.embedder.read() {
+            EmbedderSlot::Ready(e) => {
+                let state = e.lock().export_state()?;
+                Ok(if state.is_empty() { None } else { Some(state) })
+            }
+            EmbedderSlot::Missing(_) => Ok(self.inner.pending_vocab.lock().clone()),
+            EmbedderSlot::None => Ok(None),
+        }
+    }
+
+    /// Mark the vocabulary stale (legacy files with text docs but no VOCAB
+    /// segment): the first search refits exactly from the stored `_text`.
+    pub(crate) fn mark_text_dirty(&self) {
+        self.inner.text_dirty.store(true, Ordering::Release);
+    }
+
     /// Validate ingest rules (CORE-010, CORE-012..014) and normalize for Cosine.
     /// Runs outside any lock; on error nothing was modified. `allow_reserved` is
     /// set only for the internal text path and WAL replay, which legitimately
@@ -442,7 +578,7 @@ impl Collection {
             sparse.validate()?;
             // Auto-embed collections own the sparse lane; a BYO sparse vector on
             // one is a mode conflict (SPEC-007 HYB-002). Skipped on replay.
-            if !allow_reserved && self.inner.embedder.is_some() {
+            if !allow_reserved && self.inner.config.embedding_provider.is_some() {
                 return Err(VecLiteError::InvalidArgument(
                     "auto-embed collections manage the sparse lane; do not supply an explicit sparse vector"
                         .to_owned(),
@@ -528,24 +664,20 @@ impl Collection {
     }
 
     /// Insert-or-replace a batch of `(id, text, payload?)` documents (SPEC-005
-    /// §4). Each is embedded now with the current vocabulary; the vocabulary is
-    /// then marked stale so the next search recomputes it exactly from the full
-    /// `_text` corpus (SPEC-005 §5).
+    /// §4). Each document is folded into the vocabulary **incrementally**
+    /// (`Embedder::add_document`, SPEC-005 EMB-030 — approximate by design)
+    /// and embedded with the updated state; `refit` remains the exact
+    /// recompute (EMB-031).
     pub fn upsert_text_batch(
         &self,
         items: Vec<(String, String, Option<serde_json::Value>)>,
     ) -> Result<()> {
         self.guard()?;
-        let embedder = self.inner.embedder.as_ref().ok_or_else(|| {
-            VecLiteError::InvalidArgument(
-                "text operations require an auto-embed collection (use CollectionOptions::auto_embed)"
-                    .to_owned(),
-            )
-        })?;
+        let embedder = self.text_embedder()?;
 
         let mut points = Vec::with_capacity(items.len());
         {
-            let emb = embedder.lock();
+            let mut emb = embedder.lock();
             for (id, text, user_payload) in items {
                 // The user payload may not carry reserved keys.
                 if let Some(obj) = user_payload.as_ref().and_then(|v| v.as_object()) {
@@ -555,6 +687,7 @@ impl Collection {
                         )));
                     }
                 }
+                emb.add_document(&text);
                 let vector = embed_nonzero(&**emb, &text, self.inner.config.dimension)?;
                 let mut payload = user_payload.unwrap_or_else(|| serde_json::json!({}));
                 if let Some(obj) = payload.as_object_mut() {
@@ -578,17 +711,8 @@ impl Collection {
     /// `InvalidArgument` on a BYO collection.
     pub fn search_text(&self, query: &str, limit: usize) -> Result<Vec<Hit>> {
         self.guard()?;
-        if self.inner.embedder.is_none() {
-            return Err(VecLiteError::InvalidArgument(
-                "text search requires an auto-embed collection".to_owned(),
-            ));
-        }
+        let embedder = self.text_embedder()?;
         self.refit_if_dirty()?;
-        let embedder = self
-            .inner
-            .embedder
-            .as_ref()
-            .ok_or_else(|| VecLiteError::InvalidArgument("no embedder".to_owned()))?;
         let vector = embedder.lock().embed(query)?;
         self.search(&vector, limit)
     }
@@ -598,11 +722,7 @@ impl Collection {
     /// `InvalidArgument` on a BYO collection.
     pub fn refit(&self) -> Result<()> {
         self.guard()?;
-        if self.inner.embedder.is_none() {
-            return Err(VecLiteError::InvalidArgument(
-                "refit requires an auto-embed collection".to_owned(),
-            ));
-        }
+        self.text_embedder()?; // BYO / missing-provider rejection
         self.do_refit()
     }
 
@@ -618,8 +738,8 @@ impl Collection {
     /// Gather live `_text`, fit the embedder on the full corpus, and re-embed
     /// every text document so all stored vectors share one vocabulary.
     fn do_refit(&self) -> Result<()> {
-        let Some(embedder) = self.inner.embedder.as_ref() else {
-            return Ok(());
+        let Some(embedder) = self.embedder_ready() else {
+            return Ok(()); // BYO, or a Missing provider (EMB-023): nothing to refit
         };
         // Snapshot live text documents in slot order, keeping the FULL payload
         // (user keys + `_text`) so re-embedding never drops metadata.
@@ -657,6 +777,17 @@ impl Collection {
             out
         };
         self.upsert_batch_inner(repoints, true)?;
+        // EMB-032: journal the refit as a full VOCAB snapshot AFTER the
+        // re-upsert batches. Replay folds each replayed document into the
+        // vocabulary incrementally, then this import overwrites with the
+        // exact fitted state — recovery converges to this moment's memory.
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.inner.persistence.is_some() {
+            let state = embedder.lock().export_state()?;
+            if !state.is_empty() {
+                self.log(WalOp::VocabUpdate, Some(state))?;
+            }
+        }
         self.inner.text_dirty.store(false, Ordering::Release);
         Ok(())
     }
@@ -918,7 +1049,7 @@ impl Collection {
             dimension: self.inner.config.dimension,
             len,
             tombstones,
-            auto_embed: self.inner.embedder.is_some(),
+            auto_embed: self.inner.config.embedding_provider.is_some(),
             payload_indexes,
         }
     }
@@ -1170,11 +1301,14 @@ impl Collection {
             None => {
                 #[cfg(not(target_arch = "wasm32"))]
                 match &data.index {
-                    // For a small live set (no more points than we are fetching),
-                    // the HNSW approximation can drop the farthest candidates;
-                    // exact brute force is both correct and cheaper. Larger sets
-                    // use the index.
-                    Some(_) if data.id_to_slot.len() <= limit + data.tombstones.len() => {
+                    // Small live sets take exact brute force: it is faster than
+                    // a graph traversal there, and tiny HNSW graphs (random
+                    // level assignment) are the classic source of approximate
+                    // misses. Larger sets use the index.
+                    Some(_)
+                        if data.id_to_slot.len()
+                            <= SMALL_EXACT_MAX.max(limit + data.tombstones.len()) =>
+                    {
                         brute_force(&data, q, metric, dim, &mut scored);
                     }
                     Some(index) => {
@@ -1471,6 +1605,36 @@ impl Collection {
     /// Apply a WAL upsert during recovery — validate + apply, no re-logging.
     /// Reserved keys are allowed: recovered text documents carry `_text`.
     pub(crate) fn replay_upsert(&self, points: Vec<Point>) -> Result<()> {
+        let prepared: Vec<PreparedPoint> = points
+            .into_iter()
+            .map(|p| self.prepare_inner(p, true))
+            .collect::<Result<_>>()?;
+        // Reproduce the incremental vocabulary updates the live path applied
+        // (EMB-030): each text document folded in, in WAL order. Vectors come
+        // from the entry itself — no re-embedding. This is WAL-only: points
+        // loaded from a checkpoint go through `install_points`, because their
+        // contributions are already inside the sealed VOCAB state.
+        if let Some(embedder) = self.embedder_ready() {
+            let mut emb = embedder.lock();
+            for p in &prepared {
+                if let Some(text) = p
+                    .payload
+                    .as_ref()
+                    .and_then(|v| v.get("_text"))
+                    .and_then(|t| t.as_str())
+                {
+                    emb.add_document(text);
+                }
+            }
+        }
+        self.apply_prepared(prepared);
+        Ok(())
+    }
+
+    /// Install checkpoint-loaded points (open path): validate + apply with NO
+    /// vocabulary updates — the sealed VOCAB already reflects these documents,
+    /// so folding them in again would double-count (EMB-030).
+    pub(crate) fn install_points(&self, points: Vec<Point>) -> Result<()> {
         let prepared: Vec<PreparedPoint> = points
             .into_iter()
             .map(|p| self.prepare_inner(p, true))

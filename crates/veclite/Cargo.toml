@@ -19,6 +19,10 @@ simd = []
 # Product quantization (vendored, off by default). Not wired into the public
 # Quantization enum yet; kept byte-identical for future interop.
 pq = []
+# The `svd` embedding provider (SPEC-005 §2): TF-IDF + truncated-SVD-style
+# projection, vendored from the server with its ndarray Array2 replaced by a
+# plain Vec matrix (same math, zero extra dependencies).
+svd = []
 
 [dependencies]
 thiserror.workspace = true

@@ -12,6 +12,8 @@
 pub mod bm25;
 pub mod bow;
 pub mod char_ngram;
+#[cfg(feature = "svd")]
+pub mod svd;
 pub mod tfidf;
 
 use crate::error::{Result, VecLiteError};
@@ -35,6 +37,16 @@ pub trait Embedder: Send + Sync {
     /// exact recompute `refit` uses). No-op for stateless providers.
     fn fit(&mut self, corpus: &[&str]) -> Result<()>;
 
+    /// Fold one more document into the trainable state **incrementally**
+    /// (SPEC-005 EMB-030): update document-frequency tables and append new
+    /// terms while vocabulary space remains — approximate by design (existing
+    /// term indices never move, so stored vectors stay comparable); `fit` /
+    /// `refit` remains the exact recompute (EMB-031). Default: no-op, for
+    /// stateless providers.
+    fn add_document(&mut self, text: &str) {
+        let _ = text;
+    }
+
     /// Serialize provider-private state for the VOCAB segment (SPEC-005 EMB-010);
     /// empty for stateless providers. MUST be forward/backward compatible.
     fn export_state(&self) -> Result<Vec<u8>>;
@@ -51,10 +63,22 @@ pub const DEFAULT_PROVIDER: &str = "bm25";
 /// (feature-gated) and `fastembed:*` (onnx) are added by their features.
 #[must_use]
 pub fn available_providers() -> Vec<String> {
-    ["bm25", "tfidf", "bow", "char_ngram"]
+    #[allow(unused_mut)] // mutated only when the `svd` feature is on
+    let mut out: Vec<String> = ["bm25", "tfidf", "bow", "char_ngram"]
         .into_iter()
         .map(str::to_owned)
-        .collect()
+        .collect();
+    #[cfg(feature = "svd")]
+    out.push("svd".to_owned());
+    out
+}
+
+/// Whether `provider` names the ONNX/fastembed family (SPEC-005 §2), which is
+/// only available behind the `onnx` feature (EMB-040) — used by the reopen
+/// path to defer rather than fail the whole open (EMB-023).
+#[must_use]
+pub fn is_onnx_provider(provider: &str) -> bool {
+    provider.starts_with("fastembed:")
 }
 
 /// Construct a built-in provider by id, or fail with `UnsupportedProvider`
@@ -68,6 +92,8 @@ pub fn build_provider(provider: &str, dimension: usize) -> Result<Box<dyn Embedd
             dimension,
             char_ngram::DEFAULT_N,
         ))),
+        #[cfg(feature = "svd")]
+        "svd" => Ok(Box::new(svd::Svd::new(dimension))),
         other => Err(VecLiteError::UnsupportedProvider {
             requested: other.to_owned(),
             available: available_providers(),

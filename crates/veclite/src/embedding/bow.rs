@@ -73,6 +73,22 @@ impl Embedder for BagOfWords {
         self.dimension
     }
 
+    fn add_document(&mut self, text: &str) {
+        // Incremental (EMB-030, approximate): append unseen terms at the next
+        // free index while vocabulary space remains; indices never move.
+        let mut unique: Vec<String> = {
+            let set: std::collections::HashSet<String> = Self::tokenize(text).into_iter().collect();
+            set.into_iter().collect()
+        };
+        unique.sort();
+        for word in unique {
+            if !self.vocabulary.contains_key(&word) && self.vocabulary.len() < self.dimension {
+                let idx = self.vocabulary.len();
+                self.vocabulary.insert(word, idx);
+            }
+        }
+    }
+
     fn fit(&mut self, corpus: &[&str]) -> Result<()> {
         self.build_vocabulary(corpus);
         Ok(())

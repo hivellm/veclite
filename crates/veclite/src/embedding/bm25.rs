@@ -102,6 +102,36 @@ impl Bm25 {
         }
     }
 
+    /// Fold one document into the statistics incrementally (EMB-030,
+    /// approximate): document count / average length update exactly; document
+    /// frequencies bump for known terms; new terms append at the next free
+    /// index while vocabulary space remains (existing indices never move, so
+    /// stored vectors stay comparable). `fit` remains the exact recompute.
+    fn add_document_inner(&mut self, text: &str) {
+        let tokens = Self::tokenize(text);
+        self.doc_lengths.push(tokens.len());
+        self.total_docs += 1;
+        #[allow(clippy::cast_precision_loss)]
+        {
+            self.avg_doc_length =
+                self.doc_lengths.iter().sum::<usize>() as f32 / self.total_docs as f32;
+        }
+        let mut unique: Vec<String> = {
+            let set: HashSet<String> = tokens.into_iter().collect();
+            set.into_iter().collect()
+        };
+        unique.sort(); // deterministic append order for new terms
+        for term in unique {
+            if self.vocabulary.contains_key(&term) {
+                *self.doc_freq.entry(term).or_insert(0) += 1;
+            } else if self.vocabulary.len() < self.dimension {
+                let idx = self.vocabulary.len();
+                self.vocabulary.insert(term.clone(), idx);
+                self.doc_freq.insert(term, 1);
+            }
+        }
+    }
+
     /// BM25 score for one term (server-identical). `idf` uses the `+1` variant
     /// so it is never negative; `tf` is the saturating BM25 term-frequency.
     fn bm25_score(&self, term_freq: usize, doc_length: usize, doc_freq: usize) -> f32 {
@@ -164,6 +194,10 @@ impl Embedder for Bm25 {
         self.total_docs = 0;
         self.build_vocabulary(corpus);
         Ok(())
+    }
+
+    fn add_document(&mut self, text: &str) {
+        self.add_document_inner(text);
     }
 
     fn export_state(&self) -> Result<Vec<u8>> {

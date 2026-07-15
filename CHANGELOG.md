@@ -9,6 +9,26 @@ Versions 0.x are pre-release: the public API may change between minors until 1.0
 ## [Unreleased]
 
 ### Added
+- Embedding lifecycle + custom providers (task `phase3f`, SPEC-005): the
+  vocabulary now updates **incrementally** (`Embedder::add_document`,
+  EMB-030) — `upsert_text` is O(doc) instead of triggering a full refit on
+  the next search — and is persisted as a VOCAB segment at checkpoint, so a
+  reopened auto-embed collection searches identically with **no rebuild and
+  no re-embedding** (stored vectors byte-identical, zero tombstone churn).
+  Crash recovery reproduces the exact state: checkpoint VOCAB + per-document
+  folding during WAL replay, with `refit` journaling a full snapshot
+  (`VOCAB_UPDATE`, EMB-032) after its re-upsert batches.
+  `Database::register_embedder(name, embedder)` registers per-instance custom
+  providers (EMB-011): built-in names are rejected, and collections reopened
+  before registration defer — open succeeds, vector reads/searches work, text
+  operations fail with `UnsupportedProvider` naming the remedy; registering
+  binds them (EMB-023 mechanism, shared with `fastembed:*` on non-onnx
+  builds). New `svd` provider behind the `svd` feature (vendored from the
+  server; ndarray replaced by a plain Vec matrix, zero new deps). A server
+  parity corpus (fixtures generated from the unmodified Vectorizer provider
+  sources) pins bm25/tfidf/bow/char_ngram outputs within 1e-5 (acceptance 1).
+  Also: small live sets (<= 256) now always search by exact brute force —
+  faster than a graph traversal there and immune to tiny-graph approximation.
 - Runtime payload indexes + filtered-search planner (task `phase3e`, SPEC-006
   FLT-020/030/031): `Collection::create_payload_index(key, kind)` declares an
   index late, backfilling from the live payloads; the declaration is journaled

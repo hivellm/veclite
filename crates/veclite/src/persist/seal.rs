@@ -29,6 +29,10 @@ pub(crate) struct LoadedCollection {
     pub(crate) options: CollectionOptions,
     pub(crate) points: Vec<LivePoint>,
     pub(crate) base: Option<LoadedBase>,
+    /// Checkpointed embedder state (VOCAB segment, SPEC-005 EMB-030): imported
+    /// on open so text search needs no rebuild. `None` for BYO collections and
+    /// legacy files (whose first search refits from `_text`).
+    pub(crate) vocab: Option<Vec<u8>>,
 }
 
 /// The mmap tier's load product (ADR-0004): slot metadata in RAM, vector bytes
@@ -73,12 +77,14 @@ fn posting_value_bytes(v: &PostingValue) -> Vec<u8> {
 /// (SPEC-002 §5). Slots are compacted to `0..live.len()`; `declared` payload
 /// indexes are rebuilt over the compacted numbering and sealed as one PIDX
 /// segment per key (SPEC-006 FLT-020/021).
+#[allow(clippy::too_many_arguments)] // seal mirrors the full segment set
 pub(crate) fn seal(
     coll_id: u32,
     name: String,
     aliases: Vec<String>,
     options: &CollectionOptions,
     declared: &[(String, PayloadIndexKind)],
+    vocab: Option<&[u8]>,
     live: &[LivePoint],
     created_epoch_s: u64,
 ) -> Result<CheckpointColl> {
@@ -172,6 +178,19 @@ pub(crate) fn seal(
         }
     }
 
+    // VOCAB segment (SPEC-005 EMB-030): the embedder's exported state, so a
+    // reopened auto-embed collection searches identically with no rebuild.
+    if let Some(state) = vocab {
+        if !state.is_empty() {
+            segments.push(Segment {
+                seg_type: SegmentType::Vocab,
+                seg_flags: 0,
+                coll_id,
+                body: crate::storage::body::encode_vocab(state),
+            });
+        }
+    }
+
     Ok(CheckpointColl {
         coll_id,
         name,
@@ -193,9 +212,11 @@ pub(crate) fn load(segments: &[Segment]) -> Result<LoadedCollection> {
         entries: Vec::new(),
     };
     let mut declared: Vec<(String, PayloadIndexKind)> = Vec::new();
+    let mut vocab: Option<Vec<u8>> = None;
     for seg in segments {
         match seg.seg_type {
             SegmentType::Config => stored = Some(StoredConfig::decode(&seg.body)?),
+            SegmentType::Vocab => vocab = Some(crate::storage::body::decode_vocab(&seg.body)),
             SegmentType::Vectors => vectors = Some(VectorsBody::decode(&seg.body)?),
             SegmentType::Iddir => iddir = Some(IdDir::decode(&seg.body)?),
             SegmentType::Payload => payload = PayloadBlock::decode(&seg.body)?,
@@ -257,6 +278,7 @@ pub(crate) fn load(segments: &[Segment]) -> Result<LoadedCollection> {
         options,
         points,
         base: None,
+        vocab,
     })
 }
 
@@ -336,7 +358,7 @@ mod tests {
                 Some(serde_json::json!("x")),
             ),
         ];
-        let sealed = seal(0, "docs".into(), vec![], &opts(), &[], &live, 1000)
+        let sealed = seal(0, "docs".into(), vec![], &opts(), &[], None, &live, 1000)
             .unwrap_or_else(|e| panic!("{e}"));
         assert_eq!(sealed.vector_count, 3);
         let loaded = load(&sealed.segments).unwrap_or_else(|e| panic!("{e}"));
@@ -346,7 +368,7 @@ mod tests {
 
     #[test]
     fn empty_collection_round_trips() {
-        let sealed = seal(1, "empty".into(), vec![], &opts(), &[], &[], 1000)
+        let sealed = seal(1, "empty".into(), vec![], &opts(), &[], None, &[], 1000)
             .unwrap_or_else(|e| panic!("{e}"));
         let loaded = load(&sealed.segments).unwrap_or_else(|e| panic!("{e}"));
         assert!(loaded.points.is_empty());

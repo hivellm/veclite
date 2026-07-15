@@ -80,6 +80,23 @@ impl Embedder for CharNgram {
         self.dimension
     }
 
+    fn add_document(&mut self, text: &str) {
+        // Incremental (EMB-030, approximate): append unseen n-grams at the
+        // next free index while vocabulary space remains; indices never move.
+        let mut unique: Vec<String> = {
+            let set: std::collections::HashSet<String> =
+                self.extract_ngrams(text).into_iter().collect();
+            set.into_iter().collect()
+        };
+        unique.sort();
+        for ngram in unique {
+            if !self.ngram_map.contains_key(&ngram) && self.ngram_map.len() < self.dimension {
+                let idx = self.ngram_map.len();
+                self.ngram_map.insert(ngram, idx);
+            }
+        }
+    }
+
     fn fit(&mut self, corpus: &[&str]) -> Result<()> {
         self.build_vocabulary(corpus);
         Ok(())

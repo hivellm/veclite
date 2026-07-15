@@ -10,12 +10,20 @@ use serde::{Deserialize, Serialize};
 use super::Embedder;
 use crate::error::{Result, VecLiteError};
 
-/// TF-IDF provider state: the top terms and their IDF weights.
+/// TF-IDF provider state: the top terms and their IDF weights. The
+/// `doc_frequencies`/`total_docs` tables back incremental updates (EMB-030);
+/// they default to empty when importing pre-3f state (EMB-010 compatibility —
+/// such state stays exact until the next `refit`, it just cannot update
+/// incrementally).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TfIdf {
     dimension: usize,
     vocabulary: HashMap<String, usize>,
     idf_weights: Vec<f32>,
+    #[serde(default)]
+    doc_frequencies: HashMap<String, usize>,
+    #[serde(default)]
+    total_docs: usize,
 }
 
 impl TfIdf {
@@ -26,6 +34,39 @@ impl TfIdf {
             dimension,
             vocabulary: HashMap::new(),
             idf_weights: Vec::new(),
+            doc_frequencies: HashMap::new(),
+            total_docs: 0,
+        }
+    }
+
+    /// Fold one document in incrementally (EMB-030, approximate): bump
+    /// document frequencies, append new terms while space remains (indices
+    /// never move), and refresh every known term's IDF for the new `N`.
+    #[allow(clippy::cast_precision_loss)]
+    fn add_document_inner(&mut self, text: &str) {
+        self.total_docs += 1;
+        let mut unique: Vec<String> = {
+            let set: HashSet<String> = Self::tokenize(text).into_iter().collect();
+            set.into_iter().collect()
+        };
+        unique.sort(); // deterministic append order
+        for word in unique {
+            *self.doc_frequencies.entry(word.clone()).or_insert(0) += 1;
+            if !self.vocabulary.contains_key(&word) && self.vocabulary.len() < self.dimension {
+                let idx = self.vocabulary.len();
+                self.vocabulary.insert(word, idx);
+                self.idf_weights.push(0.0); // refreshed below
+            }
+        }
+        // Refresh IDF for every term whose document frequency is tracked;
+        // terms from legacy imports (no df table) keep their fitted weight.
+        let n = self.total_docs as f32;
+        for (word, &idx) in &self.vocabulary {
+            if let Some(&df) = self.doc_frequencies.get(word) {
+                if let Some(w) = self.idf_weights.get_mut(idx) {
+                    *w = (n / df as f32).ln().max(0.0);
+                }
+            }
         }
     }
 
@@ -77,6 +118,9 @@ impl TfIdf {
             let df = *doc_frequencies.get(word).unwrap_or(&1) as f32;
             self.idf_weights.push((total_docs / df).ln().max(0.0));
         }
+        // Keep the incremental tables in sync with the fitted state (EMB-030).
+        self.doc_frequencies = doc_frequencies;
+        self.total_docs = texts.len();
     }
 
     /// Term frequency (count / total) for the tokens of `text`.
@@ -116,6 +160,10 @@ impl Embedder for TfIdf {
 
     fn dimension(&self) -> usize {
         self.dimension
+    }
+
+    fn add_document(&mut self, text: &str) {
+        self.add_document_inner(text);
     }
 
     fn fit(&mut self, corpus: &[&str]) -> Result<()> {

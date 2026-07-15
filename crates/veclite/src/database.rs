@@ -10,7 +10,8 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use dashmap::DashMap;
 use parking_lot::Mutex;
 
-use crate::collection::{Collection, CollectionInner, WalSink};
+use crate::collection::{Collection, CollectionInner, EmbedderSlot, SharedEmbedder, WalSink};
+use crate::embedding::Embedder;
 use crate::error::{Result, VecLiteError};
 use crate::options::CollectionOptions;
 use crate::point::validate_collection_name;
@@ -36,6 +37,10 @@ struct DatabaseInner {
     /// Alias name → target collection name (SPEC-004 §2, CORE-011). Resolved
     /// transparently in `collection()`.
     aliases: DashMap<String, String>,
+    /// Custom embedding providers registered on THIS database instance
+    /// (SPEC-005 EMB-011 — never global). One shared instance per name;
+    /// collections referencing it hold clones of the `Arc`.
+    registered_embedders: DashMap<String, SharedEmbedder>,
     /// Serializes create/delete/rename (registry-level write, CORE-051).
     registry: Mutex<()>,
     /// Next collection id to assign (stamped into WAL entries + CONFIG).
@@ -91,12 +96,29 @@ fn install_collection(
         .base
         .as_ref()
         .map_or(loaded.points.len(), |b| b.slot_count);
-    let cinner = Arc::new(CollectionInner::with_capacity(
+    // Resolve the provider LENIENTLY: reopen must never fail on an
+    // unavailable provider (EMB-011/023) — built-in, then registered, then a
+    // deferred `Missing` slot whose text operations fail with the remedy.
+    let slot = match &loaded.options.embedding_provider {
+        None => EmbedderSlot::None,
+        Some(provider) => {
+            match crate::embedding::build_provider(provider, loaded.options.dimension) {
+                Ok(built) => EmbedderSlot::Ready(Arc::new(Mutex::new(built))),
+                Err(_) => match inner.registered_embedders.get(provider) {
+                    Some(shared) => EmbedderSlot::Ready(Arc::clone(shared.value())),
+                    None => EmbedderSlot::Missing(provider.clone()),
+                },
+            }
+        }
+    };
+    let auto_embed = loaded.options.embedding_provider.is_some();
+    let cinner = Arc::new(CollectionInner::with_embedder(
         name.clone(),
         loaded.options,
         coll_id,
         Some(sink),
         capacity,
+        slot,
     )?);
     // Restore the collection's aliases and register them for resolution.
     *cinner.aliases.write() = aliases.clone();
@@ -106,6 +128,15 @@ fn install_collection(
     let handle = Collection {
         inner: Arc::clone(&cinner),
     };
+    let has_points = loaded.base.is_some() || !loaded.points.is_empty();
+    // Import the checkpointed VOCAB before replaying points, mirroring the
+    // live order (state at checkpoint, then incremental updates per doc). A
+    // legacy file (text docs, no VOCAB segment) refits on its first search.
+    match &loaded.vocab {
+        Some(state) => handle.replay_import_vocab(state)?,
+        None if auto_embed && has_points => handle.mark_text_dirty(),
+        None => {}
+    }
     if let Some(base) = loaded.base {
         // mmap tier (ADR-0004): vectors stay in the file map.
         handle.install_base(base)?;
@@ -120,7 +151,10 @@ fn install_collection(
                 payload,
             })
             .collect();
-        handle.replay_upsert(points)?;
+        // Checkpoint-loaded points: the sealed VOCAB already accounts for
+        // them, so install WITHOUT vocabulary updates (WAL replay is the path
+        // that folds documents in incrementally).
+        handle.install_points(points)?;
     }
     inner.collections.insert(name, cinner);
     Ok(())
@@ -152,6 +186,7 @@ fn apply_wal_entry(
                     options,
                     points: Vec::new(),
                     base: None,
+                    vocab: None,
                 },
             )?;
         }
@@ -216,7 +251,14 @@ fn apply_wal_entry(
                 c.replay_declare_index(&body.key, config::pidx_kind_from(body.kind)?);
             }
         }
-        WalOp::VocabUpdate => {}
+        WalOp::VocabUpdate => {
+            // A full embedder-state snapshot (SPEC-005 EMB-032, journaled by
+            // `refit` after its re-upsert batches): importing it overwrites
+            // the incrementally replayed state with the exact fitted one.
+            if let Some(c) = collection_by_id(inner, entry.coll_id) {
+                c.replay_import_vocab(&entry.body)?;
+            }
+        }
     }
     Ok(())
 }
@@ -259,12 +301,14 @@ fn sealed_live_collections(
             }
         }
         let live = handle.live_points();
+        let vocab = handle.export_vocab_state()?;
         colls.push(seal::seal(
             ci.coll_id,
             name,
             aliases,
             &ci.config,
             &handle.declared_indexes(),
+            vocab.as_deref(),
             &live,
             epoch,
         )?);
@@ -362,6 +406,7 @@ impl VecLite {
             inner: Arc::new(DatabaseInner {
                 collections: DashMap::new(),
                 aliases: DashMap::new(),
+                registered_embedders: DashMap::new(),
                 registry: Mutex::new(()),
                 next_coll_id: AtomicU32::new(1),
                 #[cfg(not(target_arch = "wasm32"))]
@@ -399,6 +444,7 @@ impl VecLite {
         let inner = Arc::new(DatabaseInner {
             collections: DashMap::new(),
             aliases: DashMap::new(),
+            registered_embedders: DashMap::new(),
             registry: Mutex::new(()),
             next_coll_id: AtomicU32::new(1),
             persistence: Some(Arc::clone(&persistence)),
@@ -480,11 +526,19 @@ impl VecLite {
                 options.dimension
             )));
         }
-        // Reject an unknown auto-embed provider before journaling (EMB-021), so a
-        // bad `CreateColl` never enters the WAL.
-        if let Some(provider) = &options.embedding_provider {
-            crate::embedding::build_provider(provider, options.dimension)?;
-        }
+        // Resolve the auto-embed provider before journaling (EMB-021), so a
+        // bad `CreateColl` never enters the WAL: built-in first, then this
+        // database's registered providers (EMB-011).
+        let slot = match &options.embedding_provider {
+            None => EmbedderSlot::None,
+            Some(provider) => match crate::embedding::build_provider(provider, options.dimension) {
+                Ok(built) => EmbedderSlot::Ready(Arc::new(Mutex::new(built))),
+                Err(e) => match self.inner.registered_embedders.get(provider) {
+                    Some(shared) => EmbedderSlot::Ready(Arc::clone(shared.value())),
+                    None => return Err(self.with_registered_in_available(e)),
+                },
+            },
+        };
         let _guard = self.inner.registry.lock();
         if self.inner.collections.contains_key(name) {
             return Err(VecLiteError::AlreadyExists(name.to_owned()));
@@ -510,16 +564,74 @@ impl VecLite {
                 p.append(coll_id, WalOp::PidxDeclare, body)?;
             }
         }
-        let inner = Arc::new(CollectionInner::new(
+        let inner = Arc::new(CollectionInner::with_embedder(
             name.to_owned(),
             options,
             coll_id,
             self.inner.sink(),
+            0,
+            slot,
         )?);
         self.inner
             .collections
             .insert(name.to_owned(), Arc::clone(&inner));
         Ok(Collection { inner })
+    }
+
+    /// Extend an `UnsupportedProvider` error's `available` list with this
+    /// database's registered provider names.
+    fn with_registered_in_available(&self, e: VecLiteError) -> VecLiteError {
+        match e {
+            VecLiteError::UnsupportedProvider {
+                requested,
+                mut available,
+            } => {
+                for entry in self.inner.registered_embedders.iter() {
+                    available.push(entry.key().clone());
+                }
+                available.sort();
+                VecLiteError::UnsupportedProvider {
+                    requested,
+                    available,
+                }
+            }
+            other => other,
+        }
+    }
+
+    /// Register a custom embedding provider on THIS database instance
+    /// (SPEC-005 EMB-011 — never global). One shared instance serves every
+    /// collection referencing `name`; collections loaded earlier with this
+    /// provider deferred (`UnsupportedProvider` on text operations) bind to it
+    /// now, importing any VOCAB state carried through open. Registering a
+    /// built-in or already-registered name is `AlreadyExists`.
+    pub fn register_embedder(&self, name: &str, embedder: Box<dyn Embedder>) -> Result<()> {
+        if crate::embedding::available_providers()
+            .iter()
+            .any(|p| p == name)
+            || crate::embedding::is_onnx_provider(name)
+        {
+            return Err(VecLiteError::AlreadyExists(format!(
+                "embedding provider {name:?} is built-in"
+            )));
+        }
+        if self.inner.registered_embedders.contains_key(name) {
+            return Err(VecLiteError::AlreadyExists(format!(
+                "embedding provider {name:?} is already registered"
+            )));
+        }
+        let shared: SharedEmbedder = Arc::new(Mutex::new(embedder));
+        self.inner
+            .registered_embedders
+            .insert(name.to_owned(), Arc::clone(&shared));
+        // Bind to collections that loaded with this provider deferred.
+        for entry in self.inner.collections.iter() {
+            Collection {
+                inner: Arc::clone(entry.value()),
+            }
+            .bind_embedder(name, &shared)?;
+        }
+        Ok(())
     }
 
     /// Handle to a collection by name or alias (lock-free lookup, CORE-051). An

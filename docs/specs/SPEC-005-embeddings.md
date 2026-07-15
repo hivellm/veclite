@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Implemented (phase3b): Embedder trait, the four default sparse providers (bm25/tfidf/bow/char_ngram), auto-embed `upsert_text`/`search_text`, the chunker, and reopen-deterministic text search (vocabulary rebuilt from `_text`). Incremental vocabulary + VOCAB persistence (EMB-030), `register_embedder` (EMB-011), the `svd`/`onnx` providers, and the server parity corpus are tracked in `phase3f_embedding-svd-onnx-vocab-persistence`. |
+| **Status** | Implemented (phase3b + phase3f): Embedder trait + the four default sparse providers; auto-embed `upsert_text`/`search_text`; the chunker. phase3f added: incremental vocabulary (`Embedder::add_document`, EMB-030) with VOCAB-segment persistence and exact crash replay (checkpoint state + per-document WAL folding, refit journaling a full snapshot — EMB-032); `register_embedder` per database instance with deferred binding on reopen (EMB-011); the `svd` provider behind the `svd` feature (vendored, ndarray replaced by a plain Vec matrix); the EMB-023 deferral mechanism (`fastembed:*` collections open, vector ops work, text ops fail with the remedy); and the server parity corpus (fixtures generated from the unmodified Vectorizer provider sources, enforced at 1e-5 — acceptance 1). The `onnx`/fastembed integration itself ships with its distribution artifacts in phase5c (DAG T5.4). |
 | **Phase / tasks** | Phase 3, 5 · T3.5, T3.6, T3.8, T3.9, T5.4 ([DAG](../DAG.md)) |
 | **PRD requirements** | FR-36, FR-40–47 |
 | **Planning source** | [05-embeddings.md](../vectorizer-lite/05-embeddings.md) |
