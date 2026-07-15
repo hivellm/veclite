@@ -213,3 +213,80 @@ pub trait SimdBackend: Send + Sync + 'static {
     /// by `dispatch::selected_backend_name()` and the startup log.
     fn name(&self) -> &'static str;
 }
+
+#[cfg(test)]
+mod tests {
+    use super::SimdBackend;
+    use crate::simd::scalar::ScalarBackend;
+
+    const B: ScalarBackend = ScalarBackend;
+
+    #[test]
+    fn int8_dot_product_default() {
+        assert_eq!(B.int8_dot_product(&[1, -2, 3], &[4, 5, -6]), 4 - 10 - 18);
+        assert_eq!(B.int8_dot_product(&[], &[]), 0);
+    }
+
+    #[test]
+    fn manhattan_distance_default() {
+        assert_eq!(B.manhattan_distance(&[1.0, -2.0], &[4.0, 2.0]), 3.0 + 4.0);
+        assert_eq!(B.manhattan_distance(&[], &[]), 0.0);
+    }
+
+    #[test]
+    fn normalize_in_place_default_and_zero_vector() {
+        let mut v = [3.0f32, 4.0];
+        B.normalize_in_place(&mut v);
+        assert!((v[0] - 0.6).abs() < 1e-6 && (v[1] - 0.8).abs() < 1e-6);
+        // Zero vector: no-op, never NaN.
+        let mut z = [0.0f32, 0.0];
+        B.normalize_in_place(&mut z);
+        assert_eq!(z, [0.0, 0.0]);
+    }
+
+    #[test]
+    fn elementwise_add_sub_scale_defaults() {
+        let mut a = [1.0f32, 2.0, 3.0];
+        B.add_assign(&mut a, &[10.0, 20.0, 30.0]);
+        assert_eq!(a, [11.0, 22.0, 33.0]);
+        B.sub_assign(&mut a, &[1.0, 2.0, 3.0]);
+        assert_eq!(a, [10.0, 20.0, 30.0]);
+        B.scale(&mut a, 0.5);
+        assert_eq!(a, [5.0, 10.0, 15.0]);
+    }
+
+    #[test]
+    fn horizontal_min_index_default() {
+        assert_eq!(B.horizontal_min_index(&[]), None);
+        assert_eq!(B.horizontal_min_index(&[7.0]), Some((0, 7.0)));
+        assert_eq!(
+            B.horizontal_min_index(&[3.0, -1.0, 2.0, -1.0]),
+            Some((1, -1.0)), // first minimum wins
+        );
+    }
+
+    #[test]
+    fn quantize_default_clamps_rounds_and_short_circuits_constant_scale() {
+        let src = [0.0f32, 3.0, 5.0, 510.0, -10.0, 9999.0];
+        let mut dst = [0u8; 6];
+        B.quantize_f32_to_u8(&src, &mut dst, 2.0, 0.0, 256);
+        // round(1.5)=2 half-away-from-zero; out-of-range clamps to 0/255.
+        assert_eq!(dst, [0, 2, 3, 255, 0, 255]);
+
+        let mut constant = [77u8; 3];
+        B.quantize_f32_to_u8(&[5.0, 5.0, 5.0], &mut constant, 0.0, 5.0, 256);
+        assert_eq!(constant, [0, 0, 0]);
+    }
+
+    #[test]
+    fn dequantize_default_is_offset_plus_code_times_scale() {
+        let mut out = [0.0f32; 3];
+        B.dequantize_u8_to_f32(&[0, 2, 255], &mut out, 2.0, 1.0);
+        assert_eq!(out, [1.0, 5.0, 511.0]);
+    }
+
+    #[test]
+    fn backend_name_is_stable() {
+        assert_eq!(B.name(), "scalar");
+    }
+}

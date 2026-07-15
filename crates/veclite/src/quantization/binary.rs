@@ -426,4 +426,101 @@ mod tests {
             .unwrap_or_else(|e| panic!("{e}"));
         assert!(new_quantizer.is_trained());
     }
+
+    fn trained() -> BinaryQuantization {
+        let mut q = BinaryQuantization::new();
+        q.train(&[vec![1.0, -1.0, 2.0, -2.0], vec![0.5, -0.5, 1.5, -1.5]])
+            .unwrap_or_else(|e| panic!("{e}"));
+        q
+    }
+
+    #[test]
+    fn error_paths_untrained_empty_and_mismatch() {
+        let untrained = BinaryQuantization::default();
+        assert!(untrained.quantize_vector(&[1.0, 2.0]).is_err());
+        assert!(untrained.quantize(&[vec![1.0, 2.0]]).is_err());
+
+        let mut q = BinaryQuantization::new();
+        assert!(q.train(&[]).is_err());
+
+        let t = trained();
+        assert!(t.quantize(&[]).is_err());
+        assert!(matches!(
+            t.quantize(&[vec![1.0; 4], vec![1.0; 3]]),
+            Err(QuantizationError::DimensionMismatch { .. })
+        ));
+        // Corrupt batch: data shorter than count * bytes_per_vector.
+        let mut batch = t
+            .quantize(&[vec![1.0; 4], vec![-1.0; 4]])
+            .unwrap_or_else(|e| panic!("{e}"));
+        batch.data.pop();
+        assert!(t.dequantize(&batch).is_err());
+    }
+
+    #[test]
+    fn deserialize_rejects_wrong_variant() {
+        let mut q = BinaryQuantization::new();
+        let wrong = QuantizationParams::Scalar {
+            bits: 8,
+            min_value: 0.0,
+            max_value: 1.0,
+            scale: 1.0,
+        };
+        assert!(q.deserialize_params(wrong).is_err());
+    }
+
+    #[test]
+    fn quantized_similarity_orders_by_hamming() {
+        let t = trained();
+        let a = t
+            .quantize_vector(&[10.0, 10.0, 10.0, 10.0])
+            .unwrap_or_else(|e| panic!("{e}"));
+        let b = t
+            .quantize_vector(&[10.0, 10.0, 10.0, -10.0])
+            .unwrap_or_else(|e| panic!("{e}"));
+        let c = t
+            .quantize_vector(&[-10.0, -10.0, -10.0, -10.0])
+            .unwrap_or_else(|e| panic!("{e}"));
+        let ab = t
+            .quantized_similarity(&a, &b)
+            .unwrap_or_else(|e| panic!("{e}"));
+        let ac = t
+            .quantized_similarity(&a, &c)
+            .unwrap_or_else(|e| panic!("{e}"));
+        let aa = t
+            .quantized_similarity(&a, &a)
+            .unwrap_or_else(|e| panic!("{e}"));
+        assert!(aa > ab && ab > ac, "aa={aa} ab={ab} ac={ac}");
+    }
+
+    #[test]
+    fn batch_similarity_ranks_against_query() {
+        let t = trained();
+        let rows_owned: Vec<Vec<u8>> = [
+            vec![10.0f32, 10.0, 10.0, 10.0],
+            vec![-10.0, -10.0, -10.0, -10.0],
+        ]
+        .iter()
+        .map(|v| t.quantize_vector(v).unwrap_or_else(|e| panic!("{e}")))
+        .collect();
+        let rows: Vec<&[u8]> = rows_owned.iter().map(Vec::as_slice).collect();
+        let scores = t
+            .batch_similarity(&[10.0, 10.0, 10.0, 10.0], &rows)
+            .unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(scores.len(), 2);
+        assert!(scores[0] > scores[1]);
+    }
+
+    #[test]
+    fn dequantize_vector_handles_short_codes_and_odd_dims() {
+        let t = trained();
+        // 9 dims -> 2 code bytes; a single byte still yields a 9-dim vector
+        // with the unmapped tail defaulting to -1 (bit unset semantics).
+        let v = t
+            .dequantize_vector(&[0b1010_1010], 9)
+            .unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(v.len(), 9);
+        assert_eq!(v[1], 1.0);
+        assert_eq!(v[0], -1.0);
+    }
 }

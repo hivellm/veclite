@@ -309,4 +309,92 @@ mod tests {
         drop(map);
         let _ = std::fs::remove_file(&path);
     }
+
+    /// Write one 2-vector F32 VECTORS segment and return `(path, its SegRef)`.
+    fn file_with_vectors(name: &str) -> (std::path::PathBuf, SegRef) {
+        let path = tmp(name);
+        let _ = std::fs::remove_file(&path);
+        let seg = vectors_seg(0, 2, &[vec![1.0f32, 2.0], vec![3.0, 4.0]]);
+        {
+            let mut p = Pager::create(&path, 1000).unwrap_or_else(|e| panic!("{e}"));
+            p.checkpoint(
+                1,
+                vec![CheckpointColl {
+                    coll_id: 0,
+                    name: "c".into(),
+                    aliases: vec![],
+                    vector_count: 2,
+                    tombstone_count: 0,
+                    segments: vec![seg],
+                    reused: None,
+                }],
+                Codec::Lz4,
+                1001,
+            )
+            .unwrap_or_else(|e| panic!("{e}"));
+        }
+        let (_p, toc) = Pager::open(&path, false).unwrap_or_else(|e| panic!("{e}"));
+        let seg_ref = *toc.collections[0]
+            .live_segments
+            .iter()
+            .find(|s| s.seg_type == SegmentType::Vectors.to_byte())
+            .unwrap_or_else(|| panic!("no VECTORS seg"));
+        (path, seg_ref)
+    }
+
+    #[test]
+    fn region_accessors_and_out_of_range_slots() {
+        let (path, seg_ref) = file_with_vectors("region");
+        let map = Arc::new(FileMap::map(&path).unwrap_or_else(|e| panic!("{e}")));
+        let region = map
+            .vectors_region(seg_ref)
+            .unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(region.first_slot(), 0);
+        assert_eq!(region.count(), 2);
+        assert_eq!(region.dimension(), 2);
+        assert_eq!(region.byte_len(), 2 * 8); // two f32 records of dim 2
+
+        let mut out = Vec::new();
+        assert!(region.read_f32_into(1, &mut out));
+        assert_eq!(out, vec![3.0, 4.0]);
+        assert!(!region.read_f32_into(2, &mut out)); // past count
+        assert!(region.record(9).is_none());
+
+        drop((region, map));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn corrupt_body_and_truncated_refs_are_corrupt_not_ub() {
+        let (path, seg_ref) = file_with_vectors("crcflip");
+        // Flip one byte inside the segment body: CRC must catch it.
+        {
+            use std::io::{Seek, SeekFrom, Write};
+            let mut f = std::fs::OpenOptions::new()
+                .write(true)
+                .open(&path)
+                .unwrap_or_else(|e| panic!("{e}"));
+            f.seek(SeekFrom::Start(seg_ref.offset + 40))
+                .unwrap_or_else(|e| panic!("{e}"));
+            f.write_all(&[0xFF]).unwrap_or_else(|e| panic!("{e}"));
+        }
+        let map = Arc::new(FileMap::map(&path).unwrap_or_else(|e| panic!("{e}")));
+        let Err(VecLiteError::Corrupt(msg)) = map.vectors_region(seg_ref) else {
+            panic!("expected Corrupt on a flipped body byte")
+        };
+        assert!(msg.contains("crc"), "message was {msg}");
+
+        // A ref whose body runs past EOF is Corrupt, never a panic.
+        let past_eof = SegRef {
+            seg_type: SegmentType::Vectors.to_byte(),
+            offset: map.len() as u64 - 8,
+            len: 64,
+        };
+        assert!(matches!(
+            map.vectors_view(past_eof),
+            Err(VecLiteError::Corrupt(_))
+        ));
+        drop(map);
+        let _ = std::fs::remove_file(&path);
+    }
 }

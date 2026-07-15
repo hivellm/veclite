@@ -699,4 +699,154 @@ mod tests {
             "PQ should use less memory per vector"
         );
     }
+
+    fn small_cfg() -> ProductQuantizationConfig {
+        ProductQuantizationConfig {
+            subvectors: 2,
+            centroids_per_subvector: 4,
+            training_samples: 64,
+            adaptive_assignment: false,
+        }
+    }
+
+    fn trained_pq() -> ProductQuantization {
+        let mut pq = ProductQuantization::new(small_cfg(), 4);
+        let corpus: Vec<Vec<f32>> = (0..64)
+            .map(|i| {
+                let b = i as f32 * 0.05;
+                vec![b, b + 0.1, b + 0.2, b + 0.3]
+            })
+            .collect();
+        pq.train(&corpus).unwrap_or_else(|e| panic!("{e}"));
+        pq
+    }
+
+    #[test]
+    fn trait_quantize_dequantize_batch_round_trip() {
+        use crate::quantization::traits::QuantizationMethod;
+        let pq = trained_pq();
+        let vectors = vec![vec![0.1f32, 0.2, 0.3, 0.4], vec![1.0, 1.1, 1.2, 1.3]];
+        let q = QuantizationMethod::quantize(&pq, &vectors).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(q.count, 2);
+        assert_eq!(q.dimension, 4);
+        assert_eq!(q.data.len(), 2 * 2); // subvectors codes per vector
+        let d = pq.dequantize(&q).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(d.len(), 2);
+        assert_eq!(d[0].len(), 4);
+        // Reconstruction stays within the training range's coarse resolution.
+        for (o, r) in vectors[0].iter().zip(d[0].iter()) {
+            assert!((o - r).abs() < 2.0, "{o} vs {r}");
+        }
+    }
+
+    #[test]
+    fn trait_batch_rejects_empty_and_untrained() {
+        use crate::quantization::traits::QuantizationMethod;
+        let pq = trained_pq();
+        assert!(QuantizationMethod::quantize(&pq, &[]).is_err());
+        let untrained = ProductQuantization::new(small_cfg(), 4);
+        assert!(QuantizationMethod::quantize(&untrained, &[vec![0.0; 4]]).is_err());
+    }
+
+    #[test]
+    fn dequantize_rejects_wrong_data_length() {
+        use crate::quantization::traits::QuantizationMethod;
+        let pq = trained_pq();
+        let mut q = QuantizationMethod::quantize(&pq, &[vec![0.1f32, 0.2, 0.3, 0.4]])
+            .unwrap_or_else(|e| panic!("{e}"));
+        q.data.pop();
+        assert!(pq.dequantize(&q).is_err());
+    }
+
+    #[test]
+    fn reconstruct_rejects_bad_codes() {
+        let pq = trained_pq();
+        // Wrong code count.
+        assert!(pq.reconstruct(&[0u8]).is_err());
+        // Code index past the codebook (4 centroids -> 200 is invalid).
+        assert!(pq.reconstruct(&[200u8, 200]).is_err());
+    }
+
+    #[test]
+    fn train_rejects_empty_and_dimension_mismatch() {
+        let mut pq = ProductQuantization::new(small_cfg(), 4);
+        assert!(pq.train(&[]).is_err());
+        assert!(matches!(
+            pq.train(&[vec![0.0f32; 6]]),
+            Err(QuantizationError::DimensionMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn adaptive_assignment_trains_and_quantizes() {
+        let mut pq = ProductQuantization::new(
+            ProductQuantizationConfig {
+                subvectors: 2,
+                centroids_per_subvector: 4,
+                training_samples: 64,
+                adaptive_assignment: true,
+            },
+            4,
+        );
+        let corpus: Vec<Vec<f32>> = (0..64)
+            .map(|i| vec![i as f32, -(i as f32), i as f32 * 0.5, 1.0])
+            .collect();
+        pq.train(&corpus).unwrap_or_else(|e| panic!("{e}"));
+        let codes = pq.quantize(&corpus[10]).unwrap_or_else(|e| panic!("{e}"));
+        let rec = pq.reconstruct(&codes).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(rec.len(), 4);
+    }
+
+    #[test]
+    fn params_round_trip_and_wrong_variant() {
+        use crate::quantization::traits::{QuantizationMethod, QuantizationParams};
+        let pq = trained_pq();
+        let params = pq.serialize_params().unwrap_or_else(|e| panic!("{e}"));
+        let mut restored = ProductQuantization::new(small_cfg(), 4);
+        restored
+            .deserialize_params(params)
+            .unwrap_or_else(|e| panic!("{e}"));
+        assert!(restored.trained);
+        let v = vec![0.3f32, 0.4, 0.5, 0.6];
+        assert_eq!(
+            pq.quantize(&v).unwrap_or_else(|e| panic!("{e}")),
+            restored.quantize(&v).unwrap_or_else(|e| panic!("{e}"))
+        );
+        assert!(
+            restored
+                .deserialize_params(QuantizationParams::Binary { threshold: 0.0 })
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn memory_quality_type_and_validation() {
+        use crate::quantization::QuantizationType;
+        use crate::quantization::traits::QuantizationMethod;
+        let pq = trained_pq();
+        assert_eq!(pq.memory_usage(10, 4), 10 * pq.memory_per_vector());
+        assert!(pq.quality_loss() > 0.0);
+        assert_eq!(pq.method_type(), QuantizationType::Product);
+        assert!(pq.validate_parameters().is_ok());
+
+        // Invalid configs: zero subvectors; centroid count outside 1..=256.
+        // (`new` divides by subvectors, so mutate after construction.)
+        let mut bad = ProductQuantization::new(small_cfg(), 4);
+        bad.config.subvectors = 0;
+        assert!(bad.validate_parameters().is_err());
+        let mut bad = ProductQuantization::new(small_cfg(), 4);
+        bad.config.centroids_per_subvector = 300;
+        assert!(bad.validate_parameters().is_err());
+    }
+
+    #[test]
+    fn quantization_error_reports_mse() {
+        let pq = trained_pq();
+        let v = vec![0.5f32, 0.6, 0.7, 0.8];
+        let codes = pq.quantize(&v).unwrap_or_else(|e| panic!("{e}"));
+        let err = pq
+            .quantization_error(&v, &codes)
+            .unwrap_or_else(|e| panic!("{e}"));
+        assert!(err >= 0.0);
+    }
 }

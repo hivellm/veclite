@@ -730,4 +730,165 @@ mod tests {
         let expected: Vec<u8> = vec![0, 2, 3, 255];
         assert_eq!(quantized, expected);
     }
+
+    fn fitted(bits: u8, vectors: &[Vec<f32>]) -> ScalarQuantization {
+        let mut sq = ScalarQuantization::new(bits).unwrap_or_else(|e| panic!("{e}"));
+        sq.fit(vectors).unwrap_or_else(|e| panic!("{e}"));
+        sq
+    }
+
+    #[test]
+    fn one_and_two_bit_round_trip_within_step() {
+        let vectors = vec![
+            vec![0.0f32, 0.25, 0.5, 0.75, 1.0],
+            vec![1.0, 0.75, 0.5, 0.25, 0.0],
+        ];
+        for bits in [1u8, 2] {
+            let sq = fitted(bits, &vectors);
+            let q = sq.quantize(&vectors).unwrap_or_else(|e| panic!("{e}"));
+            let d = sq.dequantize(&q).unwrap_or_else(|e| panic!("{e}"));
+            assert_eq!(d.len(), 2, "bits={bits}");
+            // One quantization step is the max representable error.
+            let levels = f32::from((1u8 << bits) - 1);
+            let step = (sq.max_value - sq.min_value) / levels;
+            for (orig, deq) in vectors.iter().zip(d.iter()) {
+                for (o, dq) in orig.iter().zip(deq.iter()) {
+                    assert!((o - dq).abs() <= step + 1e-6, "bits={bits}: {o} vs {dq}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn invalid_bit_depth_rejected_at_new() {
+        assert!(ScalarQuantization::new(3).is_err());
+        assert!(ScalarQuantization::new(16).is_err());
+        assert!(ScalarQuantization::new(0).is_err());
+    }
+
+    #[test]
+    fn fit_and_quantize_reject_empty_input() {
+        let mut sq = ScalarQuantization::new(8).unwrap_or_else(|e| panic!("{e}"));
+        assert!(sq.fit(&[]).is_err());
+        sq.fit(&[vec![0.0, 1.0]]).unwrap_or_else(|e| panic!("{e}"));
+        assert!(sq.quantize(&[]).is_err());
+    }
+
+    #[test]
+    fn quantize_batch_rejects_dimension_mismatch() {
+        let sq = fitted(8, &[vec![0.0, 1.0, 2.0]]);
+        let bad = vec![vec![0.0, 1.0, 2.0], vec![0.0, 1.0]];
+        assert!(matches!(
+            sq.quantize(&bad),
+            Err(QuantizationError::DimensionMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn dequantize_batch_rejects_length_mismatch() {
+        let vectors = vec![vec![0.0f32, 0.5, 1.0]];
+        let sq = fitted(8, &vectors);
+        let mut q = sq.quantize(&vectors).unwrap_or_else(|e| panic!("{e}"));
+        q.data.pop(); // corrupt: one byte short
+        assert!(sq.dequantize(&q).is_err());
+    }
+
+    #[test]
+    fn four_bit_odd_dimension_packs_and_unpacks() {
+        // Odd dim exercises the half-byte tail in quantize_4bit/dequantize_4bit.
+        let vectors = vec![vec![0.0f32, 0.5, 1.0], vec![1.0, 0.5, 0.0]];
+        let sq = fitted(4, &vectors);
+        let q = sq.quantize(&vectors).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(q.data.len(), 2 * 2); // ceil(3/2) bytes per vector
+        let d = sq.dequantize(&q).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(d[0].len(), 3);
+        let step = (sq.max_value - sq.min_value) / 15.0;
+        for (o, dq) in vectors[0].iter().zip(d[0].iter()) {
+            assert!((o - dq).abs() <= step + 1e-6);
+        }
+    }
+
+    #[test]
+    fn quantization_error_and_compression_ratio() {
+        let vectors = vec![vec![0.0f32, 0.5, 1.0], vec![0.25, 0.5, 0.75]];
+        let sq = fitted(8, &vectors);
+        let codes = sq
+            .quantize_vector(&vectors[0])
+            .unwrap_or_else(|e| panic!("{e}"));
+        let err = sq
+            .calculate_quantization_error(&vectors[0], &codes)
+            .unwrap_or_else(|e| panic!("{e}"));
+        assert!((0.0..0.05).contains(&err), "mse {err}");
+        assert!((sq.theoretical_compression_ratio() - 4.0).abs() < 1e-6);
+        assert!((fitted(4, &vectors).theoretical_compression_ratio() - 8.0).abs() < 1e-6);
+        assert!((fitted(1, &vectors).theoretical_compression_ratio() - 32.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn quality_loss_and_method_type_per_depth() {
+        use crate::quantization::QuantizationType;
+        let corpus = vec![vec![0.0f32, 1.0]];
+        let mut prev = 0.0f32;
+        for bits in [8u8, 4, 2, 1] {
+            let sq = fitted(bits, &corpus);
+            // Fitted loss = step/range = 1/levels: grows as the depth shrinks.
+            let loss = sq.quality_loss();
+            assert!(loss > prev, "bits={bits}: loss {loss} !> {prev}");
+            prev = loss;
+            assert_eq!(sq.method_type(), QuantizationType::Scalar(bits));
+        }
+        // Unfitted: zero signal range reports zero loss (the documented guard).
+        let unfitted = ScalarQuantization::new(8).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(unfitted.quality_loss(), 0.0);
+    }
+
+    #[test]
+    fn deserialize_params_rejects_wrong_variant() {
+        let mut sq = ScalarQuantization::new(8).unwrap_or_else(|e| panic!("{e}"));
+        let wrong = QuantizationParams::Binary { threshold: 0.5 };
+        assert!(sq.deserialize_params(wrong).is_err());
+    }
+
+    #[test]
+    fn quantized_similarity_and_batch_similarity() {
+        let vectors = vec![
+            vec![1.0f32, 0.0, 0.0],
+            vec![0.0, 1.0, 0.0],
+            vec![1.0, 0.1, 0.0],
+        ];
+        let sq = fitted(8, &vectors);
+        let q = sq.quantize(&vectors).unwrap_or_else(|e| panic!("{e}"));
+        let dim = q.dimension;
+        let a = &q.data[0..dim];
+        let b = &q.data[dim..2 * dim];
+        let c = &q.data[2 * dim..3 * dim];
+        let ab = sq
+            .quantized_similarity(a, b)
+            .unwrap_or_else(|e| panic!("{e}"));
+        let ac = sq
+            .quantized_similarity(a, c)
+            .unwrap_or_else(|e| panic!("{e}"));
+        assert!(ac > ab, "near-parallel beats orthogonal: {ac} vs {ab}");
+
+        let rows: Vec<&[u8]> = vec![a, b, c];
+        let scores = sq
+            .batch_similarity(&[1.0, 0.0, 0.0], &rows)
+            .unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(scores.len(), 3);
+        assert!(scores[0] > scores[1]);
+        assert!(scores[2] > scores[1]);
+    }
+
+    #[test]
+    fn similarity_zero_norm_is_zero_and_mismatch_errors() {
+        let vectors = vec![vec![0.0f32, 0.0, 0.0], vec![1.0, 1.0, 1.0]];
+        let sq = fitted(8, &vectors);
+        let q = sq.quantize(&vectors).unwrap_or_else(|e| panic!("{e}"));
+        let zero = &q.data[0..q.dimension];
+        let s = sq
+            .similarity(&[1.0, 0.0, 0.0], zero)
+            .unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(s, 0.0);
+        assert!(sq.similarity(&[1.0, 0.0], zero).is_err());
+    }
 }

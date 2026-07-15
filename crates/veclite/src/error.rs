@@ -188,4 +188,48 @@ mod tests {
         assert!(matches!(err, VecLiteError::Io(_)));
         assert_eq!(err.to_string(), "gone");
     }
+
+    /// Pins the full FFI error-code table (SPEC-008 acceptance 3): one code
+    /// per variant, stable within a major version.
+    #[test]
+    fn ffi_codes_are_pinned_per_variant() {
+        let io = std::io::Error::other("x");
+        let cases: Vec<(VecLiteError, i32)> = vec![
+            (VecLiteError::CollectionNotFound("c".into()), -1),
+            (VecLiteError::VectorNotFound("v".into()), -2),
+            (VecLiteError::AlreadyExists("c".into()), -3),
+            (
+                VecLiteError::DimensionMismatch {
+                    expected: 3,
+                    got: 2,
+                },
+                -4,
+            ),
+            (VecLiteError::Locked, -5),
+            (VecLiteError::Corrupt("bad".into()), -6),
+            (
+                VecLiteError::UnsupportedFormatVersion {
+                    found: 9,
+                    supported: 1,
+                },
+                -7,
+            ),
+            (
+                VecLiteError::UnsupportedProvider {
+                    requested: "x".into(),
+                    available: vec!["bm25".into()],
+                },
+                -8,
+            ),
+            (VecLiteError::ReadOnly, -9),
+            (VecLiteError::InvalidArgument("a".into()), -10),
+            (VecLiteError::Io(io), -11),
+            (VecLiteError::WalPending, -12),
+            (VecLiteError::Closed, -13),
+        ];
+        for (err, want) in cases {
+            assert_eq!(err.ffi_code(), want, "{err}");
+            assert!(!err.to_string().is_empty());
+        }
+    }
 }

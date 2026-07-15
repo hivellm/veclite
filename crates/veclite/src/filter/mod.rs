@@ -578,4 +578,93 @@ mod tests {
             Err(VecLiteError::InvalidArgument(_))
         ));
     }
+
+    #[test]
+    fn match_value_from_impls_and_json_forms() {
+        assert_eq!(MatchValue::from("en"), MatchValue::Keyword("en".into()));
+        assert_eq!(
+            MatchValue::from(String::from("pt")),
+            MatchValue::Keyword("pt".into())
+        );
+        assert_eq!(MatchValue::from(42i64), MatchValue::Integer(42));
+
+        // JSON forms: string, bool, integer ok; float and array rejected.
+        let f = Filter::from_json(&json!({"must": [
+            {"key": "a", "match": {"value": "s"}},
+            {"key": "b", "match": {"value": true}},
+            {"key": "c", "match": {"value": 7}},
+        ]}))
+        .unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(f.must.len(), 3);
+        assert!(
+            Filter::from_json(&json!({"must": [{"key": "x", "match": {"value": 1.5}}]})).is_err()
+        );
+        assert!(
+            Filter::from_json(&json!({"must": [{"key": "x", "match": {"value": []}}]})).is_err()
+        );
+    }
+
+    #[test]
+    fn match_any_parses_and_rejects_non_array() {
+        let f = Filter::from_json(&json!({"must": [
+            {"key": "lang", "match": {"any": ["en", "pt"]}}
+        ]}))
+        .unwrap_or_else(|e| panic!("{e}"));
+        assert!(f.matches(Some(&json!({"lang": "pt"}))));
+        assert!(!f.matches(Some(&json!({"lang": "de"}))));
+
+        assert!(
+            Filter::from_json(&json!({"must": [
+                {"key": "lang", "match": {"any": "en"}}
+            ]}))
+            .is_err()
+        );
+        assert!(
+            Filter::from_json(&json!({"must": [
+                {"key": "lang", "match": {}}
+            ]}))
+            .is_err()
+        );
+        assert!(
+            Filter::from_json(&json!({"must": [
+                {"key": "lang", "match": "en"}
+            ]}))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn range_bounds_parse_null_and_reject_non_numeric() {
+        let f = Filter::from_json(&json!({"must": [
+            {"key": "y", "range": {"gte": 2000, "lt": 2020, "gt": null}}
+        ]}))
+        .unwrap_or_else(|e| panic!("{e}"));
+        assert!(f.matches(Some(&json!({"y": 2000}))));
+        assert!(f.matches(Some(&json!({"y": 2019}))));
+        assert!(!f.matches(Some(&json!({"y": 2020}))));
+        assert!(!f.matches(Some(&json!({"y": 1999}))));
+
+        assert!(
+            Filter::from_json(&json!({"must": [
+                {"key": "y", "range": {"gte": "x"}}
+            ]}))
+            .is_err()
+        );
+        assert!(
+            Filter::from_json(&json!({"must": [
+                {"key": "y", "range": []}
+            ]}))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn condition_shape_errors_and_clause_array_requirement() {
+        // Condition with a key but no recognized clause.
+        assert!(Filter::from_json(&json!({"must": [{"key": "k"}]})).is_err());
+        // Condition must be an object; clause must be an array; doc an object.
+        assert!(Filter::from_json(&json!({"must": ["nope"]})).is_err());
+        assert!(Filter::from_json(&json!({"must": {"key": "k"}})).is_err());
+        assert!(Filter::from_json(&json!("nope")).is_err());
+    }
 }
