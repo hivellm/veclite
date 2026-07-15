@@ -50,6 +50,5 @@
   "statusLine": {
     "type": "command",
     "command": "echo \"$(basename \"$(pwd)\")$(git branch --show-current 2>/dev/null | sed \"s/^/ | /\")\""
-  },
-  "model": "opus"
+  }
 }
