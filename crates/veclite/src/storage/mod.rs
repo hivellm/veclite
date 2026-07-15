@@ -14,6 +14,7 @@ pub(crate) mod compression;
 mod gates;
 pub(crate) mod header;
 pub(crate) mod iddir;
+pub(crate) mod mmap;
 pub(crate) mod pager;
 pub(crate) mod segment;
 pub(crate) mod toc;

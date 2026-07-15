@@ -75,6 +75,55 @@ const HEADER_LEN: usize = 1 + 4 + 8 + 8;
 /// `scale f32, offset f32` — present only for sq* encodings.
 const SQ_PARAMS_LEN: usize = 4 + 4;
 
+/// Parsed fixed header of a VECTORS body, plus the byte offset where the record
+/// block begins. Shared by the owned [`VectorsBody::decode`] and the borrowing
+/// [`VectorsView`] (the mmap read path, STG-004) so both agree on the layout.
+struct BodyHeader {
+    encoding: Encoding,
+    dimension: u32,
+    count: u64,
+    first_slot: u64,
+    sq_params: Option<(f32, f32)>,
+    /// Offset of the first record byte, past the header and optional sq params.
+    records_at: usize,
+}
+
+/// Parse the fixed header (and sq params) at the start of a VECTORS body.
+/// `Pq` is rejected as unsupported; any malformation is `Corrupt`.
+fn parse_header(bytes: &[u8]) -> Result<BodyHeader> {
+    let encoding_byte = *bytes
+        .first()
+        .ok_or_else(|| VecLiteError::Corrupt("vectors: empty body".to_owned()))?;
+    let encoding = Encoding::from_byte(encoding_byte)?;
+    if encoding == Encoding::Pq {
+        return Err(VecLiteError::UnsupportedProvider {
+            requested: "pq".to_owned(),
+            available: Vec::new(),
+        });
+    }
+    let dimension = le::u32(bytes, 1, "vectors")?;
+    let count = le::u64(bytes, 5, "vectors")?;
+    let first_slot = le::u64(bytes, 13, "vectors")?;
+
+    let mut records_at = HEADER_LEN;
+    let sq_params = if encoding.has_sq_params() {
+        let scale = f32::from_bits(le::u32(bytes, records_at, "vectors")?);
+        let offset = f32::from_bits(le::u32(bytes, records_at + 4, "vectors")?);
+        records_at += SQ_PARAMS_LEN;
+        Some((scale, offset))
+    } else {
+        None
+    };
+    Ok(BodyHeader {
+        encoding,
+        dimension,
+        count,
+        first_slot,
+        sq_params,
+        records_at,
+    })
+}
+
 /// Parsed VECTORS segment body (SPEC-002 §3.2).
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct VectorsBody {
@@ -127,38 +176,15 @@ impl VectorsBody {
     /// quantization decoding is gated behind the `pq` feature and out of
     /// scope for this codec (SPEC-002 §3.2).
     pub(crate) fn decode(bytes: &[u8]) -> Result<VectorsBody> {
-        let encoding_byte = *bytes
-            .first()
-            .ok_or_else(|| VecLiteError::Corrupt("vectors: empty body".to_owned()))?;
-        let encoding = Encoding::from_byte(encoding_byte)?;
-        if encoding == Encoding::Pq {
-            return Err(VecLiteError::UnsupportedProvider {
-                requested: "pq".to_owned(),
-                available: Vec::new(),
-            });
-        }
-        let dimension = le::u32(bytes, 1, "vectors")?;
-        let count = le::u64(bytes, 5, "vectors")?;
-        let first_slot = le::u64(bytes, 13, "vectors")?;
-
-        let mut at = HEADER_LEN;
-        let sq_params = if encoding.has_sq_params() {
-            let scale = f32::from_bits(le::u32(bytes, at, "vectors")?);
-            let offset = f32::from_bits(le::u32(bytes, at + 4, "vectors")?);
-            at += SQ_PARAMS_LEN;
-            Some((scale, offset))
-        } else {
-            None
-        };
-
-        let stride = stride_for(encoding, dimension)?;
-        let count_usize = usize::try_from(count)
+        let h = parse_header(bytes)?;
+        let stride = stride_for(h.encoding, h.dimension)?;
+        let count_usize = usize::try_from(h.count)
             .map_err(|_| VecLiteError::Corrupt("vectors: count exceeds usize".to_owned()))?;
         let want = stride
             .checked_mul(count_usize)
             .ok_or_else(|| VecLiteError::Corrupt("vectors: record size overflow".to_owned()))?;
         let records = bytes
-            .get(at..)
+            .get(h.records_at..)
             .ok_or_else(|| VecLiteError::Corrupt("vectors: truncated header".to_owned()))?
             .to_vec();
         if records.len() != want {
@@ -168,13 +194,97 @@ impl VectorsBody {
             )));
         }
         Ok(VectorsBody {
-            encoding,
-            dimension,
-            first_slot,
-            count,
-            sq_params,
+            encoding: h.encoding,
+            dimension: h.dimension,
+            first_slot: h.first_slot,
+            count: h.count,
+            sq_params: h.sq_params,
             records,
         })
+    }
+}
+
+/// A borrowing view over a VECTORS body — the mmap read path (STG-004,
+/// ADR-0004). Parses the fixed header and holds a `&[u8]` into the mapped
+/// records, so addressing a slot is pure pointer arithmetic with no decode and
+/// no copy. Constructed from a segment body slice that outlives it (the file
+/// mmap).
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct VectorsView<'a> {
+    pub(crate) encoding: Encoding,
+    pub(crate) dimension: u32,
+    pub(crate) first_slot: u64,
+    pub(crate) count: u64,
+    pub(crate) sq_params: Option<(f32, f32)>,
+    stride: usize,
+    /// The record block, borrowed from the mapped body.
+    records: &'a [u8],
+}
+
+impl<'a> VectorsView<'a> {
+    /// Parse a VECTORS body slice into a borrowing view. Validates the header
+    /// and that the record block is exactly `stride * count` bytes; any
+    /// malformation is `Corrupt` (never a panic), matching [`VectorsBody::decode`].
+    pub(crate) fn parse(bytes: &'a [u8]) -> Result<VectorsView<'a>> {
+        let h = parse_header(bytes)?;
+        let stride = stride_for(h.encoding, h.dimension)?;
+        let count_usize = usize::try_from(h.count)
+            .map_err(|_| VecLiteError::Corrupt("vectors: count exceeds usize".to_owned()))?;
+        let want = stride
+            .checked_mul(count_usize)
+            .ok_or_else(|| VecLiteError::Corrupt("vectors: record size overflow".to_owned()))?;
+        let records = bytes
+            .get(h.records_at..)
+            .ok_or_else(|| VecLiteError::Corrupt("vectors: truncated header".to_owned()))?;
+        if records.len() != want {
+            return Err(VecLiteError::Corrupt(format!(
+                "vectors: expected {want} record bytes, got {}",
+                records.len()
+            )));
+        }
+        Ok(VectorsView {
+            encoding: h.encoding,
+            dimension: h.dimension,
+            first_slot: h.first_slot,
+            count: h.count,
+            sq_params: h.sq_params,
+            stride,
+            records,
+        })
+    }
+
+    /// Bytes per record for this view's encoding and dimension.
+    pub(crate) fn stride(&self) -> usize {
+        self.stride
+    }
+
+    /// Raw record bytes for `slot`, or `None` if it falls outside
+    /// `first_slot .. first_slot + count` — mmap slot addressing (STG-030),
+    /// no decode.
+    pub(crate) fn record(&self, slot: u64) -> Option<&'a [u8]> {
+        let index = slot.checked_sub(self.first_slot)?;
+        if index >= self.count {
+            return None;
+        }
+        let start = usize::try_from(index).ok()?.checked_mul(self.stride)?;
+        let end = start.checked_add(self.stride)?;
+        self.records.get(start..end)
+    }
+
+    /// The `f32` components of `slot`, decoded from the mapped little-endian
+    /// bytes. Only valid for the `F32` encoding (the on-disk form seal writes);
+    /// returns `None` for a non-`F32` view or an out-of-range slot.
+    pub(crate) fn f32_record(&self, slot: u64) -> Option<Vec<f32>> {
+        if self.encoding != Encoding::F32 {
+            return None;
+        }
+        let bytes = self.record(slot)?;
+        Some(
+            bytes
+                .chunks_exact(4)
+                .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+                .collect(),
+        )
     }
 }
 
@@ -236,6 +346,44 @@ mod tests {
         assert_eq!(back.record(11), Some(&second_record[..]));
         assert!(back.record(12).is_none()); // past first_slot + count
         assert!(back.record(9).is_none()); // before first_slot
+    }
+
+    #[test]
+    fn view_borrows_records_and_addresses_slots_without_copy() {
+        let dimension = 4u32;
+        let first_slot = 10u64;
+        let floats: Vec<f32> = (0..8u32).map(|i| i as f32).collect();
+        let records: Vec<u8> = floats.iter().flat_map(|f| f.to_le_bytes()).collect(); // 2 records
+        let body = VectorsBody {
+            encoding: Encoding::F32,
+            dimension,
+            first_slot,
+            count: 2,
+            sq_params: None,
+            records,
+        };
+        let bytes = body.encode();
+        let view = VectorsView::parse(&bytes).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(view.stride(), 16);
+        assert_eq!(view.first_slot, first_slot);
+        assert_eq!(view.count, 2);
+        // Same slot addressing as the owned body, borrowing straight from `bytes`.
+        assert_eq!(view.f32_record(10).as_deref(), Some(&floats[0..4]));
+        assert_eq!(view.f32_record(11).as_deref(), Some(&floats[4..8]));
+        assert!(view.record(12).is_none()); // past first_slot + count
+        assert!(view.record(9).is_none()); // before first_slot
+    }
+
+    #[test]
+    fn view_rejects_truncated_body_without_panic() {
+        assert!(matches!(
+            VectorsView::parse(&[Encoding::F32.to_byte(), 1, 2]),
+            Err(VecLiteError::Corrupt(_))
+        ));
+        assert!(matches!(
+            VectorsView::parse(&[]),
+            Err(VecLiteError::Corrupt(_))
+        ));
     }
 
     #[test]
