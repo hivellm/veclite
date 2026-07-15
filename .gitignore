@@ -34,6 +34,9 @@ CLAUDE.local.md
 .rulebook/handoff/.urgent
 
 # Rust
-/target/
+# `target/` (no leading slash) matches the build dir at any depth, so the
+# workspace root AND any excluded/standalone crate (e.g. crates/veclite-py)
+# are covered without a per-crate .gitignore.
+target/
 **/*.rs.bk
 *.pdb
