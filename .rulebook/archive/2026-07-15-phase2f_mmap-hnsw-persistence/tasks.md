@@ -12,6 +12,6 @@
 - [x] 3.3 Windows vacuum with an active mmap: `vacuum_rebases_shrinks_and_stays_consistent` deletes 40/48 from a mapped collection, vacuums (file swap under the same process's map), asserts shrink + consistency + reopen — runs on Windows locally and in the 3-OS CI test job.
 
 ## 4. Tail (mandatory — enforced by rulebook v5.3.0)
-- [x] 4.1 Documentation: ADR-0004; SPEC-002 STG-063 reframed + STG-064 added + freeze-note pointer updated; `OpenOptions::memory_budget` rustdoc; CHANGELOG + README status.
-- [x] 4.2 Tests: 6 integration tests (`tests/mmap_tier.rs`) + 4 unit tests (`storage/mmap.rs`) + 2 borrowing-view tests (`storage/vectors.rs`).
-- [x] 4.3 Full gate green: fmt, clippy `-D warnings` (all targets/features), 159 lib + 60 integration/doc tests, wasm32 build.
+- [x] 4.1 Update or create documentation covering the implementation — ADR-0004; SPEC-002 STG-063 reframed + STG-064 added + freeze-note pointer updated; `OpenOptions::memory_budget` rustdoc; CHANGELOG + README status.
+- [x] 4.2 Write tests covering the new behavior — 6 integration tests (`tests/mmap_tier.rs`) + 4 unit tests (`storage/mmap.rs`) + 2 borrowing-view tests (`storage/vectors.rs`).
+- [x] 4.3 Run tests and confirm they pass — full gate green: fmt, clippy `-D warnings` (all targets/features), 159 lib + 60 integration/doc tests, wasm32 build.
