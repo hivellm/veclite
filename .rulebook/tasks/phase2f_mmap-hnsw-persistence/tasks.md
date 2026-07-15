@@ -1,9 +1,9 @@
 ## 1. Index strategy (prerequisite)
-- [ ] 1.1 ADR: choose the index that unblocks mmap + graph persistence — vendored/forked HNSW reading vectors from mmap, flat/IVF over mapped pages, or a maintained HNSW crate with stable serialization (supersedes the hnsw_rs constraint in ADR-0003)
+- [x] 1.1 ADR-0004: single-file mmap of VECTORS + exact SIMD brute-force larger-than-RAM tier; HNSW rebuilt from mmap on open (no graph persistence). Supersedes ADR-0003 (corrects its "must fork hnsw_rs" premise: hnsw_rs does mmap/serialize, but only over its own directory format, which breaks single-file). SPEC-002 STG-063 reframed + STG-064 added — behaviour change, no byte change, freeze holds.
 
 ## 2. Implementation
 - [ ] 2.1 mmap read path over VECTORS segments with stride addressing; auto threshold 64 MiB (OpenOptions::mmap, STG-004)
-- [ ] 2.2 HNSW segment load; rebuild-from-vectors fallback emitting the OpenOptions warning (STG-063)
+- [ ] 2.2 Larger-than-RAM tier (STG-063 reframed + STG-064, ADR-0004): above a memory budget, skip the HNSW build and serve exact SIMD brute-force k-NN over the mmap'd VECTORS; below it, rebuild HNSW in RAM from the mmap on open. No graph persistence; OpenOptions warning callback retained but unused in v1.
 - [ ] 2.3 vacuum with an active mmap: unmap→truncate→remap so a mapped region can be shrunk without invalidating readers (STG-071; the no-mmap swap shipped in phase2d)
 
 ## 3. Testing

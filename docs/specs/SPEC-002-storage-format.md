@@ -119,7 +119,8 @@ CollEntry {
 - **STG-060** Read-write open takes an exclusive advisory lock (`fd-lock`) on the `.veclite` file; `read_only` open takes a shared lock. Lock conflict → `Locked` immediately (no blocking wait).
 - **STG-061** In-process readers proceed during checkpoint thanks to segment immutability; the TOC pointer swap happens under a brief per-database write lock (the only cross-collection stop-the-world point, target < 1 ms).
 - **STG-062** `read_only` mode MUST: skip WAL replay if a WAL exists but is empty/clean; **refuse to open** with `Locked` if a live writer holds the exclusive lock is fine to read (shared lock acquisition succeeds only against other readers or a `Normal`-durability quiesced file); refuse all mutating calls with `ReadOnly`.
-- **STG-063** HNSW load: if the HNSW segment is missing or its crc fails, open MUST fall back to rebuilding the graph from vectors, emitting the `OpenOptions` warning callback (FR-54). All other segment corruption is fatal (`Corrupt`).
+- **STG-063** HNSW load (v1, [ADR-0004](../../.rulebook/decisions/004-single-file-mmap-vectors-with-exact-brute-force-larger-than-ram-tier.md)): v1 does **not** persist the HNSW graph — `hnsw_rs`'s on-disk format is version-unstable, and its dump/reload works only over a directory of its own files, which cannot live inside the single `.veclite`. Open therefore **always rebuilds** the graph from the (mmap'd) VECTORS via parallel insert; the `HNSW` segment stays reserved (byte 7) but carries no graph in v1. The `OpenOptions` warning callback (FR-54) is retained in the API for a future persisted-graph path and is not fired in v1. Non-VECTORS segment corruption remains fatal (`Corrupt`). Reframes, without changing any on-disk bytes, the earlier "load graph, rebuild on crc miss" contract.
+- **STG-064** Larger-than-RAM tier ([ADR-0004](../../.rulebook/decisions/004-single-file-mmap-vectors-with-exact-brute-force-larger-than-ram-tier.md)): when a collection's mmap'd VECTORS exceed a memory budget, open skips the in-RAM HNSW build and serves **exact** k-NN by SIMD brute-force scan over the mmap'd fixed-stride records (recall is exact, cost O(n·dim) per query). Below the budget, the graph is rebuilt in RAM and ANN search is served as before. Results below the budget match the pre-mmap path; above it they are exact.
 
 ## 7. Snapshot and vacuum
 
@@ -153,6 +154,6 @@ Linux/macOS/Windows, and the v1 golden files are guarded on every run
 (`crates/veclite/tests/golden.rs`). These fix the **byte format**, which is now
 frozen. Criterion 4 (the mmap access path and its warm-open budget) does not
 change any on-disk bytes and is tracked in `phase2f_mmap-hnsw-persistence`
-(ADR-0003); it reads the same frozen v1 layout.
+(ADR-0004); it reads the same frozen v1 layout.
 5. **Windows vacuum**: shrink-in-place under mmap passes on Windows CI.
 6. **Freeze artifact**: this document marked frozen-normative; golden files for v1 committed to `tests/compat/golden/` and read by every subsequent CI run (NFR-11).

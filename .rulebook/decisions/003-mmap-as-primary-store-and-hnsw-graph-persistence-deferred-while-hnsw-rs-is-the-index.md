@@ -1,8 +1,16 @@
 # 3. mmap-as-primary-store and HNSW-graph persistence deferred while hnsw_rs is the index
 
-**Status**: accepted
+**Status**: superseded by ADR-0004
 **Date**: 2026-07-14
 **Related Tasks**: phase2c_mmap-lock-readonly, phase2f_mmap-hnsw-persistence
+
+> **Superseded by [ADR-0004](004-single-file-mmap-vectors-with-exact-brute-force-larger-than-ram-tier.md).**
+> The phase2c deferral recorded here was correct and shipped as described. Its
+> forward-looking premise — that unblocking STG-004/STG-063 requires replacing or
+> forking hnsw_rs — is corrected in ADR-0004: hnsw_rs *does* serialize and mmap,
+> but only through its own directory-of-files format, so the real constraint is
+> single-file identity, not index capability. phase2f discharges the deferral
+> without an index swap.
 
 ## Context
 
