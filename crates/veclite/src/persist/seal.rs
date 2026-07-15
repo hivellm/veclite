@@ -8,9 +8,10 @@
 use serde_json::Value;
 
 use crate::error::{Result, VecLiteError};
-use crate::options::CollectionOptions;
+use crate::filter::index::{PayloadIndexes, PostingValue};
+use crate::options::{CollectionOptions, PayloadIndexKind};
 use crate::persist::config;
-use crate::storage::body::{PayloadBlock, StoredConfig};
+use crate::storage::body::{PayloadBlock, PayloadIndex, StoredConfig};
 use crate::storage::iddir::IdDir;
 use crate::storage::pager::CheckpointColl;
 use crate::storage::segment::{Segment, SegmentType};
@@ -58,13 +59,26 @@ fn bucket_count(n: usize) -> usize {
     n.next_power_of_two().max(8)
 }
 
+/// Encode one sealed posting value into the PIDX opaque-value bytes
+/// (SPEC-002 §3.1): keyword = utf8, integer = i64 LE, float = f64 bits LE.
+fn posting_value_bytes(v: &PostingValue) -> Vec<u8> {
+    match v {
+        PostingValue::Keyword(s) => s.as_bytes().to_vec(),
+        PostingValue::Integer(i) => i.to_le_bytes().to_vec(),
+        PostingValue::Float(f) => f.to_bits().to_le_bytes().to_vec(),
+    }
+}
+
 /// Seal a collection's live set into a `CheckpointColl` ready for the pager
-/// (SPEC-002 §5). Slots are compacted to `0..live.len()`.
+/// (SPEC-002 §5). Slots are compacted to `0..live.len()`; `declared` payload
+/// indexes are rebuilt over the compacted numbering and sealed as one PIDX
+/// segment per key (SPEC-006 FLT-020/021).
 pub(crate) fn seal(
     coll_id: u32,
     name: String,
     aliases: Vec<String>,
     options: &CollectionOptions,
+    declared: &[(String, PayloadIndexKind)],
     live: &[LivePoint],
     created_epoch_s: u64,
 ) -> Result<CheckpointColl> {
@@ -128,6 +142,36 @@ pub(crate) fn seal(
         });
     }
 
+    // One PIDX segment per declared index (SPEC-002 §3.1): rebuild the
+    // postings over the compacted slot numbering so the sealed bitmaps match
+    // the sealed VECTORS/IDDIR. Declarations survive reopen through these
+    // segments; readers rebuild the in-memory bitmaps from payloads (FLT-021).
+    if !declared.is_empty() {
+        let mut indexes = PayloadIndexes::new(declared);
+        for (slot, (_, _, payload)) in live.iter().enumerate() {
+            indexes.insert(slot as u64, payload.as_ref());
+        }
+        for (key, kind) in declared {
+            let postings = indexes.postings(key).unwrap_or_default();
+            let mut encoded = Vec::with_capacity(postings.len());
+            for (value, slots) in &postings {
+                let bitmap: roaring::RoaringTreemap = slots.iter().copied().collect();
+                encoded.push((posting_value_bytes(value), bitmap));
+            }
+            segments.push(Segment {
+                seg_type: SegmentType::Pidx,
+                seg_flags: 0,
+                coll_id,
+                body: PayloadIndex {
+                    kind: config::pidx_kind_byte(*kind),
+                    key: key.clone(),
+                    postings: encoded,
+                }
+                .encode()?,
+            });
+        }
+    }
+
     Ok(CheckpointColl {
         coll_id,
         name,
@@ -148,12 +192,19 @@ pub(crate) fn load(segments: &[Segment]) -> Result<LoadedCollection> {
     let mut payload = PayloadBlock {
         entries: Vec::new(),
     };
+    let mut declared: Vec<(String, PayloadIndexKind)> = Vec::new();
     for seg in segments {
         match seg.seg_type {
             SegmentType::Config => stored = Some(StoredConfig::decode(&seg.body)?),
             SegmentType::Vectors => vectors = Some(VectorsBody::decode(&seg.body)?),
             SegmentType::Iddir => iddir = Some(IdDir::decode(&seg.body)?),
             SegmentType::Payload => payload = PayloadBlock::decode(&seg.body)?,
+            // Declarations are harvested from PIDX; the in-memory bitmaps are
+            // rebuilt from the loaded payloads (FLT-021 rebuild model).
+            SegmentType::Pidx => {
+                let pidx = PayloadIndex::decode(&seg.body)?;
+                declared.push((pidx.key, config::pidx_kind_from(pidx.kind)?));
+            }
             // HNSW is rebuilt from vectors (STG-063); other types are not yet
             // produced by seal.
             _ => {}
@@ -163,7 +214,8 @@ pub(crate) fn load(segments: &[Segment]) -> Result<LoadedCollection> {
     let vectors =
         vectors.ok_or_else(|| VecLiteError::Corrupt("load: missing VECTORS".to_owned()))?;
     let iddir = iddir.ok_or_else(|| VecLiteError::Corrupt("load: missing IDDIR".to_owned()))?;
-    let options = config::from_stored(&stored)?;
+    let mut options = config::from_stored(&stored)?;
+    options.payload_indexes = declared;
     let dim = options.dimension;
 
     // slot → id and slot → payload lookups.
@@ -223,17 +275,23 @@ pub(crate) fn load_based(segments: &[Segment], slot_count: usize) -> Result<Base
     let mut payload = PayloadBlock {
         entries: Vec::new(),
     };
+    let mut declared: Vec<(String, PayloadIndexKind)> = Vec::new();
     for seg in segments {
         match seg.seg_type {
             SegmentType::Config => stored = Some(StoredConfig::decode(&seg.body)?),
             SegmentType::Iddir => iddir = Some(IdDir::decode(&seg.body)?),
             SegmentType::Payload => payload = PayloadBlock::decode(&seg.body)?,
+            SegmentType::Pidx => {
+                let pidx = PayloadIndex::decode(&seg.body)?;
+                declared.push((pidx.key, config::pidx_kind_from(pidx.kind)?));
+            }
             _ => {}
         }
     }
     let stored = stored.ok_or_else(|| VecLiteError::Corrupt("load: missing CONFIG".to_owned()))?;
     let iddir = iddir.ok_or_else(|| VecLiteError::Corrupt("load: missing IDDIR".to_owned()))?;
-    let options = config::from_stored(&stored)?;
+    let mut options = config::from_stored(&stored)?;
+    options.payload_indexes = declared;
 
     let mut ids: Vec<Option<String>> = vec![None; slot_count];
     for (id, slot) in iddir.entries() {
@@ -278,8 +336,8 @@ mod tests {
                 Some(serde_json::json!("x")),
             ),
         ];
-        let sealed =
-            seal(0, "docs".into(), vec![], &opts(), &live, 1000).unwrap_or_else(|e| panic!("{e}"));
+        let sealed = seal(0, "docs".into(), vec![], &opts(), &[], &live, 1000)
+            .unwrap_or_else(|e| panic!("{e}"));
         assert_eq!(sealed.vector_count, 3);
         let loaded = load(&sealed.segments).unwrap_or_else(|e| panic!("{e}"));
         assert_eq!(loaded.options.dimension, 3);
@@ -288,8 +346,8 @@ mod tests {
 
     #[test]
     fn empty_collection_round_trips() {
-        let sealed =
-            seal(1, "empty".into(), vec![], &opts(), &[], 1000).unwrap_or_else(|e| panic!("{e}"));
+        let sealed = seal(1, "empty".into(), vec![], &opts(), &[], &[], 1000)
+            .unwrap_or_else(|e| panic!("{e}"));
         let loaded = load(&sealed.segments).unwrap_or_else(|e| panic!("{e}"));
         assert!(loaded.points.is_empty());
     }

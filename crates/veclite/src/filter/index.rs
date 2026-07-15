@@ -112,6 +112,15 @@ pub(crate) struct PayloadIndexes {
     by_key: HashMap<String, KeyIndex>,
 }
 
+/// One sealed posting value (SPEC-002 §3.1 PIDX body), typed by the declared
+/// kind.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum PostingValue {
+    Keyword(String),
+    Integer(i64),
+    Float(f64),
+}
+
 impl PayloadIndexes {
     /// Build empty indexes for the declared `(key, kind)` set (CONFIG-derived).
     pub(crate) fn new(declared: &[(String, PayloadIndexKind)]) -> Self {
@@ -120,6 +129,68 @@ impl PayloadIndexes {
             .map(|(k, kind)| (k.clone(), KeyIndex::empty(*kind)))
             .collect();
         PayloadIndexes { by_key }
+    }
+
+    /// Declare one more index at runtime (FLT-020 late creation). Returns
+    /// `false` when `key` is already declared (the caller decides whether a
+    /// same-kind redeclare is an idempotent no-op or a kind conflict).
+    pub(crate) fn declare(&mut self, key: &str, kind: PayloadIndexKind) -> bool {
+        if self.by_key.contains_key(key) {
+            return false;
+        }
+        self.by_key.insert(key.to_owned(), KeyIndex::empty(kind));
+        true
+    }
+
+    /// The declared kind for `key`, if indexed.
+    pub(crate) fn kind_of(&self, key: &str) -> Option<PayloadIndexKind> {
+        self.by_key.get(key).map(|idx| match idx {
+            KeyIndex::Keyword(_) => PayloadIndexKind::Keyword,
+            KeyIndex::Integer(_) => PayloadIndexKind::Integer,
+            KeyIndex::Float(_) => PayloadIndexKind::Float,
+        })
+    }
+
+    /// Every declared `(key, kind)`, sorted by key — the deterministic order
+    /// PIDX segments are sealed in (STG-041 gives same-rank segments append
+    /// order, so the writer fixes it).
+    pub(crate) fn declared(&self) -> Vec<(String, PayloadIndexKind)> {
+        let mut out: Vec<(String, PayloadIndexKind)> = self
+            .by_key
+            .keys()
+            .map(|k| {
+                (
+                    k.clone(),
+                    self.kind_of(k).unwrap_or(PayloadIndexKind::Keyword),
+                )
+            })
+            .collect();
+        out.sort_by(|a, b| a.0.cmp(&b.0));
+        out
+    }
+
+    /// The sealed postings of one key's index: `(value, sorted slot list)` in
+    /// ascending value order (SPEC-002 §3.1 PIDX body). `None` if undeclared.
+    pub(crate) fn postings(&self, key: &str) -> Option<Vec<(PostingValue, Vec<u64>)>> {
+        let idx = self.by_key.get(key)?;
+        Some(match idx {
+            KeyIndex::Keyword(m) => {
+                let mut entries: Vec<_> = m.iter().collect();
+                entries.sort_by(|a, b| a.0.cmp(b.0));
+                entries
+                    .into_iter()
+                    .map(|(v, b)| (PostingValue::Keyword(v.clone()), b.iter().collect()))
+                    .collect()
+            }
+            KeyIndex::Integer(m) => m
+                .iter()
+                .map(|(v, b)| (PostingValue::Integer(*v), b.iter().collect()))
+                .collect(),
+            KeyIndex::Float(m) => m
+                .iter()
+                .map(|(v, b)| (PostingValue::Float(v.0), b.iter().collect()))
+                .collect(),
+        })
     }
 
     /// Add a point's payload to every declared index.

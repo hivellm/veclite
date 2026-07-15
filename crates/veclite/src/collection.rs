@@ -18,7 +18,7 @@ use crate::filter::Filter;
 use crate::filter::index::PayloadIndexes;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::index::HnswIndex;
-use crate::options::{CollectionOptions, Metric, Quantization};
+use crate::options::{CollectionOptions, Metric, PayloadIndexKind, Quantization};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::persist::seal::LoadedBase;
 #[cfg(not(target_arch = "wasm32"))]
@@ -367,6 +367,10 @@ pub struct CollectionStats {
     pub tombstones: usize,
     /// Whether this is an auto-embed (text) collection.
     pub auto_embed: bool,
+    /// Declared payload indexes `(key, kind)`, sorted by key (SPEC-006 §3) —
+    /// creation-time declarations plus runtime `create_payload_index` calls.
+    /// Always empty on wasm32 (indexes are native-only; filters scan there).
+    pub payload_indexes: Vec<(String, PayloadIndexKind)>,
 }
 
 /// A point validated and normalized, ready to apply under the write lock.
@@ -901,9 +905,13 @@ impl Collection {
     /// A snapshot of collection statistics (SPEC-004 FR-08/13).
     #[must_use]
     pub fn stats(&self) -> CollectionStats {
-        let (len, tombstones) = {
+        let (len, tombstones, payload_indexes) = {
             let data = self.inner.data.read();
-            (data.id_to_slot.len(), data.tombstones.len())
+            #[cfg(not(target_arch = "wasm32"))]
+            let declared = data.payload_indexes.declared();
+            #[cfg(target_arch = "wasm32")]
+            let declared = Vec::new();
+            (data.id_to_slot.len(), data.tombstones.len(), declared)
         };
         CollectionStats {
             name: self.inner.name.read().clone(),
@@ -911,6 +919,7 @@ impl Collection {
             len,
             tombstones,
             auto_embed: self.inner.embedder.is_some(),
+            payload_indexes,
         }
     }
 
@@ -1150,7 +1159,14 @@ impl Collection {
         let active =
             filter.filter(|f| !(f.must.is_empty() && f.should.is_empty() && f.must_not.is_empty()));
         match active {
-            Some(f) => filtered_scored(&data, q, metric, dim, f, &mut scored),
+            Some(f) => {
+                // FLT-030 planner: pre-filter, post-filter over-fetch, or the
+                // exact scan — chosen by selectivity, identical results.
+                #[cfg(not(target_arch = "wasm32"))]
+                filtered_planner(&data, q, metric, dim, f, limit, ef_search, &mut scored);
+                #[cfg(target_arch = "wasm32")]
+                filtered_scan(&data, q, metric, dim, f, &mut scored);
+            }
             None => {
                 #[cfg(not(target_arch = "wasm32"))]
                 match &data.index {
@@ -1260,6 +1276,81 @@ impl Collection {
             }
         }
         out
+    }
+
+    /// Declare a payload index at runtime (SPEC-006 FLT-020): journal
+    /// `PIDX_DECLARE` (WAL op 8), then build the index by scanning the live
+    /// payloads. Redeclaring an existing `(key, kind)` is an idempotent no-op;
+    /// redeclaring with a different kind is `InvalidArgument`. The declaration
+    /// is sealed into a PIDX segment at the next checkpoint, so it survives
+    /// reopen. Native-only, like the indexes themselves (wasm32 filters by
+    /// scan — FLT-022 keeps results identical either way).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn create_payload_index(&self, key: &str, kind: PayloadIndexKind) -> Result<()> {
+        self.guard()?;
+        if key.is_empty() || key.starts_with('_') || key.contains('.') {
+            return Err(VecLiteError::InvalidArgument(format!(
+                "cannot index payload key {key:?} (empty, reserved '_' prefix, or nested path)"
+            )));
+        }
+        // Resolve duplicates before logging so the WAL never records a
+        // conflicting declaration (validate → log → apply).
+        {
+            let data = self.inner.data.read();
+            if let Some(existing) = data.payload_indexes.kind_of(key) {
+                return if existing == kind {
+                    Ok(()) // idempotent (matches WAL replay semantics, WAL-042)
+                } else {
+                    Err(VecLiteError::InvalidArgument(format!(
+                        "payload index {key:?} is already declared as {existing:?}"
+                    )))
+                };
+            }
+        }
+        let body = if self.inner.persistence.is_some() {
+            Some(wal_body::encode(&wal_body::PidxDeclare {
+                key: key.to_owned(),
+                kind: crate::persist::config::pidx_kind_byte(kind),
+            })?)
+        } else {
+            None
+        };
+        self.log(WalOp::PidxDeclare, body)?;
+        self.apply_declare_index(key, kind);
+        self.after_write()
+    }
+
+    /// Apply a `PIDX_DECLARE` during WAL recovery — no re-logging (WAL-042
+    /// idempotent: an already-declared key is a no-op).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn replay_declare_index(&self, key: &str, kind: PayloadIndexKind) {
+        self.apply_declare_index(key, kind);
+    }
+
+    /// Declare + backfill under the write lock: register the empty index, then
+    /// re-insert every live payload (roaring set-inserts make the re-insert a
+    /// no-op for already-declared keys).
+    #[cfg(not(target_arch = "wasm32"))]
+    fn apply_declare_index(&self, key: &str, kind: PayloadIndexKind) {
+        let mut guard = self.inner.data.write();
+        let data = &mut *guard;
+        if !data.payload_indexes.declare(key, kind) {
+            return; // already declared (replay idempotency)
+        }
+        for slot in 0..data.ids.len() {
+            if data.id_to_slot.get(&data.ids[slot]) == Some(&slot) {
+                data.payload_indexes
+                    .insert(slot as u64, data.payloads[slot].as_ref());
+            }
+        }
+        data.dirty = true; // a clean mmap base can no longer carry forward
+    }
+
+    /// Every declared payload index `(key, kind)`, sorted by key — the set the
+    /// next checkpoint seals into PIDX segments.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn declared_indexes(&self) -> Vec<(String, PayloadIndexKind)> {
+        self.inner.data.read().payload_indexes.declared()
     }
 
     /// Install a loaded mmap base (ADR-0004): slot metadata into RAM, vector
@@ -1445,7 +1536,10 @@ impl Collection {
         data.dirty = true;
         // Slots are renumbered, so the payload indexes are rebuilt from scratch
         // (apply_upsert below re-inserts each live point at its fresh slot).
-        data.payload_indexes = PayloadIndexes::new(&self.inner.config.payload_indexes);
+        // Preserve the CURRENT declarations — runtime `create_payload_index`
+        // additions must survive compaction, not just the creation-time set.
+        let declared = data.payload_indexes.declared();
+        data.payload_indexes = PayloadIndexes::new(&declared);
         data.index = if self.inner.config.metric == Metric::DotProduct {
             None
         } else {
@@ -1557,12 +1651,11 @@ fn score_slot(
     }
 }
 
-/// Exact filtered scoring (SPEC-006 §4). When a payload index yields a candidate
-/// superset for the `must` clause, only those slots are considered (pre-filter);
-/// otherwise every live slot is scanned (post-filter). Either way the **full**
-/// filter is applied to each slot, so the result set is identical to a scan
-/// (FLT-022/031). Exact brute-force scoring keeps all metrics correct.
-fn filtered_scored(
+/// Exact filtered scan (SPEC-006 §4): every live slot is tested against the
+/// **full** filter and scored by brute force — the correctness baseline every
+/// accelerated strategy must match (FLT-022/031). The only filtered path on
+/// wasm32; the planner's fallback on native.
+fn filtered_scan(
     data: &CollectionData,
     query: &[f32],
     metric: Metric,
@@ -1571,22 +1664,6 @@ fn filtered_scored(
     out: &mut Vec<(usize, f32)>,
 ) {
     let mut scratch = Vec::with_capacity(dim);
-    #[cfg(not(target_arch = "wasm32"))]
-    if let Some(candidates) = data.payload_indexes.candidates(filter) {
-        for s in candidates.iter() {
-            let slot = s as usize;
-            if slot < data.ids.len()
-                && data.id_to_slot.get(&data.ids[slot]) == Some(&slot)
-                && filter.matches(data.payloads[slot].as_ref())
-            {
-                out.push((
-                    slot,
-                    score_slot(data, query, metric, dim, slot, &mut scratch),
-                ));
-            }
-        }
-        return;
-    }
     for slot in 0..data.ids.len() {
         if data.id_to_slot.get(&data.ids[slot]) == Some(&slot)
             && filter.matches(data.payloads[slot].as_ref())
@@ -1597,6 +1674,108 @@ fn filtered_scored(
             ));
         }
     }
+}
+
+/// Exact pre-filter (FLT-030): score only the index-provided candidate
+/// superset, applying the full filter to each slot — identical results to the
+/// scan, restricted work.
+#[cfg(not(target_arch = "wasm32"))]
+fn score_candidates(
+    data: &CollectionData,
+    query: &[f32],
+    metric: Metric,
+    dim: usize,
+    filter: &Filter,
+    candidates: &roaring::RoaringTreemap,
+    out: &mut Vec<(usize, f32)>,
+) {
+    let mut scratch = Vec::with_capacity(dim);
+    for s in candidates.iter() {
+        let slot = s as usize;
+        if slot < data.ids.len()
+            && data.id_to_slot.get(&data.ids[slot]) == Some(&slot)
+            && filter.matches(data.payloads[slot].as_ref())
+        {
+            out.push((
+                slot,
+                score_slot(data, query, metric, dim, slot, &mut scratch),
+            ));
+        }
+    }
+}
+
+/// Below this many live vectors an exact scan beats graph over-fetch, so the
+/// planner never post-filters (FLT-030).
+#[cfg(not(target_arch = "wasm32"))]
+const POSTFILTER_MIN_LIVE: usize = 512;
+
+/// Filtered-search planner (SPEC-006 FLT-030, adapted from the server's
+/// `filter_processor`): **pre-filter** (exact scoring over the index candidate
+/// set) when the set is selective (≤ ¼ of live) or the collection is small;
+/// otherwise **post-filter** — HNSW over-fetch with adaptive growth until
+/// `limit` matches or the graph is exhausted, falling back to the exact scan
+/// when it under-returns. The full filter is applied to every hit on every
+/// path, and the fallback is exact, so the strategy choice never gates results
+/// (FLT-022/031).
+#[cfg(not(target_arch = "wasm32"))]
+#[allow(clippy::too_many_arguments)]
+fn filtered_planner(
+    data: &CollectionData,
+    query: &[f32],
+    metric: Metric,
+    dim: usize,
+    filter: &Filter,
+    limit: usize,
+    ef_search: usize,
+    out: &mut Vec<(usize, f32)>,
+) {
+    let live = data.id_to_slot.len();
+    let candidates = data.payload_indexes.candidates(filter);
+    if let Some(set) = &candidates {
+        let selective = (set.len() as usize).saturating_mul(4) <= live;
+        if selective || live < POSTFILTER_MIN_LIVE || data.index.is_none() {
+            score_candidates(data, query, metric, dim, filter, set, out);
+            return;
+        }
+    }
+    if live >= POSTFILTER_MIN_LIVE {
+        if let Some(index) = &data.index {
+            let total = data.ids.len();
+            let mut fetch = limit.saturating_mul(4).max(64).min(total);
+            loop {
+                out.clear();
+                let ef = fetch.clamp(ef_search, *EF_SEARCH_BOUNDS.end());
+                let Ok(found) = index.search(query, fetch, ef) else {
+                    break; // bounds are clamped; defensively fall back to scan
+                };
+                // `found` is distance-ordered, so the matching prefix is the
+                // filtered top-`limit` under the same ordering as unfiltered
+                // search.
+                for (slot, distance) in found {
+                    if data.id_to_slot.get(&data.ids[slot]) == Some(&slot)
+                        && filter.matches(data.payloads[slot].as_ref())
+                    {
+                        out.push((slot, distance_to_score(metric, distance)));
+                        if out.len() == limit {
+                            break;
+                        }
+                    }
+                }
+                if out.len() >= limit {
+                    return;
+                }
+                if fetch >= total {
+                    break;
+                }
+                fetch = fetch.saturating_mul(4).min(total);
+            }
+            // Growth exhausted below `limit` matches: only an exact pass can
+            // tell whether the graph under-returned or the matches genuinely
+            // run out — take the exact answer (FLT-031).
+            out.clear();
+        }
+    }
+    filtered_scan(data, query, metric, dim, filter, out);
 }
 
 /// Tombstone the slot behind `id`, clearing its payload/sparse storage.

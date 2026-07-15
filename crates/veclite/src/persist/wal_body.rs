@@ -42,6 +42,15 @@ pub(crate) struct Alias {
     pub(crate) alias: String,
 }
 
+/// `PIDX_DECLARE` body (WAL op 8, SPEC-006 FLT-020): declare one payload index
+/// at runtime. `kind` uses the PIDX segment byte (1 keyword / 2 int / 3 float,
+/// SPEC-002 §3.1).
+#[derive(Serialize, Deserialize)]
+pub(crate) struct PidxDeclare {
+    pub(crate) key: String,
+    pub(crate) kind: u8,
+}
+
 // UPSERT_BATCH body = `Vec<Point>`; DELETE_BATCH body = `Vec<String>`;
 // DROP_COLL body = empty. Those need no dedicated struct — encode/decode the
 // value directly.

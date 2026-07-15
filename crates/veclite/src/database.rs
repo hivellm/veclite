@@ -210,7 +210,13 @@ fn apply_wal_entry(
                 }
             }
         }
-        WalOp::VocabUpdate | WalOp::PidxDeclare => {}
+        WalOp::PidxDeclare => {
+            let body: wal_body::PidxDeclare = wal_body::decode(&entry.body, "pidx")?;
+            if let Some(c) = collection_by_id(inner, entry.coll_id) {
+                c.replay_declare_index(&body.key, config::pidx_kind_from(body.kind)?);
+            }
+        }
+        WalOp::VocabUpdate => {}
     }
     Ok(())
 }
@@ -254,7 +260,13 @@ fn sealed_live_collections(
         }
         let live = handle.live_points();
         colls.push(seal::seal(
-            ci.coll_id, name, aliases, &ci.config, &live, epoch,
+            ci.coll_id,
+            name,
+            aliases,
+            &ci.config,
+            &handle.declared_indexes(),
+            &live,
+            epoch,
         )?);
     }
     Ok(colls)
@@ -487,6 +499,16 @@ impl VecLite {
                 config: config::to_stored(&options, now_epoch_s()),
             })?;
             p.append(coll_id, WalOp::CreateColl, body)?;
+            // The CREATE_COLL config projection carries no index declarations
+            // (StoredConfig is frozen); journal each creation-time declaration
+            // as its own PIDX_DECLARE so crash-replay restores them (FLT-020).
+            for (key, kind) in &options.payload_indexes {
+                let body = wal_body::encode(&wal_body::PidxDeclare {
+                    key: key.clone(),
+                    kind: config::pidx_kind_byte(*kind),
+                })?;
+                p.append(coll_id, WalOp::PidxDeclare, body)?;
+            }
         }
         let inner = Arc::new(CollectionInner::new(
             name.to_owned(),

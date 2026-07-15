@@ -9,6 +9,18 @@ Versions 0.x are pre-release: the public API may change between minors until 1.0
 ## [Unreleased]
 
 ### Added
+- Runtime payload indexes + filtered-search planner (task `phase3e`, SPEC-006
+  FLT-020/030/031): `Collection::create_payload_index(key, kind)` declares an
+  index late, backfilling from the live payloads; the declaration is journaled
+  (`PIDX_DECLARE`, WAL op 8 — replayed after a crash) and sealed as a PIDX
+  segment at checkpoint, so creation-time and runtime declarations now both
+  survive reopen (previously declarations were silently dropped on reload).
+  `CollectionStats.payload_indexes` reports the declared set. Filtered search
+  now runs through a selectivity planner: exact pre-filter over the index
+  candidate set when selective (≤ ¼ of live), HNSW over-fetch post-filter with
+  adaptive growth otherwise, and an exact-scan fallback whenever the graph
+  under-returns — property-tested identical to the scan baseline on every
+  strategy.
 - mmap primary read path + larger-than-RAM tier (task `phase2f`, ADR-0004,
   SPEC-002 STG-004/063/064): collections whose VECTORS exceed 64 MiB (or with
   `OpenOptions::mmap(true)`) keep their vector bytes in a read-only file map —

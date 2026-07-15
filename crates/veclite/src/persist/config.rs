@@ -66,6 +66,26 @@ fn corrupt(what: String) -> VecLiteError {
     VecLiteError::Corrupt(format!("config: {what}"))
 }
 
+/// PIDX kind byte (SPEC-002 §3.1): 1 keyword / 2 int / 3 float. Shared by the
+/// PIDX segment writer and the `PIDX_DECLARE` WAL body.
+pub(crate) fn pidx_kind_byte(kind: PayloadIndexKind) -> u8 {
+    match kind {
+        PayloadIndexKind::Keyword => 1,
+        PayloadIndexKind::Integer => 2,
+        PayloadIndexKind::Float => 3,
+    }
+}
+
+/// Parse a PIDX kind byte; unknown values are `Corrupt`.
+pub(crate) fn pidx_kind_from(b: u8) -> Result<PayloadIndexKind> {
+    Ok(match b {
+        1 => PayloadIndexKind::Keyword,
+        2 => PayloadIndexKind::Integer,
+        3 => PayloadIndexKind::Float,
+        other => return Err(corrupt(format!("unknown pidx kind {other}"))),
+    })
+}
+
 /// Project a runtime config to its on-disk form.
 pub(crate) fn to_stored(options: &CollectionOptions, created_epoch_s: u64) -> StoredConfig {
     let (quantization, quant_bits) = quant_bytes(options.quantization);
