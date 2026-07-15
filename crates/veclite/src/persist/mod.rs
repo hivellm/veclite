@@ -144,7 +144,7 @@ impl Persistence {
                     .unwrap_or(0);
                 let slot_count = usize::try_from(slot_count)
                     .map_err(|_| VecLiteError::Corrupt("load: slot count exceeds usize".into()))?;
-                let (options, ids, payloads) = seal::load_based(&segments, slot_count)?;
+                let (options, ids, payloads, sparses) = seal::load_based(&segments, slot_count)?;
                 // Auto-embed collections re-derive every vector from `_text` on
                 // open (their vocabulary is a function of the live corpus), so
                 // the map saves nothing — they always materialize.
@@ -163,6 +163,7 @@ impl Persistence {
                                 slot_count,
                                 ids,
                                 payloads,
+                                sparses,
                                 seg_refs: entry.live_segments.clone(),
                                 vector_count: entry.vector_count,
                                 tombstone_count: entry.tombstone_count,

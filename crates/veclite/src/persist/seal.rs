@@ -7,19 +7,66 @@
 
 use serde_json::Value;
 
+use std::collections::BTreeMap;
+
 use crate::error::{Result, VecLiteError};
 use crate::filter::index::{PayloadIndexes, PostingValue};
 use crate::options::{CollectionOptions, PayloadIndexKind};
 use crate::persist::config;
-use crate::storage::body::{PayloadBlock, PayloadIndex, StoredConfig};
+use crate::point::SparseVector;
+use crate::storage::body::{PayloadBlock, PayloadIndex, SparsePostings, StoredConfig};
 use crate::storage::iddir::IdDir;
 use crate::storage::pager::CheckpointColl;
 use crate::storage::segment::{Segment, SegmentType};
 use crate::storage::vectors::{Encoding, VectorsBody};
 
-/// One live point: id, dense vector, optional payload. Sparse is not yet
-/// persisted (phase3c).
-pub(crate) type LivePoint = (String, Vec<f32>, Option<Value>);
+/// One live point: id, dense vector, optional payload, optional sparse lane
+/// (SPEC-007 HYB-030 — the sparse lane persists as a SPARSE segment).
+pub(crate) type LivePoint = (String, Vec<f32>, Option<Value>, Option<SparseVector>);
+
+/// Invert per-slot sparse vectors into the SPARSE segment's
+/// `term_id → [(slot, weight)]` postings (SPEC-002 §3.1). The `BTreeMap` keys
+/// the terms ascending and each posting list is built in slot order, so the
+/// body is deterministic (matching the golden-file discipline).
+fn sparse_to_postings(live: &[LivePoint]) -> SparsePostings {
+    let mut by_term: BTreeMap<u32, Vec<(u64, f32)>> = BTreeMap::new();
+    for (slot, (_, _, _, sparse)) in live.iter().enumerate() {
+        if let Some(sv) = sparse {
+            for (&idx, &val) in sv.indices.iter().zip(&sv.values) {
+                by_term.entry(idx).or_default().push((slot as u64, val));
+            }
+        }
+    }
+    SparsePostings {
+        terms: by_term.into_iter().collect(),
+    }
+}
+
+/// Rebuild per-slot sparse vectors from SPARSE postings. Term ids arrive
+/// ascending (seal sorts them), so each slot's `indices` come out sorted — the
+/// HYB-001 invariant holds with no re-sort. Out-of-range slots are ignored
+/// (defensive; seal never emits them).
+pub(crate) fn postings_to_sparse(
+    postings: &SparsePostings,
+    count: usize,
+) -> Vec<Option<SparseVector>> {
+    let mut acc: Vec<Option<SparseVector>> = vec![None; count];
+    for (term_id, plist) in &postings.terms {
+        for &(slot, weight) in plist {
+            if let Ok(s) = usize::try_from(slot) {
+                if s < count {
+                    let entry = acc[s].get_or_insert_with(|| SparseVector {
+                        indices: Vec::new(),
+                        values: Vec::new(),
+                    });
+                    entry.indices.push(*term_id);
+                    entry.values.push(weight);
+                }
+            }
+        }
+    }
+    acc
+}
 
 /// A collection reconstructed from its segments. Exactly one of `points` /
 /// `base` carries the vectors: the materialized tier fills `points`; the mmap
@@ -48,6 +95,8 @@ pub(crate) struct LoadedBase {
     pub(crate) ids: Vec<Option<String>>,
     /// Slot → payload.
     pub(crate) payloads: Vec<Option<Value>>,
+    /// Slot → sparse lane (SPEC-007 HYB-030), rebuilt from the SPARSE segment.
+    pub(crate) sparses: Vec<Option<SparseVector>>,
     /// The committed live segments (replay order), for clean carry-forward.
     pub(crate) seg_refs: Vec<crate::storage::toc::SegRef>,
     pub(crate) vector_count: u64,
@@ -99,7 +148,7 @@ pub(crate) fn seal(
     });
 
     let mut records = Vec::with_capacity(live.len() * dim * 4);
-    for (_, vector, _) in live {
+    for (_, vector, _, _) in live {
         for f in vector {
             records.extend_from_slice(&f.to_le_bytes());
         }
@@ -121,7 +170,7 @@ pub(crate) fn seal(
     });
 
     let mut dir = IdDir::new(bucket_count(live.len()));
-    for (slot, (id, _, _)) in live.iter().enumerate() {
+    for (slot, (id, _, _, _)) in live.iter().enumerate() {
         dir.insert(id.clone(), slot as u64);
     }
     segments.push(Segment {
@@ -134,7 +183,7 @@ pub(crate) fn seal(
     let payload_entries: Vec<(u64, Value)> = live
         .iter()
         .enumerate()
-        .filter_map(|(slot, (_, _, payload))| payload.clone().map(|v| (slot as u64, v)))
+        .filter_map(|(slot, (_, _, payload, _))| payload.clone().map(|v| (slot as u64, v)))
         .collect();
     if !payload_entries.is_empty() {
         segments.push(Segment {
@@ -154,7 +203,7 @@ pub(crate) fn seal(
     // segments; readers rebuild the in-memory bitmaps from payloads (FLT-021).
     if !declared.is_empty() {
         let mut indexes = PayloadIndexes::new(declared);
-        for (slot, (_, _, payload)) in live.iter().enumerate() {
+        for (slot, (_, _, payload, _)) in live.iter().enumerate() {
             indexes.insert(slot as u64, payload.as_ref());
         }
         for (key, kind) in declared {
@@ -176,6 +225,20 @@ pub(crate) fn seal(
                 .encode()?,
             });
         }
+    }
+
+    // SPARSE segment (SPEC-002 §3.1, SPEC-007 HYB-030): the hybrid lane's
+    // inverted index over the compacted slots, so a BYO (or auto-maintained)
+    // sparse lane survives checkpoint+reopen. Tombstoned slots are simply
+    // absent from `live`, so this rewrite drops them (HYB-031).
+    let postings = sparse_to_postings(live);
+    if !postings.terms.is_empty() {
+        segments.push(Segment {
+            seg_type: SegmentType::Sparse,
+            seg_flags: 0,
+            coll_id,
+            body: postings.encode()?,
+        });
     }
 
     // VOCAB segment (SPEC-005 EMB-030): the embedder's exported state, so a
@@ -213,6 +276,7 @@ pub(crate) fn load(segments: &[Segment]) -> Result<LoadedCollection> {
     };
     let mut declared: Vec<(String, PayloadIndexKind)> = Vec::new();
     let mut vocab: Option<Vec<u8>> = None;
+    let mut sparse_postings: Option<SparsePostings> = None;
     for seg in segments {
         match seg.seg_type {
             SegmentType::Config => stored = Some(StoredConfig::decode(&seg.body)?),
@@ -220,6 +284,7 @@ pub(crate) fn load(segments: &[Segment]) -> Result<LoadedCollection> {
             SegmentType::Vectors => vectors = Some(VectorsBody::decode(&seg.body)?),
             SegmentType::Iddir => iddir = Some(IdDir::decode(&seg.body)?),
             SegmentType::Payload => payload = PayloadBlock::decode(&seg.body)?,
+            SegmentType::Sparse => sparse_postings = Some(SparsePostings::decode(&seg.body)?),
             // Declarations are harvested from PIDX; the in-memory bitmaps are
             // rebuilt from the loaded payloads (FLT-021 rebuild model).
             SegmentType::Pidx => {
@@ -259,6 +324,11 @@ pub(crate) fn load(segments: &[Segment]) -> Result<LoadedCollection> {
         }
     }
 
+    let mut sparses = sparse_postings
+        .as_ref()
+        .map(|p| postings_to_sparse(p, count))
+        .unwrap_or_else(|| vec![None; count]);
+
     let mut points = Vec::with_capacity(count);
     for slot in 0..count {
         let id = ids[slot]
@@ -272,7 +342,7 @@ pub(crate) fn load(segments: &[Segment]) -> Result<LoadedCollection> {
             .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
             .collect();
         debug_assert_eq!(vector.len(), dim);
-        points.push((id, vector, payloads[slot].take()));
+        points.push((id, vector, payloads[slot].take(), sparses[slot].take()));
     }
     Ok(LoadedCollection {
         options,
@@ -282,8 +352,14 @@ pub(crate) fn load(segments: &[Segment]) -> Result<LoadedCollection> {
     })
 }
 
-/// `load_based`'s product: collection options plus slot → id / payload tables.
-pub(crate) type BasedMeta = (CollectionOptions, Vec<Option<String>>, Vec<Option<Value>>);
+/// `load_based`'s product: collection options plus slot → id / payload /
+/// sparse tables (vectors stay in the file map).
+pub(crate) type BasedMeta = (
+    CollectionOptions,
+    Vec<Option<String>>,
+    Vec<Option<Value>>,
+    Vec<Option<SparseVector>>,
+);
 
 /// Reconstruct a collection's config and slot metadata **without** its vectors
 /// — the mmap-tier load (ADR-0004). `segments` carries every live segment
@@ -298,11 +374,13 @@ pub(crate) fn load_based(segments: &[Segment], slot_count: usize) -> Result<Base
         entries: Vec::new(),
     };
     let mut declared: Vec<(String, PayloadIndexKind)> = Vec::new();
+    let mut sparse_postings: Option<SparsePostings> = None;
     for seg in segments {
         match seg.seg_type {
             SegmentType::Config => stored = Some(StoredConfig::decode(&seg.body)?),
             SegmentType::Iddir => iddir = Some(IdDir::decode(&seg.body)?),
             SegmentType::Payload => payload = PayloadBlock::decode(&seg.body)?,
+            SegmentType::Sparse => sparse_postings = Some(SparsePostings::decode(&seg.body)?),
             SegmentType::Pidx => {
                 let pidx = PayloadIndex::decode(&seg.body)?;
                 declared.push((pidx.key, config::pidx_kind_from(pidx.kind)?));
@@ -331,7 +409,11 @@ pub(crate) fn load_based(segments: &[Segment], slot_count: usize) -> Result<Base
             }
         }
     }
-    Ok((options, ids, payloads))
+    let sparses = sparse_postings
+        .as_ref()
+        .map(|p| postings_to_sparse(p, slot_count))
+        .unwrap_or_else(|| vec![None; slot_count]);
+    Ok((options, ids, payloads, sparses))
 }
 
 #[cfg(test)]
@@ -345,22 +427,38 @@ mod tests {
 
     #[test]
     fn seal_load_round_trip() {
+        let sparse = SparseVector {
+            indices: vec![2, 7],
+            values: vec![0.5, 1.5],
+        };
         let live: Vec<LivePoint> = vec![
             (
                 "a".into(),
                 vec![1.0, 2.0, 3.0],
                 Some(serde_json::json!({"k": 1})),
+                Some(sparse.clone()),
             ),
-            ("b".into(), vec![4.0, 5.0, 6.0], None),
+            ("b".into(), vec![4.0, 5.0, 6.0], None, None),
             (
                 "c".into(),
                 vec![7.0, 8.0, 9.0],
                 Some(serde_json::json!("x")),
+                Some(SparseVector {
+                    indices: vec![7],
+                    values: vec![2.0],
+                }),
             ),
         ];
         let sealed = seal(0, "docs".into(), vec![], &opts(), &[], None, &live, 1000)
             .unwrap_or_else(|e| panic!("{e}"));
         assert_eq!(sealed.vector_count, 3);
+        // A SPARSE segment is emitted for the two sparse-carrying slots.
+        assert!(
+            sealed
+                .segments
+                .iter()
+                .any(|s| s.seg_type == SegmentType::Sparse)
+        );
         let loaded = load(&sealed.segments).unwrap_or_else(|e| panic!("{e}"));
         assert_eq!(loaded.options.dimension, 3);
         assert_eq!(loaded.points, live);

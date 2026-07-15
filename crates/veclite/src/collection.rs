@@ -383,6 +383,27 @@ fn embed_nonzero(embedder: &dyn Embedder, text: &str, dim: usize) -> Result<Vec<
     Ok(placeholder)
 }
 
+/// The sparse lane of a dense embedding: its non-zero `(index, weight)` pairs,
+/// in index order (SPEC-007 HYB-002a). `None` when the embedding is all-zero
+/// (nothing to score). Indices are ascending by construction, satisfying the
+/// `SparseVector` sorted-unique invariant (HYB-001).
+fn sparse_from_dense(vector: &[f32]) -> Option<SparseVector> {
+    let mut indices = Vec::new();
+    let mut values = Vec::new();
+    for (i, &x) in vector.iter().enumerate() {
+        if x != 0.0 {
+            #[allow(clippy::cast_possible_truncation)] // dimension <= 65_536
+            indices.push(i as u32);
+            values.push(x);
+        }
+    }
+    if indices.is_empty() {
+        None
+    } else {
+        Some(SparseVector { indices, values })
+    }
+}
+
 /// Handle to a collection. Cheap to clone; `Send + Sync` (CORE-050).
 #[derive(Clone)]
 pub struct Collection {
@@ -689,6 +710,11 @@ impl Collection {
                 }
                 emb.add_document(&text);
                 let vector = embed_nonzero(&**emb, &text, self.inner.config.dimension)?;
+                // Auto-embed collections maintain the sparse lane from `_text`
+                // (SPEC-007 HYB-002a): the lane is the non-zero components of
+                // the provider embedding, so `hybrid_query().text(q)` has a
+                // sparse side to score against.
+                let sparse = sparse_from_dense(&vector);
                 let mut payload = user_payload.unwrap_or_else(|| serde_json::json!({}));
                 if let Some(obj) = payload.as_object_mut() {
                     obj.insert("_text".to_owned(), serde_json::Value::String(text));
@@ -696,7 +722,7 @@ impl Collection {
                 points.push(Point {
                     id,
                     vector,
-                    sparse: None,
+                    sparse,
                     payload: Some(payload),
                 });
             }
@@ -704,6 +730,21 @@ impl Collection {
         self.upsert_batch_inner(points, true)?;
         self.inner.text_dirty.store(true, Ordering::Release);
         Ok(())
+    }
+
+    /// Resolve both hybrid lanes from one query string on an auto-embed
+    /// collection (SPEC-007 HYB-011): the dense lane is the provider embedding,
+    /// the sparse lane its non-zero components — the same derivation the stored
+    /// documents use (HYB-002a), so the lanes are comparable. Refits a stale
+    /// vocabulary first. `InvalidArgument`/`UnsupportedProvider` on a BYO or
+    /// unavailable-provider collection.
+    pub(crate) fn embed_for_hybrid(&self, query: &str) -> Result<(Vec<f32>, Option<SparseVector>)> {
+        self.guard()?;
+        let embedder = self.text_embedder()?;
+        self.refit_if_dirty()?;
+        let dense = embedder.lock().embed(query)?;
+        let sparse = sparse_from_dense(&dense);
+        Ok((dense, sparse))
     }
 
     /// Embed `query` with the collection's provider and search (SPEC-005 §4).
@@ -767,10 +808,12 @@ impl Collection {
             emb.fit(&corpus)?;
             let mut out = Vec::with_capacity(live.len());
             for (id, text, payload) in &live {
+                let vector = embed_nonzero(&**emb, text, self.inner.config.dimension)?;
+                let sparse = sparse_from_dense(&vector); // re-derive the lane (HYB-002a)
                 out.push(Point {
                     id: id.clone(),
-                    vector: embed_nonzero(&**emb, text, self.inner.config.dimension)?,
-                    sparse: None,
+                    vector,
+                    sparse,
                     payload: Some(payload.clone()),
                 });
             }
@@ -1406,6 +1449,7 @@ impl Collection {
                     data.ids[slot].clone(),
                     data.copy_vector(slot, dim),
                     data.payloads[slot].clone(),
+                    data.sparses[slot].clone(),
                 ));
             }
         }
@@ -1505,7 +1549,7 @@ impl Collection {
         data.id_to_slot = HashMap::with_capacity(n);
         data.tombstones = HashSet::new();
         data.payloads = base.payloads;
-        data.sparses = vec![None; n];
+        data.sparses = base.sparses;
         data.payload_indexes = PayloadIndexes::new(&self.inner.config.payload_indexes);
         for (slot, id) in base.ids.into_iter().enumerate() {
             match id {

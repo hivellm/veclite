@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Implemented (phase3c): SparseVector validation, sparse dot-product search, the hybrid_query() builder, deterministic RRF fusion (formula + tie-breaking, HYB-020/021), single-lane degeneration, and filtered hybrid. SPARSE segment persistence (HYB-030/031), the auto-embed `.text()` lane (HYB-011), and the server conformance corpus (HYB-022) are tracked in `phase3g_sparse-persistence-conformance`. |
+| **Status** | Implemented (phase3c + phase3g): SparseVector validation, sparse dot-product search, the hybrid_query() builder, deterministic RRF fusion (HYB-020/021), single-lane degeneration, filtered hybrid. phase3g added: SPARSE-segment persistence — the BYO (and auto-maintained) sparse lane survives checkpoint+reopen and kill-9 recovery, vacuum drops tombstoned postings (HYB-030/031); the auto-embed `.text()` lane fills both lanes from one string, with the sparse lane maintained as the non-zero embedding components (HYB-011/002a); and a committed RRF conformance corpus pinning the fused rankings (HYB-022). NOTE: VecLite's fusion is **pure rank-based RRF** per HYB-020; the server ships two divergent hybrid functions that each add a raw-score term — pure RRF is the deterministic, corpus-independent form this spec standardizes on. |
 | **Phase / tasks** | Phase 3 · T3.4, T3.7 ([DAG](../DAG.md)) |
 | **PRD requirements** | FR-34 |
 | **Planning source** | [05-embeddings.md §hybrid](../vectorizer-lite/05-embeddings.md), server sources `db/hybrid_search.rs`, `models/sparse_vector.rs` |

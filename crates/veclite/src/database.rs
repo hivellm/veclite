@@ -144,10 +144,10 @@ fn install_collection(
         let points: Vec<Point> = loaded
             .points
             .into_iter()
-            .map(|(id, vector, payload)| Point {
+            .map(|(id, vector, payload, sparse)| Point {
                 id,
                 vector,
-                sparse: None,
+                sparse,
                 payload,
             })
             .collect();

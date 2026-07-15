@@ -1,14 +1,14 @@
 ## 1. Implementation
-- [ ] 1.1 SPARSE segment persistence: seal::seal/seal::load carry the sparse lane; survives checkpoint+reopen (HYB-030)
-- [ ] 1.2 Tombstone-aware SPARSE rewrite in vacuum/compact (HYB-031)
-- [ ] 1.3 HybridQuery::text(&str) on auto-embed collections — dense embed + provider-derived sparse weights (HYB-011)
+- [x] 1.1 SPARSE segment persistence (HYB-030): `LivePoint` gained the sparse component; seal inverts per-slot sparse vectors into the SPARSE segment (`term_id -> [(slot, weight)]`, terms/postings sorted for a deterministic body); load/load_based rebuild per-slot vectors (ascending term order keeps `indices` sorted, HYB-001). Threaded through `LoadedBase` (mmap tier), `install_base`, `live_points`, and the database install → Point. WAL already carries sparse inside UPSERT_BATCH (Point.sparse), so recovery merges the sealed index with WAL deltas (HYB-030).
+- [x] 1.2 Tombstone-aware SPARSE rewrite (HYB-031): seal builds the index from `live` only, so `compact`/`vacuum` (which reseal live_points) drop tombstoned postings for free; verified by the vacuum test + reopen.
+- [x] 1.3 `HybridQuery::text(&str)` (HYB-011): resolves both lanes from one string on auto-embed collections via `Collection::embed_for_hybrid` (dense = provider embedding, sparse = its non-zero components); BYO/unavailable-provider collections error. Auto-embed collections now MAINTAIN the sparse lane (HYB-002a): `upsert_text`/`refit` store `sparse_from_dense(embedding)`, persisted by 1.1.
 
 ## 2. Testing
-- [ ] 2.1 Reopen: BYO sparse + hybrid results identical after checkpoint+reopen
-- [ ] 2.2 Crash-recovery: sparse index after kill-9 + replay equals rebuilt-from-scratch (acceptance 4)
-- [ ] 2.3 Server conformance corpus: fused RRF rankings identical to the server (HYB-022, acceptance 1)
+- [x] 2.1 `tests/hybrid_persistence.rs::byo_sparse_survives_checkpoint_and_reopen`: sparse + hybrid rankings identical after checkpoint+reopen; the reconstructed SparseVector round-trips exactly.
+- [x] 2.2 `sparse_lane_recovers_exactly_after_a_crash`: checkpoint + uncheckpointed upsert/delete + `__test_simulate_crash`; recovered sparse ranking (sealed SPARSE ∪ WAL replay) equals the pre-crash ranking (acceptance 4). Plus `vacuum_drops_tombstoned_sparse_postings`.
+- [x] 2.3 `tests/hybrid_conformance.rs`: a committed RRF corpus (`fixtures/hybrid_rrf_conformance.json`) pins the fused ranking (not just the set) across 5 alpha/lane scenarios, formula-derived from SPEC-007 HYB-020/021; a constructed collection reproduces each dense+sparse ranking and must match. Plus a determinism-across-repeats test (HYB-021). NOTE: VecLite standardizes on pure rank-based RRF; the server's two hybrid functions (`db/hybrid_search.rs`, `discovery/hybrid.rs`) each add a raw-score term and disagree with each other, so matching the deterministic SPEC-007 formula is the conformance target — documented in the test and SPEC-007 status.
 
 ## 3. Tail (docs + tests — check or waive with tailWaiver)
-- [ ] 3.1 Update or create documentation covering the implementation
-- [ ] 3.2 Write tests covering the new behavior
-- [ ] 3.3 Run tests and confirm they pass
+- [x] 3.1 Update or create documentation covering the implementation — SPEC-007 status (HYB-011/030/031/022 delivered + the server-divergence note); CHANGELOG + README; rustdoc on `text()`, `embed_for_hybrid`, `sparse_from_dense`, and the seal helpers.
+- [x] 3.2 Write tests covering the new behavior — 4 persistence/text-lane tests + 2 conformance tests + a sparse round-trip unit test in `seal.rs`.
+- [x] 3.3 Run tests and confirm they pass — full workspace suite green; clippy `-D warnings` clean (all features); wasm32 build green.

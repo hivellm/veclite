@@ -9,6 +9,20 @@ Versions 0.x are pre-release: the public API may change between minors until 1.0
 ## [Unreleased]
 
 ### Added
+- Sparse-lane persistence + auto-embed hybrid + RRF conformance (task `phase3g`,
+  SPEC-007): the hybrid sparse lane is now sealed as a SPARSE segment
+  (`term_id -> [(slot, weight)]` inverted index), so a BYO sparse lane survives
+  checkpoint+reopen and kill-9 recovery (sealed index merged with WAL deltas),
+  and vacuum drops tombstoned postings (HYB-030/031). `LivePoint` carries the
+  sparse component; load/load_based rebuild per-slot vectors from the segment
+  (ascending term order keeps `indices` sorted). `HybridQuery::text(q)` fills
+  BOTH lanes from one string on auto-embed collections (HYB-011) — the dense
+  lane is the provider embedding, the sparse lane its non-zero components, which
+  auto-embed collections now maintain and persist (HYB-002a). A committed RRF
+  conformance corpus pins the fused rankings across alpha/lane scenarios
+  (HYB-022). Note: VecLite standardizes on pure rank-based RRF; the server's two
+  hybrid functions each add a raw-score term and disagree, so the corpus pins
+  the deterministic SPEC-007 formula.
 - Embedding lifecycle + custom providers (task `phase3f`, SPEC-005): the
   vocabulary now updates **incrementally** (`Embedder::add_document`,
   EMB-030) — `upsert_text` is O(doc) instead of triggering a full refit on

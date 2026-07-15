@@ -22,6 +22,9 @@ pub struct HybridQuery<'a> {
     collection: &'a Collection,
     dense: Option<&'a [f32]>,
     sparse: Option<&'a SparseVector>,
+    /// One-string lane source for auto-embed collections (HYB-011); when set it
+    /// supplies BOTH lanes at `run`, overriding explicit `dense`/`sparse`.
+    text: Option<&'a str>,
     alpha: f32,
     rrf_k: f32,
     limit: usize,
@@ -36,6 +39,7 @@ impl<'a> HybridQuery<'a> {
             collection,
             dense: None,
             sparse: None,
+            text: None,
             alpha: DEFAULT_ALPHA,
             rrf_k: DEFAULT_RRF_K,
             limit: DEFAULT_LIMIT,
@@ -43,6 +47,17 @@ impl<'a> HybridQuery<'a> {
             with_vector: false,
             filter: None,
         }
+    }
+
+    /// Fill **both** lanes from one query string (SPEC-007 HYB-011): valid only
+    /// on auto-embed collections, where the dense lane is the provider
+    /// embedding and the sparse lane its non-zero terms. Overrides any explicit
+    /// [`dense`](Self::dense)/[`sparse`](Self::sparse). Fails at `run` with
+    /// `InvalidArgument` on a BYO collection.
+    #[must_use]
+    pub fn text(mut self, query: &'a str) -> Self {
+        self.text = Some(query);
+        self
     }
 
     /// Provide the dense lane query vector.
@@ -105,6 +120,21 @@ impl<'a> HybridQuery<'a> {
     /// Execute the hybrid query. Fails with `InvalidArgument` when no lane is
     /// provided (HYB-010).
     pub fn run(self) -> Result<Vec<Hit>> {
+        // `.text(q)` resolves both lanes from the provider (HYB-011); the owned
+        // dense/sparse live for this call and are passed by reference.
+        if let Some(query) = self.text {
+            let (dense, sparse) = self.collection.embed_for_hybrid(query)?;
+            return self.collection.execute_hybrid(
+                Some(&dense),
+                sparse.as_ref(),
+                self.alpha.clamp(0.0, 1.0),
+                self.rrf_k,
+                self.limit,
+                self.with_payload,
+                self.with_vector,
+                self.filter.as_ref(),
+            );
+        }
         self.collection.execute_hybrid(
             self.dense,
             self.sparse,

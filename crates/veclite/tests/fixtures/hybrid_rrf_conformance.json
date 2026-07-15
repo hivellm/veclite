@@ -1,0 +1,113 @@
+[
+  {
+    "name": "balanced",
+    "alpha": 0.5,
+    "dense": [
+      "a",
+      "b",
+      "c",
+      "d",
+      "e",
+      "f"
+    ],
+    "sparse": [
+      "c",
+      "d",
+      "e",
+      "f"
+    ],
+    "rrf_k": 60.0,
+    "expected": [
+      "c",
+      "d",
+      "e",
+      "f",
+      "a",
+      "b"
+    ]
+  },
+  {
+    "name": "dense_heavy",
+    "alpha": 0.9,
+    "dense": [
+      "x",
+      "y",
+      "z"
+    ],
+    "sparse": [
+      "z",
+      "y",
+      "x"
+    ],
+    "rrf_k": 60.0,
+    "expected": [
+      "x",
+      "y",
+      "z"
+    ]
+  },
+  {
+    "name": "sparse_heavy",
+    "alpha": 0.1,
+    "dense": [
+      "x",
+      "y",
+      "z"
+    ],
+    "sparse": [
+      "z",
+      "y",
+      "x"
+    ],
+    "rrf_k": 60.0,
+    "expected": [
+      "z",
+      "y",
+      "x"
+    ]
+  },
+  {
+    "name": "sparse_subset",
+    "alpha": 0.5,
+    "dense": [
+      "a",
+      "b",
+      "c",
+      "d"
+    ],
+    "sparse": [
+      "d",
+      "c"
+    ],
+    "rrf_k": 60.0,
+    "expected": [
+      "d",
+      "c",
+      "a",
+      "b"
+    ]
+  },
+  {
+    "name": "overlap_reorder",
+    "alpha": 0.5,
+    "dense": [
+      "p",
+      "q",
+      "r",
+      "s",
+      "t"
+    ],
+    "sparse": [
+      "t",
+      "p"
+    ],
+    "rrf_k": 60.0,
+    "expected": [
+      "p",
+      "t",
+      "q",
+      "r",
+      "s"
+    ]
+  }
+]
