@@ -1,0 +1,18 @@
+# phase3f vocab lifecycle: replay-convergence scheme, checkpoint-vs-WAL folding split, deferred embedder slots; parity fixtures from unmodified server sources
+**Source**: manual
+**Date**: 2026-07-15
+**Related Task**: phase3f_embedding-svd-onnx-vocab-persistence
+**Tags**: phase3f, embedding, vocab, wal, register-embedder, svd, parity, veclite
+phase3f (incremental vocab + VOCAB persistence + register_embedder + svd + parity corpus) findings:
+
+1. EXACT crash replay without per-upsert vocab WAL traffic: memory state = checkpoint VOCAB + add_document per subsequent text upsert. Replay imports the sealed VOCAB then folds each WAL-replayed text doc — identical sequence, identical state. refit journals a FULL VOCAB_UPDATE snapshot (op 7) AFTER its re-upsert batches: replayed re-upserts fold first, the import then OVERWRITES to the exact fitted state — always convergent regardless of interleaving.
+
+2. THE BUG THIS DESIGN HIDES: checkpoint-LOADED points must NOT be folded (their contribution is already inside the sealed VOCAB). install_collection originally reused replay_upsert (which folds) → double-counted DF on every reopen → scores drifted. Split the paths: install_points (open, no folding) vs replay_upsert (WAL, folds). Symptom was subtle: results identical, SCORES off — assert scores, not just ids, in reopen determinism tests.
+
+3. Deferred embedder slots (EMB-011/023): EmbedderSlot::{None, Ready(Arc<Mutex<Box<dyn Embedder>>>), Missing(name)} behind RwLock so register_embedder can bind post-open. Missing keeps pending_vocab (imported state stashed, re-sealed at checkpoints so it survives while the provider is absent, imported on bind). Create stays fail-fast (EMB-021); reopen resolves leniently (built-in → registered → Missing). One shared Arc per registered name serves all collections referencing it (matches PY-013's single-object semantics).
+
+4. Parity corpus generation trick: compile the server's UNMODIFIED provider sources (copied verbatim from e:/HiveLLM/Vectorizer) in a scratchpad crate with ~40 lines of shims (trait + error + metrics stub), dump JSON fixtures, vendor the JSON. Proves 1e-5 parity against real server code in seconds — no need to build the whole vectorizer crate or run a server. All 4 providers matched first try.
+
+5. HNSW flake class killed: hnsw_rs level assignment is RANDOM per instance → tiny graphs intermittently miss neighbors (a test would pass 5×, fail the 6th). Fix at the ROOT: SMALL_EXACT_MAX=256 — live sets ≤256 always brute-force (faster there anyway, deterministic). Also: anndists DistL2 returns sqrt (matches our euclidean_distance) — when asserting scores in tests, remember the sqrt and use RELATIVE tolerance (f32 at magnitude ~700 fails 1e-3 absolute).
+
+6. svd vendoring: server used ndarray::Array2 purely as a container — replaced with Vec<Vec<f32>> (identical math, zero deps), feature `svd` with no dependency cost. DefaultHasher has FIXED keys → corpus-seeded projection is deterministic across processes.
