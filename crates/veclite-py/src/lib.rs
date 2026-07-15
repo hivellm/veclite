@@ -1,0 +1,450 @@
+//! Python binding for VecLite (SPEC-009), via PyO3 directly on the Rust core.
+//! NumPy `float32` buffers are borrowed without an intermediate Python copy on
+//! search and batch upsert (PY-020..022), the GIL is released around every core
+//! call (PY-030), and every `VecLiteError` variant surfaces as a dedicated
+//! exception subclass carrying the identical Rust message (PY-040).
+
+use numpy::{PyArray1, PyArray2, PyArrayMethods};
+use pyo3::create_exception;
+use pyo3::exceptions::PyException;
+use pyo3::prelude::*;
+use pyo3::types::PyDict;
+use pythonize::{depythonize, pythonize};
+
+use veclite::{CollectionOptions, Filter, Hit, Metric, Point, Quantization, SparseVector};
+
+// ── exception hierarchy (PY-040) ─────────────────────────────────────────────
+create_exception!(veclite, VecLiteError, PyException, "Base VecLite error.");
+create_exception!(veclite, CollectionNotFound, VecLiteError);
+create_exception!(veclite, VectorNotFound, VecLiteError);
+create_exception!(veclite, AlreadyExists, VecLiteError);
+create_exception!(veclite, DimensionMismatch, VecLiteError);
+create_exception!(veclite, Locked, VecLiteError);
+create_exception!(veclite, WalPending, VecLiteError);
+create_exception!(veclite, ReadOnly, VecLiteError);
+create_exception!(veclite, Closed, VecLiteError);
+create_exception!(veclite, Corrupt, VecLiteError);
+create_exception!(veclite, UnsupportedFormat, VecLiteError);
+create_exception!(veclite, UnsupportedProvider, VecLiteError);
+create_exception!(veclite, InvalidArgument, VecLiteError);
+create_exception!(veclite, IoError, VecLiteError);
+
+/// Map a core error to its dedicated Python exception with the identical message.
+fn to_pyerr(e: veclite::VecLiteError) -> PyErr {
+    let msg = e.to_string();
+    match e {
+        veclite::VecLiteError::CollectionNotFound(_) => CollectionNotFound::new_err(msg),
+        veclite::VecLiteError::VectorNotFound(_) => VectorNotFound::new_err(msg),
+        veclite::VecLiteError::AlreadyExists(_) => AlreadyExists::new_err(msg),
+        veclite::VecLiteError::DimensionMismatch { .. } => DimensionMismatch::new_err(msg),
+        veclite::VecLiteError::Locked => Locked::new_err(msg),
+        veclite::VecLiteError::WalPending => WalPending::new_err(msg),
+        veclite::VecLiteError::ReadOnly => ReadOnly::new_err(msg),
+        veclite::VecLiteError::Closed => Closed::new_err(msg),
+        veclite::VecLiteError::Corrupt(_) => Corrupt::new_err(msg),
+        veclite::VecLiteError::UnsupportedFormatVersion { .. } => UnsupportedFormat::new_err(msg),
+        veclite::VecLiteError::UnsupportedProvider { .. } => UnsupportedProvider::new_err(msg),
+        veclite::VecLiteError::InvalidArgument(_) => InvalidArgument::new_err(msg),
+        veclite::VecLiteError::Io(_) => IoError::new_err(msg),
+        // `VecLiteError` is #[non_exhaustive]; a future variant maps to the base.
+        _ => VecLiteError::new_err(msg),
+    }
+}
+
+fn metric_from_str(s: &str) -> PyResult<Metric> {
+    match s {
+        "cosine" => Ok(Metric::Cosine),
+        "euclidean" | "l2" => Ok(Metric::Euclidean),
+        "dot" | "dotproduct" | "dot_product" => Ok(Metric::DotProduct),
+        other => Err(InvalidArgument::new_err(format!("unknown metric '{other}'"))),
+    }
+}
+
+/// Extract a query/upsert vector: a NumPy `float32` array (borrowed) or any
+/// Python sequence of floats (copied).
+fn extract_vector(obj: &Bound<'_, PyAny>) -> PyResult<Vec<f32>> {
+    if let Ok(arr) = obj.downcast::<PyArray1<f32>>() {
+        return Ok(arr.readonly().as_slice()?.to_vec());
+    }
+    obj.extract::<Vec<f32>>()
+}
+
+/// Convert a JSON payload to a Python object (or `None`).
+fn payload_to_py(py: Python<'_>, payload: Option<serde_json::Value>) -> PyResult<PyObject> {
+    match payload {
+        Some(v) => Ok(pythonize(py, &v)?.unbind()),
+        None => Ok(py.None()),
+    }
+}
+
+/// Convert a Python payload object (dict/`None`) to a JSON value.
+fn payload_from_py(obj: Option<&Bound<'_, PyAny>>) -> PyResult<Option<serde_json::Value>> {
+    match obj {
+        None => Ok(None),
+        Some(o) if o.is_none() => Ok(None),
+        Some(o) => Ok(Some(depythonize(o)?)),
+    }
+}
+
+fn hit_to_py(py: Python<'_>, h: Hit) -> PyResult<PyObject> {
+    let d = PyDict::new(py);
+    d.set_item("id", h.id)?;
+    d.set_item("score", h.score)?;
+    d.set_item("payload", payload_to_py(py, h.payload)?)?;
+    if let Some(v) = h.vector {
+        d.set_item("vector", v)?;
+    }
+    Ok(d.into())
+}
+
+fn hits_to_py(py: Python<'_>, hits: Vec<Hit>) -> PyResult<Vec<PyObject>> {
+    hits.into_iter().map(|h| hit_to_py(py, h)).collect()
+}
+
+// ── Collection ───────────────────────────────────────────────────────────────
+/// A handle to a collection (SPEC-009).
+#[pyclass]
+struct Collection {
+    inner: veclite::Collection,
+}
+
+#[pymethods]
+impl Collection {
+    /// Insert-or-replace one point with an optional dict payload.
+    #[pyo3(signature = (id, vector, payload=None))]
+    fn upsert(
+        &self,
+        py: Python<'_>,
+        id: &str,
+        vector: &Bound<'_, PyAny>,
+        payload: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<()> {
+        let vec = extract_vector(vector)?;
+        let payload = payload_from_py(payload)?;
+        let mut point = Point::new(id, vec);
+        if let Some(p) = payload {
+            point = point.payload(p);
+        }
+        py.allow_threads(|| self.inner.upsert(point)).map_err(to_pyerr)
+    }
+
+    /// Batch upsert from a `(n, dim)` `float32` NumPy array (or a list of lists),
+    /// borrowing the buffer without a per-row Python copy (PY-020).
+    #[pyo3(signature = (ids, vectors, payloads=None))]
+    fn upsert_batch(
+        &self,
+        py: Python<'_>,
+        ids: Vec<String>,
+        vectors: &Bound<'_, PyAny>,
+        payloads: Option<Vec<Bound<'_, PyAny>>>,
+    ) -> PyResult<()> {
+        let rows: Vec<Vec<f32>> = if let Ok(arr) = vectors.downcast::<PyArray2<f32>>() {
+            let ro = arr.readonly();
+            let view = ro.as_array();
+            if view.nrows() != ids.len() {
+                return Err(InvalidArgument::new_err(format!(
+                    "{} ids but {} vector rows",
+                    ids.len(),
+                    view.nrows()
+                )));
+            }
+            view.rows().into_iter().map(|r| r.to_vec()).collect()
+        } else {
+            vectors.extract()?
+        };
+        if rows.len() != ids.len() {
+            return Err(InvalidArgument::new_err("ids and vectors length mismatch"));
+        }
+        let payloads = match payloads {
+            Some(ps) => {
+                if ps.len() != ids.len() {
+                    return Err(InvalidArgument::new_err("ids and payloads length mismatch"));
+                }
+                ps.iter().map(|p| payload_from_py(Some(p))).collect::<PyResult<Vec<_>>>()?
+            }
+            None => vec![None; ids.len()],
+        };
+        let points: Vec<Point> = ids
+            .into_iter()
+            .zip(rows)
+            .zip(payloads)
+            .map(|((id, vec), payload)| {
+                let mut p = Point::new(id, vec);
+                if let Some(pl) = payload {
+                    p = p.payload(pl);
+                }
+                p
+            })
+            .collect();
+        py.allow_threads(|| self.inner.upsert_batch(points))
+            .map_err(to_pyerr)
+    }
+
+    /// Insert-or-replace one text document (auto-embed collections).
+    #[pyo3(signature = (id, text, payload=None))]
+    fn upsert_text(
+        &self,
+        py: Python<'_>,
+        id: &str,
+        text: &str,
+        payload: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<()> {
+        match payload_from_py(payload)? {
+            Some(p) => py.allow_threads(|| self.inner.upsert_text_with(id, text, p)),
+            None => py.allow_threads(|| self.inner.upsert_text(id, text)),
+        }
+        .map_err(to_pyerr)
+    }
+
+    /// Fetch one point as a dict, or `None` if absent.
+    fn get(&self, py: Python<'_>, id: &str) -> PyResult<Option<PyObject>> {
+        let point = py.allow_threads(|| self.inner.get(id)).map_err(to_pyerr)?;
+        match point {
+            None => Ok(None),
+            Some(p) => {
+                let d = PyDict::new(py);
+                d.set_item("id", p.id)?;
+                d.set_item("vector", p.vector)?;
+                d.set_item("payload", payload_to_py(py, p.payload)?)?;
+                Ok(Some(d.into()))
+            }
+        }
+    }
+
+    /// Delete one id; returns whether it existed.
+    fn delete(&self, py: Python<'_>, id: &str) -> PyResult<bool> {
+        py.allow_threads(|| self.inner.delete(id)).map_err(to_pyerr)
+    }
+
+    /// Number of live vectors.
+    fn __len__(&self) -> usize {
+        self.inner.len()
+    }
+
+    /// k-NN search. `filter` is a Qdrant-style dict (SPEC-006).
+    #[pyo3(signature = (vector, limit=10, ef_search=None, with_payload=true, with_vector=false, filter=None))]
+    #[allow(clippy::too_many_arguments)]
+    fn search(
+        &self,
+        py: Python<'_>,
+        vector: &Bound<'_, PyAny>,
+        limit: usize,
+        ef_search: Option<usize>,
+        with_payload: bool,
+        with_vector: bool,
+        filter: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Vec<PyObject>> {
+        let filter = match filter {
+            Some(f) if !f.is_none() => Some(Filter::from_json(&depythonize(f)?).map_err(to_pyerr)?),
+            _ => None,
+        };
+        // Zero-copy borrow for a float32 NumPy array; copy for a list.
+        let hits = if let Ok(arr) = vector.downcast::<PyArray1<f32>>() {
+            let ro = arr.readonly();
+            let slice = ro.as_slice()?;
+            py.allow_threads(|| run_query(&self.inner, slice, limit, ef_search, with_payload, with_vector, filter))
+        } else {
+            let v = vector.extract::<Vec<f32>>()?;
+            py.allow_threads(|| run_query(&self.inner, &v, limit, ef_search, with_payload, with_vector, filter))
+        }
+        .map_err(to_pyerr)?;
+        hits_to_py(py, hits)
+    }
+
+    /// Text search (auto-embed collections).
+    #[pyo3(signature = (query, limit=10))]
+    fn search_text(&self, py: Python<'_>, query: &str, limit: usize) -> PyResult<Vec<PyObject>> {
+        let hits = py
+            .allow_threads(|| self.inner.search_text(query, limit))
+            .map_err(to_pyerr)?;
+        hits_to_py(py, hits)
+    }
+
+    /// Hybrid dense+sparse search. `sparse` is `{indices, values}` (SPEC-007).
+    #[pyo3(signature = (vector, sparse, limit=10, alpha=0.5, rrf_k=60.0))]
+    fn hybrid_search(
+        &self,
+        py: Python<'_>,
+        vector: &Bound<'_, PyAny>,
+        sparse: &Bound<'_, PyAny>,
+        limit: usize,
+        alpha: f32,
+        rrf_k: f32,
+    ) -> PyResult<Vec<PyObject>> {
+        let dense = extract_vector(vector)?;
+        let sv: SparseVector = depythonize(sparse)?;
+        let hits = py
+            .allow_threads(|| {
+                self.inner
+                    .hybrid_query()
+                    .dense(&dense)
+                    .sparse(&sv)
+                    .limit(limit)
+                    .alpha(alpha)
+                    .rrf_k(rrf_k)
+                    .run()
+            })
+            .map_err(to_pyerr)?;
+        hits_to_py(py, hits)
+    }
+
+    /// Force a full recompute of an auto-embed collection's vocabulary.
+    fn refit(&self, py: Python<'_>) -> PyResult<()> {
+        py.allow_threads(|| self.inner.refit()).map_err(to_pyerr)
+    }
+
+    /// `{name, dimension, len, tombstones, auto_embed}`.
+    fn stats(&self, py: Python<'_>) -> PyResult<PyObject> {
+        let s = self.inner.stats();
+        let d = PyDict::new(py);
+        d.set_item("name", s.name)?;
+        d.set_item("dimension", s.dimension)?;
+        d.set_item("len", s.len)?;
+        d.set_item("tombstones", s.tombstones)?;
+        d.set_item("auto_embed", s.auto_embed)?;
+        Ok(d.into())
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_query(
+    coll: &veclite::Collection,
+    vector: &[f32],
+    limit: usize,
+    ef_search: Option<usize>,
+    with_payload: bool,
+    with_vector: bool,
+    filter: Option<Filter>,
+) -> Result<Vec<Hit>, veclite::VecLiteError> {
+    let mut qb = coll
+        .query(vector)
+        .limit(limit)
+        .with_payload(with_payload)
+        .with_vector(with_vector);
+    if let Some(ef) = ef_search {
+        qb = qb.ef_search(ef);
+    }
+    if let Some(f) = filter {
+        qb = qb.filter(f);
+    }
+    qb.run()
+}
+
+// ── Database ─────────────────────────────────────────────────────────────────
+/// A VecLite database (SPEC-009).
+#[pyclass]
+struct Database {
+    inner: veclite::VecLite,
+}
+
+#[pymethods]
+impl Database {
+    /// Open (or create) a durable single-file database.
+    #[staticmethod]
+    fn open(py: Python<'_>, path: &str) -> PyResult<Self> {
+        let inner = py
+            .allow_threads(|| veclite::VecLite::open(path))
+            .map_err(to_pyerr)?;
+        Ok(Database { inner })
+    }
+
+    /// Open an ephemeral in-memory database.
+    #[staticmethod]
+    fn memory() -> Self {
+        Database {
+            inner: veclite::VecLite::memory(),
+        }
+    }
+
+    /// Create a collection.
+    #[pyo3(signature = (name, dimension, metric="cosine", quantization_bits=None, embedding_provider=None))]
+    fn create_collection(
+        &self,
+        py: Python<'_>,
+        name: &str,
+        dimension: usize,
+        metric: &str,
+        quantization_bits: Option<u8>,
+        embedding_provider: Option<&str>,
+    ) -> PyResult<Collection> {
+        let mut options = match embedding_provider {
+            Some(p) => CollectionOptions::auto_embed(p, dimension),
+            None => CollectionOptions::new(dimension, metric_from_str(metric)?),
+        };
+        if let Some(bits) = quantization_bits {
+            options = options.quantization(if bits == 0 {
+                Quantization::None
+            } else {
+                Quantization::Scalar { bits }
+            });
+        }
+        let inner = py
+            .allow_threads(|| self.inner.create_collection(name, options))
+            .map_err(to_pyerr)?;
+        Ok(Collection { inner })
+    }
+
+    /// Get a collection by name or alias.
+    fn collection(&self, name: &str) -> PyResult<Collection> {
+        let inner = self.inner.collection(name).map_err(to_pyerr)?;
+        Ok(Collection { inner })
+    }
+
+    /// Drop a collection.
+    fn delete_collection(&self, py: Python<'_>, name: &str) -> PyResult<()> {
+        py.allow_threads(|| self.inner.delete_collection(name))
+            .map_err(to_pyerr)
+    }
+
+    /// Sorted collection names.
+    fn list_collections(&self) -> Vec<String> {
+        self.inner.list_collections()
+    }
+
+    /// Create an alias resolving to `target`.
+    fn create_alias(&self, alias: &str, target: &str) -> PyResult<()> {
+        self.inner.create_alias(alias, target).map_err(to_pyerr)
+    }
+
+    /// Delete an alias.
+    fn delete_alias(&self, alias: &str) -> PyResult<()> {
+        self.inner.delete_alias(alias).map_err(to_pyerr)
+    }
+
+    /// `(alias, target)` pairs.
+    fn aliases(&self) -> Vec<(String, String)> {
+        self.inner.aliases()
+    }
+
+    /// Force a checkpoint.
+    fn checkpoint(&self, py: Python<'_>) -> PyResult<()> {
+        py.allow_threads(|| self.inner.checkpoint()).map_err(to_pyerr)
+    }
+}
+
+/// The `veclite` extension module.
+#[pymodule]
+#[pyo3(name = "veclite")]
+fn veclite_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add("__version__", env!("CARGO_PKG_VERSION"))?;
+    m.add("format_version", 1u32)?;
+    m.add_class::<Database>()?;
+    m.add_class::<Collection>()?;
+
+    let py = m.py();
+    m.add("VecLiteError", py.get_type::<VecLiteError>())?;
+    m.add("CollectionNotFound", py.get_type::<CollectionNotFound>())?;
+    m.add("VectorNotFound", py.get_type::<VectorNotFound>())?;
+    m.add("AlreadyExists", py.get_type::<AlreadyExists>())?;
+    m.add("DimensionMismatch", py.get_type::<DimensionMismatch>())?;
+    m.add("Locked", py.get_type::<Locked>())?;
+    m.add("WalPending", py.get_type::<WalPending>())?;
+    m.add("ReadOnly", py.get_type::<ReadOnly>())?;
+    m.add("Closed", py.get_type::<Closed>())?;
+    m.add("Corrupt", py.get_type::<Corrupt>())?;
+    m.add("UnsupportedFormat", py.get_type::<UnsupportedFormat>())?;
+    m.add("UnsupportedProvider", py.get_type::<UnsupportedProvider>())?;
+    m.add("InvalidArgument", py.get_type::<InvalidArgument>())?;
+    m.add("IoError", py.get_type::<IoError>())?;
+    Ok(())
+}

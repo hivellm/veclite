@@ -1,0 +1,19 @@
+[package]
+name = "veclite-py"
+description = "Python binding for VecLite (SPEC-009)."
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.87"
+license = "Apache-2.0"
+repository = "https://github.com/hivellm/veclite"
+
+[lib]
+name = "veclite"
+crate-type = ["cdylib"]
+
+[dependencies]
+veclite = { path = "../veclite" }
+pyo3 = { version = "0.23", features = ["abi3-py39", "extension-module"] }
+numpy = "0.23"
+pythonize = "0.23"
+serde_json = "1.0"
