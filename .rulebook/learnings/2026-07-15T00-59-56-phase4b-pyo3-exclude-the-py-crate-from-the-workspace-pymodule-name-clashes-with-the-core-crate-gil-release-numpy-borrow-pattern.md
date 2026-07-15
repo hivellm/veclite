@@ -1,0 +1,22 @@
+# phase4b PyO3: exclude the py crate from the workspace; #[pymodule] name clashes with the core crate; GIL release + numpy borrow pattern
+**Source**: manual
+**Date**: 2026-07-15
+**Related Task**: phase4b_python-binding
+**Tags**: phase4b, python, pyo3, maturin, numpy, gil, veclite
+phase4b built the veclite-py PyO3 binding (SPEC-009). Toolchain + design notes:
+
+1. Workspace: a PyO3 extension links libpython, so it must NOT be a normal workspace member — `cargo build/clippy/test --workspace` (the CI jobs) would try to build it and could fail without Python configured. Put it under `[workspace] exclude = ["crates/veclite-py"]`. Excluded crates do NOT inherit workspace fields (version.workspace etc.) or lints — hardcode version/edition/rust-version and it has its own Cargo.lock. crate-type = ["cdylib"], name = "veclite" (the import name). Add a crates/veclite-py/.gitignore with /target (the root .gitignore is anchored and doesn't cover it).
+
+2. #[pymodule] fn name clashes with the core crate. The module init fn must produce PyInit_veclite (Python import name = lib name = "veclite"), but naming the fn `veclite` shadows `use veclite::...` (the core crate) → E0659 ambiguous. Fix: name the fn something else and set `#[pymodule] #[pyo3(name = "veclite")] fn veclite_module(...)`.
+
+3. Building/testing without a system-wide install: `maturin develop` needs a virtualenv (set VIRTUAL_ENV or have .venv). Create a venv in the scratchpad, `pip install numpy pytest`, then `VIRTUAL_ENV=... PATH=$VENV/Scripts:$PATH maturin develop --manifest-path crates/veclite-py/Cargo.toml`, then run pytest with the venv's python. maturin produces an abi3 wheel (cp39-abi3) with features=["pyo3/abi3-py39","extension-module"].
+
+4. GIL release (PY-030): every method takes `py: Python<'_>` and wraps the core call in `py.allow_threads(|| self.inner.<op>(...)).map_err(to_pyerr)`. The core types (VecLite/Collection) are Send+Sync so the closure is Send. Build Python objects (dicts) only AFTER re-acquiring the GIL.
+
+5. NumPy zero-copy (PY-020): for search, `vector.downcast::<PyArray1<f32>>()` then `ro = arr.readonly(); slice = ro.as_slice()?` gives &[f32] into the numpy buffer; pass the slice into allow_threads (the buffer is heap-pinned, not GIL-managed). Fallback: `vector.extract::<Vec<f32>>()` for lists (copies). For upsert_batch, PyArray2 `ro.as_array().rows()` → each `.to_vec()` (one copy into the storage-owned Point, unavoidable) — the win is no intermediate Python-list copy.
+
+6. Payloads/filters cross as Python dicts <-> serde_json::Value via pythonize::{pythonize, depythonize}. SparseVector derives Serialize/Deserialize so it depythonizes from {indices, values} directly.
+
+7. Exceptions (PY-040): create_exception!(veclite, VecLiteError, PyException) for the base + one subclass per variant; to_pyerr(e) matches the variant → the subclass::new_err(e.to_string()) so the message is Rust-identical. VecLiteError is #[non_exhaustive] so the match needs a wildcard → base class. Register each with m.add("Name", py.get_type::<Name>()).
+
+Split: register_embedder (a Rust Embedder shim calling a Python callable), the veclite.aio facade, Python-side scroll, the tracemalloc zero-copy proof + 8-thread throughput test, and the wheel CI matrix → phase4h.

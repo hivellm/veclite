@@ -198,6 +198,20 @@ Versions 0.x are pre-release: the public API may change between minors until 1.0
   tests drive the `extern "C"` functions as a C caller would. The cbindgen golden
   header, the `cargo public-api` freeze snapshot, the remaining functions, and
   the ASan/TSan C tests are tracked in `phase4g`.
+- Python binding (`veclite-py` crate, task `phase4b`, DAG T4.3, SPEC-009). A
+  PyO3 binding on the Rust core, built by maturin as an **abi3 wheel** (one
+  wheel for CPython 3.9+, no Rust toolchain to install — PY-001).
+  `Database`/`Collection` mirror the Rust surface in snake_case; payloads and
+  filters cross as Python dicts. **NumPy zero-copy** (PY-020..022): `search`
+  borrows a C-contiguous `float32` array and `upsert_batch` reads an `(n, dim)`
+  array row-by-row with no intermediate Python-list copy (lists still work). The
+  **GIL is released** around every core call (PY-030). Every `VecLiteError`
+  variant surfaces as a dedicated subclass of `veclite.VecLiteError` with the
+  identical Rust message (PY-040). Covered by 8 pytest tests (quickstart, numpy
+  batch/query, filtered search, exception fidelity, auto-embed text, aliases,
+  hybrid). The crate is excluded from the Rust workspace, so the pure-Rust CI is
+  unaffected; `register_embedder`, `veclite.aio`, and the wheel CI matrix are
+  tracked in `phase4h`.
 
 ### Fixed
 - **Small-collection search recall** (phase3a): searches now return exact,
