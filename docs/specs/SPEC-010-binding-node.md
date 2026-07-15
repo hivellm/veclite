@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Draft |
+| **Status** | Core implemented (phase4c): the `veclite-node` napi-rs crate — Database/Collection mirroring SPEC-004 in camelCase, async-by-default (tokio blocking pool) with `*Sync` twins (NODE-010/011), `Float32Array` in/out with zero-copy sync reads (NODE-012), `VecLiteError` with stable `code` strings (NODE-020), `close()`/`Closed` handle lifecycle (NODE-013), and shipped `.d.ts` that compiles under `tsc --strict` (NODE-003). Seven behavioral tests pass locally (quickstart, error-code mapping async≡sync, event-loop liveness, cross-process persistence + snapshot/vacuum, filters/hybrid/text). The prebuild matrix + `@veclite/*` platform packages (NODE-001), Bun/Node-matrix CI + shared conformance runner (acceptance 1/4), external-buffer zero-copy-out (NODE-012), and `@veclite/onnx` (NODE-002) are tracked in `phase4i_node-prebuilds-conformance`. |
 | **Phase / tasks** | Phase 4 · T4.4 ([DAG](../DAG.md)) |
 | **PRD requirements** | FR-62, FR-65, FR-66 |
 | **Planning source** | [06-sdk-bindings.md §Node](../vectorizer-lite/06-sdk-bindings.md) |

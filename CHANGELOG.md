@@ -9,6 +9,22 @@ Versions 0.x are pre-release: the public API may change between minors until 1.0
 ## [Unreleased]
 
 ### Added
+- Node.js binding core (task `phase4c`, `crates/veclite-node`, SPEC-010): a
+  napi-rs crate binding the Rust engine directly, mirroring SPEC-004 in
+  camelCase. Every heavy operation is async by default (runs off the JS thread
+  on tokio's blocking pool, so the event loop never stalls) with a `*Sync` twin
+  (NODE-010/011). `Float32Array` crosses in for search/upsert (zero-copy on the
+  sync path) and hit vectors come back as `Float32Array` (NODE-012). Failures
+  reject/throw a single `VecLiteError extends Error` carrying a stable string
+  `code` (`"DIMENSION_MISMATCH"`, …) and the exact Rust message (NODE-020).
+  `close()` flushes and drops the handle so the advisory lock releases at once;
+  later ops reject with `code: "CLOSED"` (NODE-013). TypeScript definitions ship
+  and compile under `tsc --strict` (NODE-003). Seven behavioral tests pass
+  (quickstart, error mapping async≡sync, event-loop liveness under a 4k bulk
+  index, cross-process persistence + snapshot/vacuum, filters/hybrid/text). The
+  prebuild matrix, `@veclite/*` platform packages, Bun/Node-matrix CI, the
+  shared conformance runner, and external-buffer zero-copy-out are tracked in
+  `phase4i_node-prebuilds-conformance`.
 - Sparse-lane persistence + auto-embed hybrid + RRF conformance (task `phase3g`,
   SPEC-007): the hybrid sparse lane is now sealed as a SPARSE segment
   (`term_id -> [(slot, weight)]` inverted index), so a BYO sparse lane survives

@@ -1,0 +1,29 @@
+{
+  "name": "veclite",
+  "version": "0.1.0",
+  "description": "Embedded, single-file, in-process vector database (Node.js binding).",
+  "keywords": ["vector-database", "embeddings", "search", "embedded", "hnsw"],
+  "license": "Apache-2.0",
+  "repository": "https://github.com/hivellm/veclite",
+  "main": "veclite.js",
+  "types": "veclite.d.ts",
+  "napi": {
+    "name": "veclite",
+    "triples": {
+      "defaults": true,
+      "additional": ["x86_64-unknown-linux-musl", "aarch64-apple-darwin"]
+    }
+  },
+  "files": ["veclite.js", "veclite.d.ts", "index.js", "index.d.ts"],
+  "engines": {
+    "node": ">= 18"
+  },
+  "scripts": {
+    "build": "napi build --platform --release",
+    "build:debug": "napi build --platform",
+    "test": "node --test __test__/"
+  },
+  "devDependencies": {
+    "@napi-rs/cli": "^2.18.4"
+  }
+}
