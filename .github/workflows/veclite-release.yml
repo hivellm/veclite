@@ -129,10 +129,157 @@ jobs:
           path: crates/veclite-node/*.node
           if-no-files-found: error
 
+  # ── Raw C ABI shared/static libraries (SPEC-008 FFI-030, phase4e) ──────────
+  # Builds veclite-ffi as cdylib + staticlib for the FR-66 native matrix, sets
+  # SONAME / install_name / DLL base name, renames the Rust `veclite_ffi.*`
+  # output to the shipped `veclite.*` names, generates the cbindgen header, and
+  # bundles {shared, static, veclite.h, LICENSE, SHA256SUMS} per target.
+  ffi-libs:
+    name: FFI libs ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest,  target: x86_64-unknown-linux-gnu,   cross: true,  ext: so,    stem: libveclite }
+          - { os: ubuntu-latest,  target: aarch64-unknown-linux-gnu,  cross: true,  ext: so,    stem: libveclite }
+          - { os: ubuntu-latest,  target: x86_64-unknown-linux-musl,  cross: true,  ext: so,    stem: libveclite }
+          - { os: ubuntu-latest,  target: aarch64-unknown-linux-musl, cross: true,  ext: so,    stem: libveclite }
+          - { os: macos-13,       target: x86_64-apple-darwin,        cross: false, ext: dylib, stem: libveclite }
+          - { os: macos-14,       target: aarch64-apple-darwin,       cross: false, ext: dylib, stem: libveclite }
+          - { os: windows-latest, target: x86_64-pc-windows-msvc,     cross: false, ext: dll,   stem: veclite }
+          - { os: windows-latest, target: aarch64-pc-windows-msvc,    cross: false, ext: dll,   stem: veclite }
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: taiki-e/install-action@cbindgen
+      # Linux cross targets: a C toolchain + linker for the target, so normal
+      # `cargo build --target` works and RUSTFLAGS (SONAME) are honored.
+      - name: Set up cross toolchain (Linux)
+        if: matrix.cross
+        uses: taiki-e/setup-cross-toolchain-action@v1
+        with:
+          target: ${{ matrix.target }}
+      # Windows: put cl/lib/dumpbin on PATH so the import library can be
+      # regenerated to reference the shipped veclite.dll name.
+      - name: Set up MSVC (Windows)
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: ${{ matrix.target == 'aarch64-pc-windows-msvc' && 'amd64_arm64' || 'amd64' }}
+      - name: Generate the C header
+        run: cbindgen --config crates/veclite-ffi/cbindgen.toml --crate veclite-ffi --output veclite.h
+      - name: Build cdylib + staticlib
+        shell: bash
+        env:
+          # SONAME (Linux) / install_name (macOS) embed the *shipped* name so a
+          # consumer's `-lveclite` resolves the runtime dependency correctly.
+          RUSTFLAGS: >-
+            ${{ startsWith(matrix.target, 'aarch64-apple') && '-C link-arg=-Wl,-install_name,@rpath/libveclite.dylib'
+             || startsWith(matrix.target, 'x86_64-apple') && '-C link-arg=-Wl,-install_name,@rpath/libveclite.dylib'
+             || contains(matrix.target, 'linux') && '-C link-arg=-Wl,-soname,libveclite.so'
+             || '' }}
+        run: cargo build -p veclite-ffi --release --target ${{ matrix.target }}
+      - name: Assemble the bundle (rename to the shipped names)
+        shell: bash
+        run: |
+          set -euo pipefail
+          t="${{ matrix.target }}"
+          out="target/$t/release"
+          bundle="veclite-ffi-$t"
+          mkdir -p "$bundle"
+          cp LICENSE veclite.h "$bundle/"
+          if [[ "$t" == *windows* ]]; then
+            cp "$out/veclite_ffi.dll" "$bundle/veclite.dll"
+            cp "$out/veclite_ffi.lib" "$bundle/veclite.lib"          # static lib
+            # Regenerate the import lib so it references veclite.dll (the Rust
+            # one references veclite_ffi.dll — the loader would miss it).
+            machine="${{ matrix.target == 'aarch64-pc-windows-msvc' && 'arm64' || 'x64' }}"
+            dumpbin //exports "$bundle/veclite.dll" \
+              | awk 'BEGIN{print "LIBRARY veclite"; print "EXPORTS"} /^ +[0-9]+ +[0-9A-Fa-f]+ +[0-9A-Fa-f]+ +vl_/{print "    "$4}' \
+              > "$bundle/veclite.def"
+            lib //nologo //def:"$bundle/veclite.def" //out:"$bundle/veclite.dll.lib" //machine:$machine
+            rm -f "$bundle/veclite.def" "$bundle/veclite.exp"
+          else
+            cp "$out/${{ matrix.stem }}_ffi.${{ matrix.ext }}" "$bundle/${{ matrix.stem }}.${{ matrix.ext }}"
+            cp "$out/libveclite_ffi.a"                          "$bundle/libveclite.a"
+          fi
+          # Checksums over the bundle contents (portable: shasum on macOS).
+          ( cd "$bundle" && (command -v sha256sum >/dev/null && sha256sum * || shasum -a 256 *) > SHA256SUMS )
+          tar czf "$bundle.tar.gz" "$bundle"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ffi-libs-${{ matrix.target }}
+          path: veclite-ffi-${{ matrix.target }}.tar.gz
+          if-no-files-found: error
+
+  # macOS universal2 dylib (x86_64 + arm64) via lipo (SPEC-016 §3).
+  ffi-universal-macos:
+    name: FFI libs macOS universal2
+    needs: [ ffi-libs ]
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: 'ffi-libs-*apple-darwin'
+          path: dl
+      - name: lipo the two dylibs into one universal2
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p x64 arm64 universal
+          tar xzf dl/ffi-libs-x86_64-apple-darwin/veclite-ffi-x86_64-apple-darwin.tar.gz -C x64 --strip-components=1
+          tar xzf dl/ffi-libs-aarch64-apple-darwin/veclite-ffi-aarch64-apple-darwin.tar.gz -C arm64 --strip-components=1
+          cp x64/veclite.h x64/LICENSE universal/
+          lipo -create x64/libveclite.dylib arm64/libveclite.dylib -output universal/libveclite.dylib
+          # The static lib is also universal-able; keep the x64 static as-is is
+          # wrong, so lipo the archives too.
+          lipo -create x64/libveclite.a arm64/libveclite.a -output universal/libveclite.a
+          ( cd universal && shasum -a 256 * > SHA256SUMS )
+          tar czf veclite-ffi-universal2-apple-darwin.tar.gz -C universal .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ffi-libs-universal2-apple-darwin
+          path: veclite-ffi-universal2-apple-darwin.tar.gz
+          if-no-files-found: error
+
+  # No-toolchain smoke-link (REL-020 for the C ABI): a tiny C program links the
+  # shipped library on a Rust-free machine and calls vl_open_memory/vl_db_close.
+  ffi-smoke:
+    name: FFI smoke-link ${{ matrix.target }}
+    needs: [ ffi-libs ]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest,  target: x86_64-unknown-linux-gnu }
+          - { os: macos-14,       target: aarch64-apple-darwin }
+          - { os: windows-latest, target: x86_64-pc-windows-msvc }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Set up MSVC (Windows)
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+      - uses: actions/download-artifact@v4
+        with:
+          name: ffi-libs-${{ matrix.target }}
+          path: dl
+      - name: Compile + run the smoke-link (no Rust toolchain)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v cargo >/dev/null 2>&1; then echo "::error::cargo present — not a clean link test"; fi
+          mkdir -p b && tar xzf dl/veclite-ffi-${{ matrix.target }}.tar.gz -C b --strip-components=1
+          bash ffi/smoke.sh b
+
   # ── Atomic gate: every build + conformance leg must be green ───────────────
   gate:
     name: Release gate (all legs green)
-    needs: [ wheels, sdist, node-prebuilds ]
+    needs: [ wheels, sdist, node-prebuilds, ffi-libs, ffi-universal-macos, ffi-smoke ]
     runs-on: ubuntu-latest
     steps:
       - run: echo "All artifact + conformance legs passed — release may publish."
@@ -203,3 +350,28 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_TOKEN }}
         run: cargo publish -p veclite
+
+  # ── Publish: raw C ABI libraries → GitHub release (SPEC-008 FFI-030) ────────
+  publish-ffi-release:
+    name: Publish FFI libraries to the GitHub release
+    if: github.event_name == 'push'
+    needs: [ gate ]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: 'ffi-libs-*'
+          path: ffi
+          merge-multiple: true
+      - name: Aggregate a top-level SHA256SUMS over every bundle
+        shell: bash
+        run: (cd ffi && sha256sum *.tar.gz > SHA256SUMS.txt)
+      - name: Upload the bundles to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ffi/*.tar.gz
+            ffi/SHA256SUMS.txt
+          fail_on_unmatched_files: true

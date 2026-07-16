@@ -9,6 +9,21 @@ Versions 0.x are pre-release: the public API may change between minors until 1.0
 ## [Unreleased]
 
 ### Added
+- Prebuilt C ABI shared/static libraries (task `phase4e`, SPEC-008 FFI-030): the
+  raw C ABI now ships as downloadable, checksummed release artifacts —
+  `libveclite.{so,dylib}` / `veclite.dll` + static libs + the cbindgen
+  `veclite.h` + `LICENSE` + `SHA256SUMS` — for the full FR-66 matrix (Linux
+  glibc/musl, macOS incl. a `universal2` fat lib, Windows MSVC; x86_64 +
+  aarch64). Shared libraries embed the shipped name (`SONAME=libveclite.so`,
+  `install_name=@rpath/libveclite.dylib`, and a regenerated Windows import
+  library referencing `veclite.dll`), so `-lveclite` resolves correctly
+  everywhere. A per-platform C smoke-link (`ffi/smoke.c` + `ffi/smoke.sh`) links
+  each shipped bundle with no Rust toolchain present and calls
+  `vl_open_memory`/`vl_db_close` — the no-toolchain gate (REL-020) for direct
+  C/Go/C# consumers. Header generated via `crates/veclite-ffi/cbindgen.toml`
+  (the committed golden-file drift test is `phase4g`); per-OS download/link
+  instructions in `docs/c-abi.md`. Wired into `veclite-release.yml`
+  (`ffi-libs` / `ffi-universal-macos` / `ffi-smoke` / `publish-ffi-release`).
 - Binding conformance corpus + packaging CI (task `phase4d`, SPEC-015 §3 /
   SPEC-016, gate G4): one language-agnostic YAML corpus in
   `tests/conformance/corpus/` (34 cases across defaults, every error variant,
