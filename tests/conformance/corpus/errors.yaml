@@ -1,0 +1,76 @@
+suite: errors
+cases:
+  - id: conf-err-collection-not-found
+    desc: operating on an unknown collection → COLLECTION_NOT_FOUND
+    mode: both
+    steps:
+      - op: get
+        args: { collection: nope, id: x }
+        expect:
+          error: COLLECTION_NOT_FOUND
+
+  - id: conf-err-already-exists
+    desc: creating a collection twice → ALREADY_EXISTS
+    mode: both
+    steps:
+      - op: create_collection
+        args: { name: c, dimension: 3, quantization_bits: 0 }
+      - op: create_collection
+        args: { name: c, dimension: 3, quantization_bits: 0 }
+        expect:
+          error: ALREADY_EXISTS
+
+  - id: conf-err-dimension-mismatch
+    desc: upserting a wrong-length vector → DIMENSION_MISMATCH
+    mode: both
+    steps:
+      - op: create_collection
+        args: { name: c, dimension: 3, quantization_bits: 0 }
+      - op: upsert
+        args: { collection: c, id: a, vector: [1.0, 2.0] }
+        expect:
+          error: DIMENSION_MISMATCH
+
+  - id: conf-err-search-dimension-mismatch
+    desc: querying with a wrong-length vector → DIMENSION_MISMATCH
+    mode: both
+    steps:
+      - op: create_collection
+        args: { name: c, dimension: 3, quantization_bits: 0 }
+      - op: upsert
+        args: { collection: c, id: a, vector: [1.0, 2.0, 3.0] }
+      - op: search
+        args: { collection: c, vector: [1.0, 2.0], limit: 1 }
+        expect:
+          error: DIMENSION_MISMATCH
+
+  - id: conf-err-unsupported-provider
+    desc: an unknown auto-embed provider → UNSUPPORTED_PROVIDER
+    mode: both
+    steps:
+      - op: create_collection
+        args: { name: c, dimension: 64, auto_embed: not_a_provider }
+        expect:
+          error: UNSUPPORTED_PROVIDER
+
+  - id: conf-err-get-missing-is-not-an-error
+    desc: get() of an absent id returns null, not an error (CRUD semantics)
+    mode: both
+    steps:
+      - op: create_collection
+        args: { name: c, dimension: 2, quantization_bits: 0 }
+      - op: get
+        args: { collection: c, id: ghost }
+        expect:
+          result: null
+
+  - id: conf-err-delete-missing-is-false
+    desc: delete() of an absent id returns false, not an error
+    mode: both
+    steps:
+      - op: create_collection
+        args: { name: c, dimension: 2, quantization_bits: 0 }
+      - op: delete
+        args: { collection: c, id: ghost }
+        expect:
+          value: false

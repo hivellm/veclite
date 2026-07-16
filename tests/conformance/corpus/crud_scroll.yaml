@@ -1,0 +1,137 @@
+suite: crud_scroll
+cases:
+  - id: conf-crud-upsert-get-delete
+    desc: upsert / get / delete round-trip and len bookkeeping (API-020..022)
+    mode: both
+    steps:
+      - op: create_collection
+        args: { name: c, dimension: 2, metric: euclidean, quantization_bits: 0 }
+      - op: upsert
+        args: { collection: c, id: a, vector: [1.0, 0.0], payload: { tag: first } }
+      - op: upsert
+        args: { collection: c, id: b, vector: [0.0, 1.0] }
+      - op: len
+        args: { collection: c }
+        expect: { value: 2 }
+      - op: get
+        args: { collection: c, id: a }
+        expect:
+          result:
+            id: a
+            vector: [1.0, 0.0]
+            payload: { tag: first }
+      - op: delete
+        args: { collection: c, id: a }
+        expect: { value: true }
+      - op: get
+        args: { collection: c, id: a }
+        expect: { result: null }
+      - op: len
+        args: { collection: c }
+        expect: { value: 1 }
+
+  - id: conf-crud-upsert-replaces-payload
+    desc: re-upserting an id replaces the payload wholesale, not merged (FLT-003)
+    mode: both
+    steps:
+      - op: create_collection
+        args: { name: c, dimension: 2, metric: euclidean, quantization_bits: 0 }
+      - op: upsert
+        args: { collection: c, id: a, vector: [1.0, 0.0], payload: { v: 1, keep: yes } }
+      - op: upsert
+        args: { collection: c, id: a, vector: [2.0, 0.0], payload: { w: 2 } }
+      - op: len
+        args: { collection: c }
+        expect: { value: 1 }
+      - op: get
+        args: { collection: c, id: a }
+        expect:
+          result:
+            id: a
+            vector: [2.0, 0.0]
+            payload: { w: 2 }
+
+  - id: conf-crud-stats
+    desc: stats reflect dimension / len / tombstones / auto_embed (FR-08/13)
+    mode: both
+    steps:
+      - op: create_collection
+        args: { name: c, dimension: 3, metric: euclidean, quantization_bits: 0 }
+      - op: upsert
+        args: { collection: c, id: a, vector: [1.0, 0.0, 0.0] }
+      - op: upsert
+        args: { collection: c, id: b, vector: [0.0, 1.0, 0.0] }
+      - op: delete
+        args: { collection: c, id: a }
+        expect: { value: true }
+      - op: stats
+        args: { collection: c }
+        expect:
+          value:
+            dimension: 3
+            len: 1
+            tombstones: 1
+            auto_embed: false
+
+  - id: conf-scroll-pagination
+    desc: scroll walks live points in stable slot order with a resumable cursor (API-022)
+    mode: both
+    steps:
+      - op: create_collection
+        args: { name: c, dimension: 1, metric: euclidean, quantization_bits: 0 }
+      - op: upsert_batch
+        args:
+          collection: c
+          points:
+            - { id: a, vector: [0.0] }
+            - { id: b, vector: [1.0] }
+            - { id: c, vector: [2.0] }
+            - { id: d, vector: [3.0] }
+            - { id: e, vector: [4.0] }
+      - op: scroll
+        args: { collection: c, limit: 2 }
+        expect:
+          ids: [a, b]
+          next_cursor: b
+      - op: scroll
+        args: { collection: c, limit: 2, offset_id: b }
+        expect:
+          ids: [c, d]
+          next_cursor: d
+      - op: scroll
+        args: { collection: c, limit: 2, offset_id: d }
+        expect:
+          ids: [e]
+          next_cursor: null
+
+  - id: conf-list-collections
+    desc: list_collections returns sorted names (CORE-050)
+    mode: both
+    steps:
+      - op: create_collection
+        args: { name: zeta, dimension: 2, quantization_bits: 0 }
+      - op: create_collection
+        args: { name: alpha, dimension: 2, quantization_bits: 0 }
+      - op: create_collection
+        args: { name: mu, dimension: 2, quantization_bits: 0 }
+      - op: list_collections
+        expect:
+          ids: [alpha, mu, zeta]
+
+  - id: conf-alias-resolves
+    desc: an alias resolves to its target collection (CORE-051)
+    mode: both
+    steps:
+      - op: create_collection
+        args: { name: real, dimension: 2, metric: euclidean, quantization_bits: 0 }
+      - op: upsert
+        args: { collection: real, id: a, vector: [1.0, 0.0] }
+      - op: create_alias
+        args: { alias: nick, target: real }
+      - op: get
+        args: { collection: nick, id: a }
+        expect:
+          result:
+            id: a
+            vector: [1.0, 0.0]
+            payload: null

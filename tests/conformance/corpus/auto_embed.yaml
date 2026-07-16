@@ -1,0 +1,53 @@
+suite: auto_embed
+# Auto-embed (BM25) collections embed text at upsert/search time. Orderings are
+# pinned by the golden (they depend on the vocabulary), but reopen determinism
+# and memory ≡ file are asserted directly (SPEC-005 EMB-051, TST-021).
+cases:
+  - id: conf-autoembed-search
+    desc: upsert_text + search_text produce a stable ranking; memory ≡ file
+    mode: both
+    steps:
+      - op: create_collection
+        args: { name: docs, dimension: 128, auto_embed: bm25 }
+      - op: upsert_text
+        args: { collection: docs, id: d1, text: "the quick brown fox jumps" }
+      - op: upsert_text
+        args: { collection: docs, id: d2, text: "a lazy dog sleeps all day" }
+      - op: upsert_text
+        args: { collection: docs, id: d3, text: "the quick fox runs fast" }
+      - op: len
+        args: { collection: docs }
+        expect: { value: 3 }
+      # Ordering pinned by the golden (identical across memory and file backends).
+      - op: search_text
+        args: { collection: docs, query: "quick fox", limit: 3 }
+      - op: stats
+        args: { collection: docs }
+        expect:
+          value:
+            dimension: 128
+            len: 3
+            auto_embed: true
+
+  - id: conf-autoembed-reopen-determinism
+    desc: the embedded vocabulary survives a checkpoint+reopen; results are stable
+    mode: file
+    steps:
+      - op: create_collection
+        args: { name: docs, dimension: 128, auto_embed: bm25 }
+      - op: upsert_text
+        args: { collection: docs, id: d1, text: "the quick brown fox jumps" }
+      - op: upsert_text
+        args: { collection: docs, id: d2, text: "a lazy dog sleeps all day" }
+      - op: upsert_text
+        args: { collection: docs, id: d3, text: "the quick fox runs fast" }
+      # Golden pins the pre-reopen ranking...
+      - op: search_text
+        args: { collection: docs, query: "quick fox", limit: 3 }
+      - op: reopen
+      - op: len
+        args: { collection: docs }
+        expect: { value: 3 }
+      # ...and the post-reopen ranking must be the identical golden value.
+      - op: search_text
+        args: { collection: docs, query: "quick fox", limit: 3 }

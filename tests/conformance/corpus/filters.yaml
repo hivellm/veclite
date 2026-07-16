@@ -1,0 +1,140 @@
+suite: filters
+# Shared setup for every case: 5 docs on a line (euclidean, query [0.0] ranks by
+# id-distance a<b<c<d<e), each with a payload the filters select on (SPEC-006).
+cases:
+  - id: conf-filter-must-eq
+    desc: must Eq on a keyword narrows results, ordering preserved (FLT-010/011)
+    mode: both
+    steps:
+      - &mk_coll
+        op: create_collection
+        args: { name: c, dimension: 1, metric: euclidean, quantization_bits: 0 }
+      - &seed
+        op: upsert_batch
+        args:
+          collection: c
+          points:
+            - { id: a, vector: [0.0], payload: { lang: en, year: 2020 } }
+            - { id: b, vector: [1.0], payload: { lang: en, year: 2022 } }
+            - { id: c, vector: [2.0], payload: { lang: fr, year: 2021 } }
+            - { id: d, vector: [3.0], payload: { lang: en, year: 2023 } }
+            - { id: e, vector: [4.0], payload: { lang: fr } }
+      - op: search
+        args:
+          collection: c
+          vector: [0.0]
+          limit: 10
+          filter: { must: [ { key: lang, match: { value: en } } ] }
+        expect:
+          ids: [a, b, d]
+
+  - id: conf-filter-range-gte
+    desc: must Range gte on an integer field (FLT-011)
+    mode: both
+    steps:
+      - *mk_coll
+      - *seed
+      - op: search
+        args:
+          collection: c
+          vector: [0.0]
+          limit: 10
+          filter: { must: [ { key: year, range: { gte: 2022 } } ] }
+        expect:
+          ids: [b, d]
+
+  - id: conf-filter-must-not
+    desc: must_not excludes matches (NAND semantics, FLT-010)
+    mode: both
+    steps:
+      - *mk_coll
+      - *seed
+      - op: search
+        args:
+          collection: c
+          vector: [0.0]
+          limit: 10
+          filter: { must_not: [ { key: lang, match: { value: en } } ] }
+        expect:
+          ids: [c, e]
+
+  - id: conf-filter-should-or
+    desc: should is OR — any clause matching admits the point (FLT-010)
+    mode: both
+    steps:
+      - *mk_coll
+      - *seed
+      - op: search
+        args:
+          collection: c
+          vector: [0.0]
+          limit: 10
+          filter:
+            should:
+              - { key: lang, match: { value: fr } }
+              - { key: year, range: { gte: 2023 } }
+        expect:
+          ids: [c, d, e]
+
+  - id: conf-filter-exists
+    desc: Exists is precisely the key-present test (FLT-011)
+    mode: both
+    steps:
+      - *mk_coll
+      - *seed
+      - op: search
+        args:
+          collection: c
+          vector: [0.0]
+          limit: 10
+          filter: { must: [ { key: year, exists: true } ] }
+        expect:
+          ids: [a, b, c, d]
+
+  - id: conf-filter-combined
+    desc: must combines Eq AND Range as a conjunction (FLT-010)
+    mode: both
+    steps:
+      - *mk_coll
+      - *seed
+      - op: search
+        args:
+          collection: c
+          vector: [0.0]
+          limit: 10
+          filter:
+            must:
+              - { key: lang, match: { value: en } }
+              - { key: year, range: { lt: 2023 } }
+        expect:
+          ids: [a, b]
+
+  - id: conf-filter-scroll
+    desc: scroll accepts the same Filter for filtered pagination (FLT-032)
+    mode: both
+    steps:
+      - *mk_coll
+      - *seed
+      - op: scroll
+        args:
+          collection: c
+          limit: 100
+          filter: { must: [ { key: lang, match: { value: en } } ] }
+        expect:
+          ids: [a, b, d]
+          next_cursor: null
+
+  - id: conf-filter-geo-rejected
+    desc: unsupported geo/nested filter features are rejected, not ignored (FLT-012)
+    mode: both
+    steps:
+      - *mk_coll
+      - *seed
+      - op: search
+        args:
+          collection: c
+          vector: [0.0]
+          limit: 10
+          filter: { must: [ { key: loc, geo_radius: { center: [0.0, 0.0], radius: 1.0 } } ] }
+        expect:
+          error: INVALID_ARGUMENT

@@ -9,6 +9,9 @@ publish = false
 # Native-only dev-task runner (SPEC-015 §7): `cargo xtask crash`. Not shipped,
 # not part of the default workspace build, never targets wasm32.
 [dependencies]
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+serde_yaml = "0.9.34"
 veclite = { path = "../crates/veclite" }
 
 [lints]

@@ -1,0 +1,39 @@
+suite: chunker
+# The chunker is a pure, deterministic, UTF-8-safe function (SPEC-005 §7,
+# EMB-050/051). It takes no engine state, so mode is irrelevant (default both).
+cases:
+  - id: conf-chunk-single
+    desc: text below max_chars yields one trimmed chunk over the full byte range
+    steps:
+      - op: chunk
+        args: { text: "hello world", max_chars: 100, overlap: 0 }
+        expect:
+          result:
+            - { text: "hello world", start: 0, end: 11 }
+
+  - id: conf-chunk-trims-whitespace
+    desc: leading/trailing whitespace is trimmed and the byte range tracks the trim
+    steps:
+      - op: chunk
+        args: { text: "   padded   ", max_chars: 100, overlap: 0 }
+        expect:
+          result:
+            - { text: "padded", start: 3, end: 9 }
+
+  - id: conf-chunk-boundaries
+    desc: multi-chunk splitting at word boundaries with overlap (golden-pinned)
+    steps:
+      - op: chunk
+        args:
+          text: "The quick brown fox jumps over the lazy dog near the river bank at dawn."
+          max_chars: 24
+          overlap: 6
+
+  - id: conf-chunk-unicode
+    desc: splitting never lands mid-codepoint on multibyte text (golden-pinned)
+    steps:
+      - op: chunk
+        args:
+          text: "café résumé naïve über Zürich piñata jalapeño smörgåsbord"
+          max_chars: 20
+          overlap: 4

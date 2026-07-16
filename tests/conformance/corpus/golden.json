@@ -1,0 +1,557 @@
+{
+  "conf-alias-resolves": [
+    {},
+    {},
+    {},
+    {
+      "result": {
+        "id": "a",
+        "payload": null,
+        "vector": [
+          1.0,
+          0.0
+        ]
+      }
+    }
+  ],
+  "conf-autoembed-reopen-determinism": [
+    {},
+    {},
+    {},
+    {},
+    {
+      "ids": [
+        "d1",
+        "d3",
+        "d2"
+      ],
+      "scores": [
+        0.4132738709449768,
+        0.4132738709449768,
+        0.0
+      ]
+    },
+    {
+      "value": 3
+    },
+    {
+      "ids": [
+        "d1",
+        "d3",
+        "d2"
+      ],
+      "scores": [
+        0.4132738709449768,
+        0.4132738709449768,
+        0.0
+      ]
+    }
+  ],
+  "conf-autoembed-search": [
+    {},
+    {},
+    {},
+    {},
+    {
+      "value": 3
+    },
+    {
+      "ids": [
+        "d1",
+        "d3",
+        "d2"
+      ],
+      "scores": [
+        0.4132738709449768,
+        0.4132738709449768,
+        0.0
+      ]
+    },
+    {
+      "value": {
+        "auto_embed": true,
+        "dimension": 128,
+        "len": 3,
+        "tombstones": 3
+      }
+    }
+  ],
+  "conf-chunk-boundaries": [
+    {
+      "result": [
+        {
+          "end": 19,
+          "start": 0,
+          "text": "The quick brown fox"
+        },
+        {
+          "end": 34,
+          "start": 14,
+          "text": "n fox jumps over the"
+        },
+        {
+          "end": 52,
+          "start": 29,
+          "text": "r the lazy dog near the"
+        },
+        {
+          "end": 66,
+          "start": 47,
+          "text": "r the river bank at"
+        },
+        {
+          "end": 72,
+          "start": 61,
+          "text": "nk at dawn."
+        },
+        {
+          "end": 72,
+          "start": 67,
+          "text": "dawn."
+        }
+      ]
+    }
+  ],
+  "conf-chunk-single": [
+    {
+      "result": [
+        {
+          "end": 11,
+          "start": 0,
+          "text": "hello world"
+        }
+      ]
+    }
+  ],
+  "conf-chunk-trims-whitespace": [
+    {
+      "result": [
+        {
+          "end": 9,
+          "start": 3,
+          "text": "padded"
+        }
+      ]
+    }
+  ],
+  "conf-chunk-unicode": [
+    {
+      "result": [
+        {
+          "end": 14,
+          "start": 0,
+          "text": "café résumé"
+        },
+        {
+          "end": 27,
+          "start": 11,
+          "text": "mé naïve über"
+        },
+        {
+          "end": 43,
+          "start": 24,
+          "text": "ber Zürich piñata"
+        },
+        {
+          "end": 53,
+          "start": 40,
+          "text": "ata jalapeño"
+        },
+        {
+          "end": 67,
+          "start": 50,
+          "text": "ño smörgåsbord"
+        },
+        {
+          "end": 67,
+          "start": 63,
+          "text": "bord"
+        }
+      ]
+    }
+  ],
+  "conf-crud-stats": [
+    {},
+    {},
+    {},
+    {
+      "value": true
+    },
+    {
+      "value": {
+        "auto_embed": false,
+        "dimension": 3,
+        "len": 1,
+        "tombstones": 1
+      }
+    }
+  ],
+  "conf-crud-upsert-get-delete": [
+    {},
+    {},
+    {},
+    {
+      "value": 2
+    },
+    {
+      "result": {
+        "id": "a",
+        "payload": {
+          "tag": "first"
+        },
+        "vector": [
+          1.0,
+          0.0
+        ]
+      }
+    },
+    {
+      "value": true
+    },
+    {
+      "result": null
+    },
+    {
+      "value": 1
+    }
+  ],
+  "conf-crud-upsert-replaces-payload": [
+    {},
+    {},
+    {},
+    {
+      "value": 1
+    },
+    {
+      "result": {
+        "id": "a",
+        "payload": {
+          "w": 2
+        },
+        "vector": [
+          2.0,
+          0.0
+        ]
+      }
+    }
+  ],
+  "conf-defaults-cosine": [
+    {},
+    {},
+    {},
+    {
+      "ids": [
+        "near_angle",
+        "close_euclid"
+      ],
+      "scores": [
+        1.0,
+        0.8944271802902222
+      ]
+    }
+  ],
+  "conf-defaults-no-quantization": [
+    {},
+    {},
+    {
+      "result": {
+        "id": "q",
+        "payload": null,
+        "vector": [
+          0.10000000149011612,
+          0.4000000059604645,
+          0.699999988079071,
+          0.949999988079071
+        ]
+      }
+    }
+  ],
+  "conf-defaults-quantization": [
+    {},
+    {},
+    {
+      "result": {
+        "id": "q",
+        "payload": null,
+        "vector": [
+          0.10000000149011612,
+          0.4000000059604645,
+          0.699999988079071,
+          0.949999988079071
+        ]
+      }
+    }
+  ],
+  "conf-defaults-search-limit": [
+    {},
+    {},
+    {
+      "ids": [
+        "p00",
+        "p01",
+        "p02",
+        "p03",
+        "p04",
+        "p05",
+        "p06",
+        "p07",
+        "p08",
+        "p09"
+      ],
+      "scores": [
+        0.0,
+        1.0,
+        2.0,
+        3.0,
+        4.0,
+        5.0,
+        6.0,
+        7.0,
+        8.0,
+        9.0
+      ]
+    }
+  ],
+  "conf-err-already-exists": [
+    {},
+    {
+      "error": "ALREADY_EXISTS"
+    }
+  ],
+  "conf-err-collection-not-found": [
+    {
+      "error": "COLLECTION_NOT_FOUND"
+    }
+  ],
+  "conf-err-delete-missing-is-false": [
+    {},
+    {
+      "value": false
+    }
+  ],
+  "conf-err-dimension-mismatch": [
+    {},
+    {
+      "error": "DIMENSION_MISMATCH"
+    }
+  ],
+  "conf-err-get-missing-is-not-an-error": [
+    {},
+    {
+      "result": null
+    }
+  ],
+  "conf-err-search-dimension-mismatch": [
+    {},
+    {},
+    {
+      "error": "DIMENSION_MISMATCH"
+    }
+  ],
+  "conf-err-unsupported-provider": [
+    {
+      "error": "UNSUPPORTED_PROVIDER"
+    }
+  ],
+  "conf-filter-combined": [
+    {},
+    {},
+    {
+      "ids": [
+        "a",
+        "b"
+      ],
+      "scores": [
+        0.0,
+        1.0
+      ]
+    }
+  ],
+  "conf-filter-exists": [
+    {},
+    {},
+    {
+      "ids": [
+        "a",
+        "b",
+        "c",
+        "d"
+      ],
+      "scores": [
+        0.0,
+        1.0,
+        2.0,
+        3.0
+      ]
+    }
+  ],
+  "conf-filter-geo-rejected": [
+    {},
+    {},
+    {
+      "error": "INVALID_ARGUMENT"
+    }
+  ],
+  "conf-filter-must-eq": [
+    {},
+    {},
+    {
+      "ids": [
+        "a",
+        "b",
+        "d"
+      ],
+      "scores": [
+        0.0,
+        1.0,
+        3.0
+      ]
+    }
+  ],
+  "conf-filter-must-not": [
+    {},
+    {},
+    {
+      "ids": [
+        "c",
+        "e"
+      ],
+      "scores": [
+        2.0,
+        4.0
+      ]
+    }
+  ],
+  "conf-filter-range-gte": [
+    {},
+    {},
+    {
+      "ids": [
+        "b",
+        "d"
+      ],
+      "scores": [
+        1.0,
+        3.0
+      ]
+    }
+  ],
+  "conf-filter-scroll": [
+    {},
+    {},
+    {
+      "ids": [
+        "a",
+        "b",
+        "d"
+      ],
+      "next_cursor": null
+    }
+  ],
+  "conf-filter-should-or": [
+    {},
+    {},
+    {
+      "ids": [
+        "c",
+        "d",
+        "e"
+      ],
+      "scores": [
+        2.0,
+        3.0,
+        4.0
+      ]
+    }
+  ],
+  "conf-hybrid-balanced": [
+    {},
+    {},
+    {
+      "ids": [
+        "c",
+        "d",
+        "e",
+        "f",
+        "a",
+        "b"
+      ],
+      "scores": [
+        0.016133230179548264,
+        0.01587701588869095,
+        0.015628816559910774,
+        0.015388257801532745,
+        0.008196720853447914,
+        0.008064515888690948
+      ]
+    }
+  ],
+  "conf-hybrid-dense-heavy": [
+    {},
+    {},
+    {
+      "ids": [
+        "x",
+        "y",
+        "z"
+      ],
+      "scores": [
+        0.016341399401426315,
+        0.016129031777381897,
+        0.015925059095025063
+      ]
+    }
+  ],
+  "conf-hybrid-sparse-heavy": [
+    {},
+    {},
+    {
+      "ids": [
+        "z",
+        "y",
+        "x"
+      ],
+      "scores": [
+        0.016341399401426315,
+        0.016129031777381897,
+        0.015925059095025063
+      ]
+    }
+  ],
+  "conf-list-collections": [
+    {},
+    {},
+    {},
+    {
+      "ids": [
+        "alpha",
+        "mu",
+        "zeta"
+      ]
+    }
+  ],
+  "conf-scroll-pagination": [
+    {},
+    {},
+    {
+      "ids": [
+        "a",
+        "b"
+      ],
+      "next_cursor": "b"
+    },
+    {
+      "ids": [
+        "c",
+        "d"
+      ],
+      "next_cursor": "d"
+    },
+    {
+      "ids": [
+        "e"
+      ],
+      "next_cursor": null
+    }
+  ]
+}

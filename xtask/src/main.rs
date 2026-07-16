@@ -9,6 +9,8 @@
 //! (defaults: 10 000 in-process iterations, 200 kill iterations — the NFR-05
 //! gate). `crash-child` is the internal driver the harness spawns.
 
+mod conformance;
+
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -69,8 +71,11 @@ fn main() {
     let code = match cmd {
         "crash" => cmd_crash(&args[2..]),
         "crash-child" => cmd_crash_child(&args[2..]),
+        "conformance" => conformance::run(&args[2..]),
         _ => {
-            eprintln!("usage: cargo xtask crash [in_process_iters] [kill_iters]");
+            eprintln!(
+                "usage: cargo xtask <crash [in_process_iters] [kill_iters] | conformance [--bless] [corpus_dir]>"
+            );
             2
         }
     };

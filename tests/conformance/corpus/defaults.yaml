@@ -1,0 +1,74 @@
+suite: defaults
+cases:
+  - id: conf-defaults-cosine
+    desc: create_collection with no metric defaults to cosine (SPEC-004 API-002)
+    mode: both
+    steps:
+      - op: create_collection
+        args: { name: d, dimension: 2, quantization_bits: 0 }
+      - op: upsert
+        args: { collection: d, id: near_angle, vector: [10.0, 0.0] }
+      - op: upsert
+        args: { collection: d, id: close_euclid, vector: [1.0, 0.5] }
+      # Cosine ranks by angle, so the aligned-but-distant vector wins; a
+      # euclidean default would rank close_euclid first.
+      - op: search
+        args: { collection: d, vector: [1.0, 0.0], limit: 2 }
+        expect:
+          ids: [near_angle, close_euclid]
+
+  - id: conf-defaults-search-limit
+    desc: search default limit is 10 (SPEC-004 §3 defaults table)
+    mode: both
+    steps:
+      - op: create_collection
+        args: { name: d, dimension: 1, metric: euclidean, quantization_bits: 0 }
+      - op: upsert_batch
+        args:
+          collection: d
+          points:
+            - { id: p00, vector: [0.0] }
+            - { id: p01, vector: [1.0] }
+            - { id: p02, vector: [2.0] }
+            - { id: p03, vector: [3.0] }
+            - { id: p04, vector: [4.0] }
+            - { id: p05, vector: [5.0] }
+            - { id: p06, vector: [6.0] }
+            - { id: p07, vector: [7.0] }
+            - { id: p08, vector: [8.0] }
+            - { id: p09, vector: [9.0] }
+            - { id: p10, vector: [10.0] }
+            - { id: p11, vector: [11.0] }
+      - op: search
+        args: { collection: d, vector: [0.0] }
+        expect:
+          ids: [p00, p01, p02, p03, p04, p05, p06, p07, p08, p09]
+
+  - id: conf-defaults-quantization
+    desc: default quantization is SQ-8 — get() returns the lossy round-trip (API-002)
+    mode: both
+    steps:
+      - op: create_collection
+        args: { name: d, dimension: 4, metric: euclidean }
+      - op: upsert
+        args: { collection: d, id: q, vector: [0.1, 0.4, 0.7, 0.95] }
+      # The stored vector is dequantized SQ-8, not the exact input: the blessed
+      # golden pins that default quantization is on and its exact output.
+      - op: get
+        args: { collection: d, id: q }
+
+  - id: conf-defaults-no-quantization
+    desc: quantization_bits 0 disables quantization — get() round-trips exactly
+    mode: both
+    steps:
+      - op: create_collection
+        args: { name: d, dimension: 4, metric: euclidean, quantization_bits: 0 }
+      - op: upsert
+        args: { collection: d, id: q, vector: [0.1, 0.4, 0.7, 0.95] }
+      - op: get
+        args: { collection: d, id: q }
+        expect:
+          result:
+            id: q
+            vector: [0.1, 0.4, 0.7, 0.95]
+            payload: null
