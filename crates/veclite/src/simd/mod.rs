@@ -91,3 +91,48 @@ pub fn quantize_f32_to_u8(src: &[f32], dst: &mut [u8], scale: f32, offset: f32, 
 pub fn dequantize_u8_to_f32(src: &[u8], dst: &mut [f32], scale: f32, offset: f32) {
     backend().dequantize_u8_to_f32(src, dst, scale, offset);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The module-level convenience wrappers delegate to the dispatched backend
+    /// and return the documented values.
+    #[test]
+    fn convenience_wrappers_match_definitions() {
+        let a = [3.0f32, 4.0];
+        let b = [0.0f32, 0.0];
+
+        assert!((dot_product(&a, &[1.0, 1.0]) - 7.0).abs() < 1e-6);
+        // euclidean vs its squared twin: sqrt(25) == 5, squared == 25.
+        assert!((euclidean_distance(&a, &b) - 5.0).abs() < 1e-6);
+        assert!((euclidean_distance_squared(&a, &b) - 25.0).abs() < 1e-6);
+        // l2_norm of (3,4) is 5.
+        assert!((l2_norm(&a) - 5.0).abs() < 1e-6);
+
+        // cosine of two identical unit vectors is 1 (clamped dot product).
+        let mut u = [3.0f32, 4.0];
+        normalize_in_place(&mut u);
+        assert!((l2_norm(&u) - 1.0).abs() < 1e-6);
+        assert!((cosine_similarity(&u, &u) - 1.0).abs() < 1e-6);
+
+        // normalize_in_place is a no-op on the zero vector (no NaN).
+        let mut z = [0.0f32, 0.0];
+        normalize_in_place(&mut z);
+        assert_eq!(z, [0.0, 0.0]);
+    }
+
+    /// The quantize/dequantize wrappers round-trip through the backend.
+    #[test]
+    fn quantize_dequantize_wrappers_round_trip() {
+        let src = [0.0f32, 0.5, 1.0];
+        let (scale, offset, levels) = (1.0 / 255.0, 0.0, 256);
+        let mut codes = [0u8; 3];
+        quantize_f32_to_u8(&src, &mut codes, scale, offset, levels);
+        let mut back = [0.0f32; 3];
+        dequantize_u8_to_f32(&codes, &mut back, scale, offset);
+        for (s, b) in src.iter().zip(&back) {
+            assert!((s - b).abs() <= scale, "{s} vs {b}");
+        }
+    }
+}

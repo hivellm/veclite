@@ -369,4 +369,142 @@ mod tests {
             vec![2]
         );
     }
+
+    #[test]
+    fn ordf64_total_order() {
+        // partial_cmp/cmp: total order incl. the operators BTreeMap never calls.
+        assert!(OrdF64(1.0) < OrdF64(2.0));
+        assert!(OrdF64(2.0) > OrdF64(1.0));
+        assert_eq!(OrdF64(1.5).cmp(&OrdF64(1.5)), std::cmp::Ordering::Equal);
+        assert!(OrdF64(1.5) == OrdF64(1.5));
+    }
+
+    fn float_ix() -> PayloadIndexes {
+        let mut ix = PayloadIndexes::new(&[("price".to_owned(), PayloadIndexKind::Float)]);
+        ix.insert(0, Some(&json!({"price": 9.99})));
+        ix.insert(1, Some(&json!({"price": 19.5})));
+        ix.insert(2, Some(&json!({"price": 4.25})));
+        ix
+    }
+
+    #[test]
+    fn float_range_candidates() {
+        let ix = float_ix();
+        // price in [5, 20) → slots 0 (9.99) and 1 (19.5), not 2 (4.25).
+        let f = Filter::new().must(Condition::range("price", Range::new().gte(5.0).lt(20.0)));
+        assert_eq!(
+            slots(&ix.candidates(&f).unwrap_or_else(|| panic!("indexed"))),
+            vec![0, 1]
+        );
+    }
+
+    #[test]
+    fn float_remove_and_exists() {
+        let mut ix = float_ix();
+        ix.remove(1, Some(&json!({"price": 19.5})));
+        // Exists answers via all_slots over the remaining float entries.
+        let f = Filter::new().must(Condition::exists("price"));
+        assert_eq!(
+            slots(&ix.candidates(&f).unwrap_or_else(|| panic!("indexed"))),
+            vec![0, 2]
+        );
+    }
+
+    #[test]
+    fn float_eq_from_integer_match_value() {
+        // A whole-number float indexed, queried with an integer literal.
+        let mut ix = PayloadIndexes::new(&[("n".to_owned(), PayloadIndexKind::Float)]);
+        ix.insert(7, Some(&json!({"n": 3.0})));
+        let f = Filter::new().must(Condition::eq("n", 3i64));
+        assert_eq!(
+            slots(&ix.candidates(&f).unwrap_or_else(|| panic!("indexed"))),
+            vec![7]
+        );
+    }
+
+    #[test]
+    fn in_condition_unions_matches() {
+        let ix = build();
+        let f = Filter::new().must(Condition::in_("year", vec![2024i64, 2018]));
+        assert_eq!(
+            slots(&ix.candidates(&f).unwrap_or_else(|| panic!("indexed"))),
+            vec![0, 2]
+        );
+    }
+
+    #[test]
+    fn exists_over_keyword_index() {
+        let ix = build();
+        let f = Filter::new().must(Condition::exists("lang"));
+        assert_eq!(
+            slots(&ix.candidates(&f).unwrap_or_else(|| panic!("indexed"))),
+            vec![0, 1, 2]
+        );
+    }
+
+    #[test]
+    fn keyword_range_is_not_index_answerable() {
+        // A keyword index cannot answer a Range → `answer` returns None, so a
+        // must made only of it yields no candidates (scan fallback).
+        let ix = build();
+        let f = Filter::new().must(Condition::range("lang", Range::new().gte(1.0)));
+        assert!(ix.candidates(&f).is_none());
+    }
+
+    #[test]
+    fn nested_condition_is_not_index_answerable() {
+        let ix = build();
+        let nested = Filter::new().must(Condition::eq("lang", "en"));
+        let f = Filter::new().must(Condition::Nested(Box::new(nested)));
+        assert!(ix.candidates(&f).is_none());
+    }
+
+    #[test]
+    fn declare_kind_and_postings() {
+        let mut ix = PayloadIndexes::new(&[]);
+        assert!(ix.declare("p", PayloadIndexKind::Float));
+        assert!(!ix.declare("p", PayloadIndexKind::Float)); // already declared
+        assert_eq!(ix.kind_of("p"), Some(PayloadIndexKind::Float));
+        assert_eq!(ix.kind_of("absent"), None);
+
+        ix.insert(0, Some(&json!({"p": 2.5})));
+        ix.insert(1, Some(&json!({"p": 1.5})));
+        let postings = ix.postings("p").unwrap_or_else(|| panic!("declared"));
+        // Ascending float order: 1.5 (slot 1) before 2.5 (slot 0).
+        assert_eq!(
+            postings,
+            vec![
+                (PostingValue::Float(1.5), vec![1]),
+                (PostingValue::Float(2.5), vec![0]),
+            ]
+        );
+        assert!(ix.postings("absent").is_none());
+        assert_eq!(
+            ix.declared(),
+            vec![("p".to_owned(), PayloadIndexKind::Float)]
+        );
+    }
+
+    #[test]
+    fn insert_and_remove_are_noops_without_indexes() {
+        // No declared keys → insert/remove short-circuit; a non-object payload
+        // is ignored even when keys are declared.
+        let mut none = PayloadIndexes::new(&[]);
+        none.insert(0, Some(&json!({"a": 1})));
+        none.remove(0, Some(&json!({"a": 1})));
+        assert!(
+            none.candidates(&Filter::new().must(Condition::eq("a", 1i64)))
+                .is_none()
+        );
+
+        let mut ix = indexes();
+        ix.insert(0, Some(&json!("not-an-object")));
+        ix.insert(1, None);
+        let f = Filter::new().must(Condition::exists("lang"));
+        assert!(
+            ix.candidates(&f)
+                .unwrap_or_else(|| panic!("indexed"))
+                .is_empty()
+        );
+    }
 }
