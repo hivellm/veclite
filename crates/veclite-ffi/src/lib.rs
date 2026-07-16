@@ -4,10 +4,11 @@
 //! as JSON or MessagePack bytes per a codec flag; vectors as `(*const f32,
 //! len)`. Library-allocated objects are freed only by the matching `vl_*_free`.
 //!
-//! This is the phase4a core surface; the cbindgen golden header, the
-//! `cargo public-api` freeze snapshot, and the remaining functions
-//! (batch/hybrid/scroll/chunk/reindex/refit/payload-index/snapshot/vacuum) are
-//! tracked in the phase4 follow-up.
+//! The full surface (phase4a core + phase4g): lifecycle, collections, aliases,
+//! single and batch writes, get/search/search_text/hybrid/batch-search, scroll,
+//! chunk, reindex/refit, payload indexes, and database snapshot/vacuum/info. The
+//! header is frozen by the cbindgen golden-file drift test and the ABI is
+//! additive-only within a major version (gate loaders on `vl_abi_version()`).
 #![allow(non_camel_case_types)]
 
 use std::cell::RefCell;
@@ -15,8 +16,10 @@ use std::ffi::{CStr, CString, c_char};
 use std::slice;
 
 use serde::Serialize;
+use veclite::chunk::{ChunkOptions, Chunker};
 use veclite::{
-    Collection, CollectionOptions, Filter, Hit, Metric, Point, Quantization, VecLite, VecLiteError,
+    Collection, CollectionOptions, Filter, Hit, Metric, PayloadIndexKind, Point, Quantization,
+    SparseVector, VecLite, VecLiteError,
 };
 
 // ── error codes (SPEC-008 §3, 1:1 with VecLiteError) ─────────────────────────
@@ -40,6 +43,11 @@ pub const VL_ERR_INTERNAL: i32 = -99;
 /// Codec flags for structured payloads (FFI-005).
 pub const VL_CODEC_JSON: u8 = 0;
 pub const VL_CODEC_MSGPACK: u8 = 1;
+
+/// Payload-index kinds for `vl_payload_index_create` (SPEC-006 §index kinds).
+pub const VL_PIDX_KEYWORD: u8 = 0;
+pub const VL_PIDX_INTEGER: u8 = 1;
+pub const VL_PIDX_FLOAT: u8 = 2;
 
 /// Map a `VecLiteError` to its stable code. The exhaustive match (and thus the
 /// acceptance-3 build guarantee) lives on `VecLiteError::ffi_code` inside the
@@ -177,6 +185,17 @@ unsafe fn cstr<'a>(p: *const c_char) -> Result<&'a str> {
 /// # Safety
 /// `p`/`len` must describe a valid slice, or `p` may be null with `len == 0`.
 unsafe fn opt_slice<'a>(p: *const u8, len: usize) -> &'a [u8] {
+    if p.is_null() || len == 0 {
+        &[]
+    } else {
+        unsafe { slice::from_raw_parts(p, len) }
+    }
+}
+
+/// # Safety
+/// `p`/`len` must describe a valid `f32` slice, or `p` may be null with
+/// `len == 0`.
+unsafe fn opt_f32_slice<'a>(p: *const f32, len: usize) -> &'a [f32] {
     if p.is_null() || len == 0 {
         &[]
     } else {
@@ -603,7 +622,7 @@ pub unsafe extern "C" fn vl_get(
     })
 }
 
-#[derive(serde::Deserialize, Default)]
+#[derive(serde::Deserialize, Default, Clone)]
 struct QueryOpts {
     ef_search: Option<usize>,
     with_payload: Option<bool>,
@@ -626,9 +645,10 @@ fn run_query(coll: &Collection, vector: &[f32], limit: u32, opts: QueryOpts) -> 
     qb.run()
 }
 
-fn hits_into_handle(hits: Vec<Hit>, codec: u8) -> Result<*mut vl_hits> {
-    let owned: Result<Vec<HitOwned>> = hits
-        .into_iter()
+/// Convert core `Hit`s into the owned form the ABI hands out (id as `CString`,
+/// payload pre-encoded per `codec`), so views can borrow stable pointers.
+fn hits_to_owned(hits: Vec<Hit>, codec: u8) -> Result<Vec<HitOwned>> {
+    hits.into_iter()
         .map(|h| {
             let payload = match &h.payload {
                 Some(v) => encode(v, codec)?,
@@ -641,8 +661,31 @@ fn hits_into_handle(hits: Vec<Hit>, codec: u8) -> Result<*mut vl_hits> {
                 vector: h.vector,
             })
         })
-        .collect();
-    Ok(Box::into_raw(Box::new(vl_hits { hits: owned? })))
+        .collect()
+}
+
+fn hits_into_handle(hits: Vec<Hit>, codec: u8) -> Result<*mut vl_hits> {
+    Ok(Box::into_raw(Box::new(vl_hits {
+        hits: hits_to_owned(hits, codec)?,
+    })))
+}
+
+/// Borrowed view of one owned hit; valid until its owner (`vl_hits` /
+/// `vl_hits_batch`) is freed.
+fn hit_view_of(h: &HitOwned) -> vl_hit_view {
+    vl_hit_view {
+        id: h.id.as_ptr(),
+        score: h.score,
+        payload: if h.payload.is_empty() {
+            std::ptr::null()
+        } else {
+            h.payload.as_ptr()
+        },
+        payload_len: h.payload.len(),
+        has_vector: h.vector.is_some(),
+        vector: h.vector.as_ref().map_or(std::ptr::null(), |v| v.as_ptr()),
+        vector_len: h.vector.as_ref().map_or(0, Vec::len),
+    }
 }
 
 /// k-NN search. `query_opts` (JSON/MessagePack) is an optional
@@ -677,7 +720,12 @@ pub unsafe extern "C" fn vl_search(
     })
 }
 
-/// Text search (auto-embed collections).
+/// Text search (auto-embed collections). `query_opts` (JSON/MessagePack) is an
+/// optional `{ with_payload?, with_vector? }`. The core text path always ranks
+/// with the collection's default `ef_search` and does not accept a payload
+/// filter, so `ef_search`/`filter` here are rejected with a clear error pointing
+/// at `vl_hybrid_search` (which fuses text with a filter). `with_payload=false`
+/// strips payloads; `with_vector=true` attaches each hit's stored vector.
 ///
 /// # Safety
 /// `query` valid; `query_opts` valid or null/0; `out` valid.
@@ -686,8 +734,8 @@ pub unsafe extern "C" fn vl_search_text(
     c: *mut vl_collection,
     query: *const c_char,
     limit: u32,
-    _query_opts: *const u8,
-    _opts_len: usize,
+    query_opts: *const u8,
+    opts_len: usize,
     codec: u8,
     out: *mut *mut vl_hits,
 ) -> i32 {
@@ -697,10 +745,39 @@ pub unsafe extern "C" fn vl_search_text(
         }
         let coll = unsafe { coll_ref(c) }?;
         let q = unsafe { cstr(query) }?;
-        let hits = coll.search_text(q, limit as usize)?;
+        let opts = parse_query_opts(unsafe { opt_slice(query_opts, opts_len) }, codec)?;
+        if opts.filter.is_some() || opts.ef_search.is_some() {
+            return Err(invalid(
+                "text search does not accept filter/ef_search; use vl_hybrid_search \
+                 with a text query and a filter",
+            ));
+        }
+        let mut hits = coll.search_text(q, limit as usize)?;
+        apply_hit_projection(coll, &mut hits, &opts)?;
         unsafe { *out = hits_into_handle(hits, codec)? };
         Ok(())
     })
+}
+
+/// Apply `with_payload`/`with_vector` to hits the core returned with its own
+/// defaults (payload on, vector off): drop payloads when not wanted, and fetch
+/// each stored vector when the caller asked for it.
+fn apply_hit_projection(coll: &Collection, hits: &mut [Hit], opts: &QueryOpts) -> Result<()> {
+    if opts.with_payload == Some(false) {
+        for h in hits.iter_mut() {
+            h.payload = None;
+        }
+    }
+    if opts.with_vector == Some(true) {
+        for h in hits.iter_mut() {
+            if h.vector.is_none() {
+                if let Some(p) = coll.get(&h.id)? {
+                    h.vector = Some(p.vector);
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 fn parse_query_opts(bytes: &[u8], codec: u8) -> Result<QueryOpts> {
@@ -740,20 +817,7 @@ pub unsafe extern "C" fn vl_hits_get(hits: *const vl_hits, i: u32, out: *mut vl_
             .hits
             .get(i as usize)
             .ok_or_else(|| invalid("hit index out of range"))?;
-        let view = vl_hit_view {
-            id: h.id.as_ptr(),
-            score: h.score,
-            payload: if h.payload.is_empty() {
-                std::ptr::null()
-            } else {
-                h.payload.as_ptr()
-            },
-            payload_len: h.payload.len(),
-            has_vector: h.vector.is_some(),
-            vector: h.vector.as_ref().map_or(std::ptr::null(), |v| v.as_ptr()),
-            vector_len: h.vector.as_ref().map_or(0, Vec::len),
-        };
-        unsafe { *out = view };
+        unsafe { *out = hit_view_of(h) };
         Ok(())
     })
 }
@@ -784,6 +848,640 @@ pub unsafe extern "C" fn vl_buf_free(buf: *mut vl_buf) {
     }
     b.data = std::ptr::null_mut();
     b.len = 0;
+}
+
+// ── batch writes ─────────────────────────────────────────────────────────────
+/// Upsert many points at once. `points` is a JSON/MessagePack array of point
+/// objects `{ id, vector, payload?, sparse? }` (the SDK wire shape); the whole
+/// batch is validated and applied under one write path (FR-06).
+///
+/// # Safety
+/// `points`/`points_len` describe a valid slice; `c` is a live handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn vl_upsert_batch(
+    c: *mut vl_collection,
+    points: *const u8,
+    points_len: usize,
+    codec: u8,
+) -> i32 {
+    ffi(|| {
+        let coll = unsafe { coll_ref(c) }?;
+        let value = decode_value(unsafe { opt_slice(points, points_len) }, codec)?;
+        let batch: Vec<Point> =
+            serde_json::from_value(value).map_err(|e| invalid(&format!("points: {e}")))?;
+        coll.upsert_batch(batch)
+    })
+}
+
+/// Delete many ids. `ids` is a JSON/MessagePack array of strings; `out_deleted`
+/// (if non-null) receives how many were present.
+///
+/// # Safety
+/// `ids`/`ids_len` describe a valid slice; `out_deleted` is valid or null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn vl_delete_batch(
+    c: *mut vl_collection,
+    ids: *const u8,
+    ids_len: usize,
+    codec: u8,
+    out_deleted: *mut u64,
+) -> i32 {
+    ffi(|| {
+        let coll = unsafe { coll_ref(c) }?;
+        let value = decode_value(unsafe { opt_slice(ids, ids_len) }, codec)?;
+        let owned: Vec<String> =
+            serde_json::from_value(value).map_err(|e| invalid(&format!("ids: {e}")))?;
+        let refs: Vec<&str> = owned.iter().map(String::as_str).collect();
+        let n = coll.delete_batch(&refs)?;
+        if !out_deleted.is_null() {
+            unsafe { *out_deleted = n as u64 };
+        }
+        Ok(())
+    })
+}
+
+// ── batch search ─────────────────────────────────────────────────────────────
+/// One query's outcome inside a `vl_hits_batch`: a status code plus its hits
+/// (empty when the code is not `VL_OK`).
+struct BatchItem {
+    code: i32,
+    hits: Vec<HitOwned>,
+}
+
+/// Opaque result of `vl_search_batch`: one `BatchItem` per query, in order.
+pub struct vl_hits_batch {
+    items: Vec<BatchItem>,
+}
+
+/// Batch k-NN search. `vecs` is `n` contiguous query vectors of `dim` floats
+/// each; every query uses the same `limit` and the shared `query_opts`
+/// (`{ ef_search?, filter?, with_payload?, with_vector? }`). Per-query failures
+/// (e.g. a dimension mismatch) are reported per item, not as a whole-call error.
+///
+/// # Safety
+/// `vecs` points at `n * dim` valid floats; `query_opts` valid or null/0; `out`
+/// is valid.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn vl_search_batch(
+    c: *mut vl_collection,
+    vecs: *const f32,
+    n: usize,
+    dim: usize,
+    limit: u32,
+    query_opts: *const u8,
+    opts_len: usize,
+    codec: u8,
+    out: *mut *mut vl_hits_batch,
+) -> i32 {
+    ffi(|| {
+        if out.is_null() {
+            return Err(invalid("null out pointer"));
+        }
+        let coll = unsafe { coll_ref(c) }?;
+        if vecs.is_null() && n != 0 {
+            return Err(invalid("null query vectors"));
+        }
+        let flat = unsafe { opt_f32_slice(vecs, n.saturating_mul(dim)) };
+        let queries: Vec<&[f32]> = (0..n).map(|i| &flat[i * dim..(i + 1) * dim]).collect();
+        let opts = parse_query_opts(unsafe { opt_slice(query_opts, opts_len) }, codec)?;
+
+        // When the opts affect *which* results come back (a filter or a custom
+        // ef_search), each query must run through the full builder. Otherwise the
+        // core's parallel `search_batch` is used and payload/vector projection is
+        // applied after.
+        let needs_builder = opts.filter.is_some() || opts.ef_search.is_some();
+        let items = if needs_builder {
+            let mut items = Vec::with_capacity(n);
+            for q in &queries {
+                items.push(match run_query(coll, q, limit, opts.clone()) {
+                    Ok(hits) => BatchItem {
+                        code: VL_OK,
+                        hits: hits_to_owned(hits, codec)?,
+                    },
+                    Err(e) => batch_error_item(&e),
+                });
+            }
+            items
+        } else {
+            let owned: Vec<Vec<f32>> = queries.iter().map(|q| q.to_vec()).collect();
+            let mut items = Vec::with_capacity(n);
+            for r in coll.search_batch(&owned, limit as usize) {
+                items.push(match r {
+                    Ok(mut hits) => {
+                        apply_hit_projection(coll, &mut hits, &opts)?;
+                        BatchItem {
+                            code: VL_OK,
+                            hits: hits_to_owned(hits, codec)?,
+                        }
+                    }
+                    Err(e) => batch_error_item(&e),
+                });
+            }
+            items
+        };
+        unsafe { *out = Box::into_raw(Box::new(vl_hits_batch { items })) };
+        Ok(())
+    })
+}
+
+/// A failed-query batch item: record the code (authoritative) and stash the
+/// message in the thread-local (best-effort — last write wins).
+fn batch_error_item(e: &VecLiteError) -> BatchItem {
+    set_last_error(&e.to_string());
+    BatchItem {
+        code: code_for(e),
+        hits: Vec::new(),
+    }
+}
+
+/// Number of per-query results.
+///
+/// # Safety
+/// `batch` is a live `vl_hits_batch` (or null → 0).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn vl_hits_batch_len(batch: *const vl_hits_batch) -> u32 {
+    match unsafe { batch.as_ref() } {
+        Some(b) => b.items.len() as u32,
+        None => 0,
+    }
+}
+
+/// Status code for query `i` (`VL_OK` or a `VL_ERR_*`); `VL_ERR_INVALID_ARGUMENT`
+/// if `i` is out of range.
+///
+/// # Safety
+/// `batch` is a live handle (or null).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn vl_hits_batch_code(batch: *const vl_hits_batch, i: u32) -> i32 {
+    match unsafe { batch.as_ref() }.and_then(|b| b.items.get(i as usize)) {
+        Some(item) => item.code,
+        None => VL_ERR_INVALID_ARGUMENT,
+    }
+}
+
+/// Number of hits for query `i` (0 if out of range or the query failed).
+///
+/// # Safety
+/// `batch` is a live handle (or null).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn vl_hits_batch_hits_len(batch: *const vl_hits_batch, i: u32) -> u32 {
+    match unsafe { batch.as_ref() }.and_then(|b| b.items.get(i as usize)) {
+        Some(item) => item.hits.len() as u32,
+        None => 0,
+    }
+}
+
+/// Fill `out` with a borrowed view of hit `hit` in query `query`; returns
+/// `VL_ERR_INVALID_ARGUMENT` if either index is out of range. Views are valid
+/// until `vl_hits_batch_free`.
+///
+/// # Safety
+/// `batch` live; `out` valid.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn vl_hits_batch_hit(
+    batch: *const vl_hits_batch,
+    query: u32,
+    hit: u32,
+    out: *mut vl_hit_view,
+) -> i32 {
+    ffi(|| {
+        let batch = unsafe { batch.as_ref() }.ok_or_else(|| invalid("null hits-batch handle"))?;
+        if out.is_null() {
+            return Err(invalid("null out pointer"));
+        }
+        let item = batch
+            .items
+            .get(query as usize)
+            .ok_or_else(|| invalid("query index out of range"))?;
+        let h = item
+            .hits
+            .get(hit as usize)
+            .ok_or_else(|| invalid("hit index out of range"))?;
+        unsafe { *out = hit_view_of(h) };
+        Ok(())
+    })
+}
+
+/// Free a batch-search result set.
+///
+/// # Safety
+/// `batch` is a handle from `vl_search_batch` (or null).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn vl_hits_batch_free(batch: *mut vl_hits_batch) {
+    if !batch.is_null() {
+        drop(unsafe { Box::from_raw(batch) });
+    }
+}
+
+// ── hybrid search ────────────────────────────────────────────────────────────
+#[derive(serde::Deserialize, Default)]
+struct HybridOpts {
+    #[serde(default)]
+    dense: Option<Vec<f32>>,
+    #[serde(default)]
+    text: Option<String>,
+    #[serde(default)]
+    sparse: Option<SparseVector>,
+    #[serde(default)]
+    limit: Option<usize>,
+    #[serde(default)]
+    alpha: Option<f32>,
+    #[serde(default)]
+    rrf_k: Option<f32>,
+    #[serde(default)]
+    with_payload: Option<bool>,
+    #[serde(default)]
+    with_vector: Option<bool>,
+    #[serde(default)]
+    filter: Option<serde_json::Value>,
+}
+
+/// Hybrid (dense + sparse + text, RRF-fused) search. `opts` (JSON/MessagePack)
+/// is `{ dense?, text?, sparse?{indices,values}, limit?, alpha?, rrf_k?,
+/// with_payload?, with_vector?, filter? }` — at least one of dense/text/sparse
+/// must be present.
+///
+/// # Safety
+/// `opts`/`opts_len` describe a valid slice; `out` is valid.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn vl_hybrid_search(
+    c: *mut vl_collection,
+    opts: *const u8,
+    opts_len: usize,
+    codec: u8,
+    out: *mut *mut vl_hits,
+) -> i32 {
+    ffi(|| {
+        if out.is_null() {
+            return Err(invalid("null out pointer"));
+        }
+        let coll = unsafe { coll_ref(c) }?;
+        let value = decode_value(unsafe { opt_slice(opts, opts_len) }, codec)?;
+        let o: HybridOpts =
+            serde_json::from_value(value).map_err(|e| invalid(&format!("hybrid opts: {e}")))?;
+        if o.dense.is_none() && o.text.is_none() && o.sparse.is_none() {
+            return Err(invalid(
+                "hybrid search needs at least one of dense/text/sparse",
+            ));
+        }
+        // Owned locals outlive the borrowing builder within this scope.
+        let dense = o.dense;
+        let text = o.text;
+        let sparse = o.sparse;
+
+        let mut qb = coll.hybrid_query();
+        if let Some(d) = dense.as_deref() {
+            qb = qb.dense(d);
+        }
+        if let Some(t) = text.as_deref() {
+            qb = qb.text(t);
+        }
+        if let Some(s) = sparse.as_ref() {
+            qb = qb.sparse(s);
+        }
+        if let Some(l) = o.limit {
+            qb = qb.limit(l);
+        }
+        if let Some(a) = o.alpha {
+            qb = qb.alpha(a);
+        }
+        if let Some(k) = o.rrf_k {
+            qb = qb.rrf_k(k);
+        }
+        if let Some(p) = o.with_payload {
+            qb = qb.with_payload(p);
+        }
+        if let Some(v) = o.with_vector {
+            qb = qb.with_vector(v);
+        }
+        if let Some(f) = o.filter {
+            qb = qb.filter(Filter::from_json(&f)?);
+        }
+        let hits = qb.run()?;
+        unsafe { *out = hits_into_handle(hits, codec)? };
+        Ok(())
+    })
+}
+
+// ── scroll (paginated full scan) ─────────────────────────────────────────────
+/// Opaque scroll page: pre-encoded points plus the cursor for the next call.
+pub struct vl_page {
+    points: Vec<Vec<u8>>,
+    next_cursor: Option<CString>,
+}
+
+#[derive(serde::Deserialize, Default)]
+struct ScrollOpts {
+    #[serde(default)]
+    cursor: Option<String>,
+    #[serde(default)]
+    limit: Option<usize>,
+    #[serde(default)]
+    filter: Option<serde_json::Value>,
+}
+
+/// Default scroll page size when `scroll_opts.limit` is absent.
+const DEFAULT_SCROLL_LIMIT: usize = 100;
+
+/// Scroll the collection in id order. `scroll_opts` (optional JSON/MessagePack)
+/// is `{ cursor?, limit?, filter? }`: `cursor` is absent on the first call, then
+/// the value from `vl_page_cursor` for each subsequent page. Points in the page
+/// are encoded with `codec`, fetched one at a time via `vl_page_point`.
+///
+/// # Safety
+/// `scroll_opts` valid or null/0; `out` valid.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn vl_scroll(
+    c: *mut vl_collection,
+    scroll_opts: *const u8,
+    len: usize,
+    codec: u8,
+    out: *mut *mut vl_page,
+) -> i32 {
+    ffi(|| {
+        if out.is_null() {
+            return Err(invalid("null out pointer"));
+        }
+        let coll = unsafe { coll_ref(c) }?;
+        let obytes = unsafe { opt_slice(scroll_opts, len) };
+        let opts: ScrollOpts = if obytes.is_empty() {
+            ScrollOpts::default()
+        } else {
+            serde_json::from_value(decode_value(obytes, codec)?)
+                .map_err(|e| invalid(&format!("scroll opts: {e}")))?
+        };
+        let filter = match opts.filter {
+            Some(f) => Some(Filter::from_json(&f)?),
+            None => None,
+        };
+        let limit = opts.limit.unwrap_or(DEFAULT_SCROLL_LIMIT);
+        let page = coll.scroll(opts.cursor.as_deref(), limit, filter.as_ref())?;
+        let points: Result<Vec<Vec<u8>>> = page
+            .points
+            .iter()
+            .map(|p| {
+                let value = serde_json::json!({
+                    "id": p.id,
+                    "vector": p.vector,
+                    "payload": p.payload,
+                    "sparse": p.sparse,
+                });
+                encode(&value, codec)
+            })
+            .collect();
+        let next_cursor = match page.next_cursor {
+            Some(s) => Some(CString::new(s).map_err(|_| invalid("cursor has an interior NUL"))?),
+            None => None,
+        };
+        unsafe {
+            *out = Box::into_raw(Box::new(vl_page {
+                points: points?,
+                next_cursor,
+            }));
+        }
+        Ok(())
+    })
+}
+
+/// Number of points in the page.
+///
+/// # Safety
+/// `page` is a live handle (or null → 0).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn vl_page_len(page: *const vl_page) -> u32 {
+    match unsafe { page.as_ref() } {
+        Some(p) => p.points.len() as u32,
+        None => 0,
+    }
+}
+
+/// Copy point `i`'s encoded bytes into `out` (owned; free with `vl_buf_free`).
+/// `VL_ERR_INVALID_ARGUMENT` if `i` is out of range.
+///
+/// # Safety
+/// `page` live; `out` valid.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn vl_page_point(page: *const vl_page, i: u32, out: *mut vl_buf) -> i32 {
+    ffi(|| {
+        let page = unsafe { page.as_ref() }.ok_or_else(|| invalid("null page handle"))?;
+        if out.is_null() {
+            return Err(invalid("null out pointer"));
+        }
+        let bytes = page
+            .points
+            .get(i as usize)
+            .ok_or_else(|| invalid("point index out of range"))?;
+        unsafe { *out = buf_from_vec(bytes.clone()) };
+        Ok(())
+    })
+}
+
+/// The cursor for the next page, or null when the scan is exhausted. Borrowed;
+/// valid until `vl_page_free`.
+///
+/// # Safety
+/// `page` is a live handle (or null → null).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn vl_page_cursor(page: *const vl_page) -> *const c_char {
+    match unsafe { page.as_ref() } {
+        Some(p) => p
+            .next_cursor
+            .as_ref()
+            .map_or(std::ptr::null(), |c| c.as_ptr()),
+        None => std::ptr::null(),
+    }
+}
+
+/// Free a scroll page.
+///
+/// # Safety
+/// `page` is a handle from `vl_scroll` (or null).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn vl_page_free(page: *mut vl_page) {
+    if !page.is_null() {
+        drop(unsafe { Box::from_raw(page) });
+    }
+}
+
+// ── maintenance ──────────────────────────────────────────────────────────────
+/// Rebuild the ANN index from the live vectors (exact, potentially slow).
+///
+/// # Safety
+/// `c` is a live handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn vl_collection_reindex(c: *mut vl_collection) -> i32 {
+    ffi(|| unsafe { coll_ref(c) }?.reindex())
+}
+
+/// Refit the text embedder's vocabulary and re-embed every text document.
+///
+/// # Safety
+/// `c` is a live handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn vl_collection_refit(c: *mut vl_collection) -> i32 {
+    ffi(|| unsafe { coll_ref(c) }?.refit())
+}
+
+/// Declare a payload index on `key`. `kind` is one of `VL_PIDX_KEYWORD` (0),
+/// `VL_PIDX_INTEGER` (1), or `VL_PIDX_FLOAT` (2).
+///
+/// # Safety
+/// `c` live; `key` valid.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn vl_payload_index_create(
+    c: *mut vl_collection,
+    key: *const c_char,
+    kind: u8,
+) -> i32 {
+    ffi(|| {
+        let coll = unsafe { coll_ref(c) }?;
+        let key = unsafe { cstr(key) }?;
+        coll.create_payload_index(key, payload_index_kind(kind)?)
+    })
+}
+
+fn payload_index_kind(kind: u8) -> Result<PayloadIndexKind> {
+    match kind {
+        VL_PIDX_KEYWORD => Ok(PayloadIndexKind::Keyword),
+        VL_PIDX_INTEGER => Ok(PayloadIndexKind::Integer),
+        VL_PIDX_FLOAT => Ok(PayloadIndexKind::Float),
+        other => Err(invalid(&format!(
+            "unknown payload index kind {other} (0=keyword, 1=integer, 2=float)"
+        ))),
+    }
+}
+
+// ── database maintenance ─────────────────────────────────────────────────────
+/// Write a consistent snapshot of the whole database to `path`.
+///
+/// # Safety
+/// `db` live; `path` valid.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn vl_db_snapshot(db: *mut vl_db, path: *const c_char) -> i32 {
+    ffi(|| {
+        let db = unsafe { db_ref(db) }?;
+        db.snapshot(unsafe { cstr(path) }?)
+    })
+}
+
+/// Reclaim space from tombstoned/rewritten data.
+///
+/// # Safety
+/// `db` is a live handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn vl_db_vacuum(db: *mut vl_db) -> i32 {
+    ffi(|| unsafe { db_ref(db) }?.vacuum())
+}
+
+/// Encode a database overview into `out` (freed with `vl_buf_free`):
+/// `{ format_version, collections: [{ name, dimension, len, tombstones,
+/// auto_embed, payload_indexes: [[field, kind]] }], aliases: [[alias, target]] }`.
+///
+/// # Safety
+/// `db` live; `out` valid.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn vl_db_info(db: *mut vl_db, codec: u8, out: *mut vl_buf) -> i32 {
+    ffi(|| {
+        if out.is_null() {
+            return Err(invalid("null out pointer"));
+        }
+        let db = unsafe { db_ref(db) }?;
+        let mut collections = Vec::new();
+        for name in db.list_collections() {
+            let s = db.collection(&name)?.stats();
+            let indexes: Vec<serde_json::Value> = s
+                .payload_indexes
+                .iter()
+                .map(|(field, kind)| serde_json::json!([field, payload_index_kind_str(*kind)]))
+                .collect();
+            collections.push(serde_json::json!({
+                "name": s.name,
+                "dimension": s.dimension,
+                "len": s.len,
+                "tombstones": s.tombstones,
+                "auto_embed": s.auto_embed,
+                "payload_indexes": indexes,
+            }));
+        }
+        let aliases: Vec<serde_json::Value> = db
+            .aliases()
+            .into_iter()
+            .map(|(a, t)| serde_json::json!([a, t]))
+            .collect();
+        let value = serde_json::json!({
+            "format_version": vl_format_version(),
+            "collections": collections,
+            "aliases": aliases,
+        });
+        unsafe { *out = buf_from_vec(encode(&value, codec)?) };
+        Ok(())
+    })
+}
+
+fn payload_index_kind_str(kind: PayloadIndexKind) -> &'static str {
+    match kind {
+        PayloadIndexKind::Keyword => "keyword",
+        PayloadIndexKind::Integer => "integer",
+        PayloadIndexKind::Float => "float",
+    }
+}
+
+// ── chunking (pure text utility) ─────────────────────────────────────────────
+#[derive(serde::Deserialize, Default)]
+struct ChunkOpts {
+    #[serde(default)]
+    max_chars: Option<usize>,
+    #[serde(default)]
+    overlap: Option<usize>,
+}
+
+/// Split `text` into overlapping chunks. `opts` (optional JSON/MessagePack) is
+/// `{ max_chars?, overlap? }`. Encodes `[{ text, start, end }]` into `out`
+/// (freed with `vl_buf_free`). A pure function — no database needed.
+///
+/// # Safety
+/// `text` valid; `opts` valid or null/0; `out` valid.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn vl_chunk(
+    text: *const c_char,
+    opts: *const u8,
+    opts_len: usize,
+    codec: u8,
+    out: *mut vl_buf,
+) -> i32 {
+    ffi(|| {
+        if out.is_null() {
+            return Err(invalid("null out pointer"));
+        }
+        let text = unsafe { cstr(text) }?;
+        let obytes = unsafe { opt_slice(opts, opts_len) };
+        let co: ChunkOpts = if obytes.is_empty() {
+            ChunkOpts::default()
+        } else {
+            serde_json::from_value(decode_value(obytes, codec)?)
+                .map_err(|e| invalid(&format!("chunk opts: {e}")))?
+        };
+        let mut options = ChunkOptions::default();
+        if let Some(m) = co.max_chars {
+            options.max_chars = m;
+        }
+        if let Some(o) = co.overlap {
+            options.overlap = o;
+        }
+        let chunks: Vec<serde_json::Value> = Chunker::new(options)
+            .chunk(text)
+            .into_iter()
+            .map(|ch| {
+                serde_json::json!({
+                    "text": ch.text,
+                    "start": ch.byte_range.start,
+                    "end": ch.byte_range.end,
+                })
+            })
+            .collect();
+        unsafe { *out = buf_from_vec(encode(&chunks, codec)?) };
+        Ok(())
+    })
 }
 
 /// Test-only hook: forces a panic to exercise the `catch_unwind` boundary

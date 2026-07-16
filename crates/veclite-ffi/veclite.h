@@ -59,6 +59,15 @@
 #define VL_CODEC_MSGPACK 1
 
 /**
+ * Payload-index kinds for `vl_payload_index_create` (SPEC-006 §index kinds).
+ */
+#define VL_PIDX_KEYWORD 0
+
+#define VL_PIDX_INTEGER 1
+
+#define VL_PIDX_FLOAT 2
+
+/**
  * Opaque collection handle.
  */
 typedef struct vl_collection vl_collection;
@@ -72,6 +81,16 @@ typedef struct vl_db vl_db;
  * Opaque search-result set.
  */
 typedef struct vl_hits vl_hits;
+
+/**
+ * Opaque result of `vl_search_batch`: one `BatchItem` per query, in order.
+ */
+typedef struct vl_hits_batch vl_hits_batch;
+
+/**
+ * Opaque scroll page: pre-encoded points plus the cursor for the next call.
+ */
+typedef struct vl_page vl_page;
 
 /**
  * An owned byte buffer returned to the caller; free with `vl_buf_free`.
@@ -326,7 +345,12 @@ int32_t vl_search(vl_collection *c,
                   vl_hits **out);
 
 /**
- * Text search (auto-embed collections).
+ * Text search (auto-embed collections). `query_opts` (JSON/MessagePack) is an
+ * optional `{ with_payload?, with_vector? }`. The core text path always ranks
+ * with the collection's default `ef_search` and does not accept a payload
+ * filter, so `ef_search`/`filter` here are rejected with a clear error pointing
+ * at `vl_hybrid_search` (which fuses text with a filter). `with_payload=false`
+ * strips payloads; `with_vector=true` attaches each hit's stored vector.
  *
  * # Safety
  * `query` valid; `query_opts` valid or null/0; `out` valid.
@@ -334,8 +358,8 @@ int32_t vl_search(vl_collection *c,
 int32_t vl_search_text(vl_collection *c,
                        const char *query,
                        uint32_t limit,
-                       const uint8_t *_query_opts,
-                       uintptr_t _opts_len,
+                       const uint8_t *query_opts,
+                       uintptr_t opts_len,
                        uint8_t codec,
                        vl_hits **out);
 
@@ -371,6 +395,227 @@ void vl_hits_free(vl_hits *hits);
  * `buf` points at a `vl_buf` filled by the library (or null).
  */
 void vl_buf_free(vl_buf *buf);
+
+/**
+ * Upsert many points at once. `points` is a JSON/MessagePack array of point
+ * objects `{ id, vector, payload?, sparse? }` (the SDK wire shape); the whole
+ * batch is validated and applied under one write path (FR-06).
+ *
+ * # Safety
+ * `points`/`points_len` describe a valid slice; `c` is a live handle.
+ */
+int32_t vl_upsert_batch(vl_collection *c,
+                        const uint8_t *points,
+                        uintptr_t points_len,
+                        uint8_t codec);
+
+/**
+ * Delete many ids. `ids` is a JSON/MessagePack array of strings; `out_deleted`
+ * (if non-null) receives how many were present.
+ *
+ * # Safety
+ * `ids`/`ids_len` describe a valid slice; `out_deleted` is valid or null.
+ */
+int32_t vl_delete_batch(vl_collection *c,
+                        const uint8_t *ids,
+                        uintptr_t ids_len,
+                        uint8_t codec,
+                        uint64_t *out_deleted);
+
+/**
+ * Batch k-NN search. `vecs` is `n` contiguous query vectors of `dim` floats
+ * each; every query uses the same `limit` and the shared `query_opts`
+ * (`{ ef_search?, filter?, with_payload?, with_vector? }`). Per-query failures
+ * (e.g. a dimension mismatch) are reported per item, not as a whole-call error.
+ *
+ * # Safety
+ * `vecs` points at `n * dim` valid floats; `query_opts` valid or null/0; `out`
+ * is valid.
+ */
+int32_t vl_search_batch(vl_collection *c,
+                        const float *vecs,
+                        uintptr_t n,
+                        uintptr_t dim,
+                        uint32_t limit,
+                        const uint8_t *query_opts,
+                        uintptr_t opts_len,
+                        uint8_t codec,
+                        vl_hits_batch **out);
+
+/**
+ * Number of per-query results.
+ *
+ * # Safety
+ * `batch` is a live `vl_hits_batch` (or null → 0).
+ */
+uint32_t vl_hits_batch_len(const vl_hits_batch *batch);
+
+/**
+ * Status code for query `i` (`VL_OK` or a `VL_ERR_*`); `VL_ERR_INVALID_ARGUMENT`
+ * if `i` is out of range.
+ *
+ * # Safety
+ * `batch` is a live handle (or null).
+ */
+int32_t vl_hits_batch_code(const vl_hits_batch *batch, uint32_t i);
+
+/**
+ * Number of hits for query `i` (0 if out of range or the query failed).
+ *
+ * # Safety
+ * `batch` is a live handle (or null).
+ */
+uint32_t vl_hits_batch_hits_len(const vl_hits_batch *batch, uint32_t i);
+
+/**
+ * Fill `out` with a borrowed view of hit `hit` in query `query`; returns
+ * `VL_ERR_INVALID_ARGUMENT` if either index is out of range. Views are valid
+ * until `vl_hits_batch_free`.
+ *
+ * # Safety
+ * `batch` live; `out` valid.
+ */
+int32_t vl_hits_batch_hit(const vl_hits_batch *batch,
+                          uint32_t query,
+                          uint32_t hit,
+                          vl_hit_view *out);
+
+/**
+ * Free a batch-search result set.
+ *
+ * # Safety
+ * `batch` is a handle from `vl_search_batch` (or null).
+ */
+void vl_hits_batch_free(vl_hits_batch *batch);
+
+/**
+ * Hybrid (dense + sparse + text, RRF-fused) search. `opts` (JSON/MessagePack)
+ * is `{ dense?, text?, sparse?{indices,values}, limit?, alpha?, rrf_k?,
+ * with_payload?, with_vector?, filter? }` — at least one of dense/text/sparse
+ * must be present.
+ *
+ * # Safety
+ * `opts`/`opts_len` describe a valid slice; `out` is valid.
+ */
+int32_t vl_hybrid_search(vl_collection *c,
+                         const uint8_t *opts,
+                         uintptr_t opts_len,
+                         uint8_t codec,
+                         vl_hits **out);
+
+/**
+ * Scroll the collection in id order. `scroll_opts` (optional JSON/MessagePack)
+ * is `{ cursor?, limit?, filter? }`: `cursor` is absent on the first call, then
+ * the value from `vl_page_cursor` for each subsequent page. Points in the page
+ * are encoded with `codec`, fetched one at a time via `vl_page_point`.
+ *
+ * # Safety
+ * `scroll_opts` valid or null/0; `out` valid.
+ */
+int32_t vl_scroll(vl_collection *c,
+                  const uint8_t *scroll_opts,
+                  uintptr_t len,
+                  uint8_t codec,
+                  vl_page **out);
+
+/**
+ * Number of points in the page.
+ *
+ * # Safety
+ * `page` is a live handle (or null → 0).
+ */
+uint32_t vl_page_len(const vl_page *page);
+
+/**
+ * Copy point `i`'s encoded bytes into `out` (owned; free with `vl_buf_free`).
+ * `VL_ERR_INVALID_ARGUMENT` if `i` is out of range.
+ *
+ * # Safety
+ * `page` live; `out` valid.
+ */
+int32_t vl_page_point(const vl_page *page, uint32_t i, vl_buf *out);
+
+/**
+ * The cursor for the next page, or null when the scan is exhausted. Borrowed;
+ * valid until `vl_page_free`.
+ *
+ * # Safety
+ * `page` is a live handle (or null → null).
+ */
+const char *vl_page_cursor(const vl_page *page);
+
+/**
+ * Free a scroll page.
+ *
+ * # Safety
+ * `page` is a handle from `vl_scroll` (or null).
+ */
+void vl_page_free(vl_page *page);
+
+/**
+ * Rebuild the ANN index from the live vectors (exact, potentially slow).
+ *
+ * # Safety
+ * `c` is a live handle.
+ */
+int32_t vl_collection_reindex(vl_collection *c);
+
+/**
+ * Refit the text embedder's vocabulary and re-embed every text document.
+ *
+ * # Safety
+ * `c` is a live handle.
+ */
+int32_t vl_collection_refit(vl_collection *c);
+
+/**
+ * Declare a payload index on `key`. `kind` is one of `VL_PIDX_KEYWORD` (0),
+ * `VL_PIDX_INTEGER` (1), or `VL_PIDX_FLOAT` (2).
+ *
+ * # Safety
+ * `c` live; `key` valid.
+ */
+int32_t vl_payload_index_create(vl_collection *c, const char *key, uint8_t kind);
+
+/**
+ * Write a consistent snapshot of the whole database to `path`.
+ *
+ * # Safety
+ * `db` live; `path` valid.
+ */
+int32_t vl_db_snapshot(vl_db *db, const char *path);
+
+/**
+ * Reclaim space from tombstoned/rewritten data.
+ *
+ * # Safety
+ * `db` is a live handle.
+ */
+int32_t vl_db_vacuum(vl_db *db);
+
+/**
+ * Encode a database overview into `out` (freed with `vl_buf_free`):
+ * `{ format_version, collections: [{ name, dimension, len, tombstones,
+ * auto_embed, payload_indexes: [[field, kind]] }], aliases: [[alias, target]] }`.
+ *
+ * # Safety
+ * `db` live; `out` valid.
+ */
+int32_t vl_db_info(vl_db *db, uint8_t codec, vl_buf *out);
+
+/**
+ * Split `text` into overlapping chunks. `opts` (optional JSON/MessagePack) is
+ * `{ max_chars?, overlap? }`. Encodes `[{ text, start, end }]` into `out`
+ * (freed with `vl_buf_free`). A pure function — no database needed.
+ *
+ * # Safety
+ * `text` valid; `opts` valid or null/0; `out` valid.
+ */
+int32_t vl_chunk(const char *text,
+                 const uint8_t *opts,
+                 uintptr_t opts_len,
+                 uint8_t codec,
+                 vl_buf *out);
 
 /**
  * Test-only hook: forces a panic to exercise the `catch_unwind` boundary
