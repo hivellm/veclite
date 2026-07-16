@@ -131,6 +131,32 @@ mod tests {
     }
 
     #[test]
+    fn short_text_below_n_size_is_treated_as_a_single_ngram() {
+        // "hi" has 2 chars, shorter than n = 3: `extract_ngrams` degrades to
+        // a single ngram containing the whole text rather than panicking on
+        // the `chars.len() - n` subtraction.
+        let mut c = CharNgram::new(8, 3);
+        c.fit(&["hi", "hi there"]).unwrap_or_else(|e| panic!("{e}"));
+        let v = c.embed("hi").unwrap_or_else(|e| panic!("{e}"));
+        assert!(v.iter().any(|&x| x != 0.0));
+    }
+
+    #[test]
+    fn embed_of_unmatched_text_yields_zero_vector() {
+        let mut c = CharNgram::new(32, DEFAULT_N);
+        c.fit(&["hello world", "goodbye world"])
+            .unwrap_or_else(|e| panic!("{e}"));
+        let v = c.embed("").unwrap_or_else(|e| panic!("{e}"));
+        assert!(v.iter().all(|&x| x == 0.0));
+    }
+
+    #[test]
+    fn dimension_reports_the_configured_size() {
+        let c = CharNgram::new(40, DEFAULT_N);
+        assert_eq!(c.dimension(), 40);
+    }
+
+    #[test]
     fn round_trips_state() {
         let mut c = CharNgram::new(64, 3);
         c.fit(&["abcdef", "abcxyz"])

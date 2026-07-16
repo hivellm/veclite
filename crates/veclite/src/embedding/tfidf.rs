@@ -187,6 +187,55 @@ mod tests {
     use super::*;
 
     #[test]
+    fn add_document_keeps_legacy_terms_fitted_weight_when_untracked() {
+        // Simulates importing pre-3f state (EMB-010): a vocabulary term with
+        // a fitted IDF weight but no entry in `doc_frequencies` (defaulted
+        // empty on deserialize). Adding an unrelated document must not
+        // touch that term's weight — legacy terms stay exact until the
+        // next `refit`.
+        let mut vocabulary = HashMap::new();
+        vocabulary.insert("legacy".to_string(), 0);
+        let mut t = TfIdf {
+            dimension: 4,
+            vocabulary,
+            idf_weights: vec![0.42],
+            doc_frequencies: HashMap::new(),
+            total_docs: 3,
+        };
+        t.add_document("brand new words here");
+        assert_eq!(t.idf_weights[0], 0.42);
+    }
+
+    #[test]
+    fn embed_ignores_out_of_vocabulary_terms() {
+        let mut t = TfIdf::new(32);
+        t.fit(&["the quick brown fox", "the lazy brown dog"])
+            .unwrap_or_else(|e| panic!("{e}"));
+        let known = t.embed("quick brown").unwrap_or_else(|e| panic!("{e}"));
+        let with_unknown = t
+            .embed("quick brown zzzqqqxyz")
+            .unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(known, with_unknown);
+    }
+
+    #[test]
+    fn dimension_reports_the_configured_size() {
+        let t = TfIdf::new(20);
+        assert_eq!(t.dimension(), 20);
+    }
+
+    #[test]
+    fn embed_of_entirely_unknown_text_yields_zero_vector() {
+        let mut t = TfIdf::new(32);
+        t.fit(&["the quick brown fox", "the lazy brown dog"])
+            .unwrap_or_else(|e| panic!("{e}"));
+        let v = t
+            .embed("zzzqqq xyzzy plugh")
+            .unwrap_or_else(|e| panic!("{e}"));
+        assert!(v.iter().all(|&x| x == 0.0));
+    }
+
+    #[test]
     fn fit_embed_and_round_trip() {
         let mut t = TfIdf::new(32);
         t.fit(&[

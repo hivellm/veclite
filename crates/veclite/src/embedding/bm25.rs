@@ -298,6 +298,58 @@ mod tests {
     }
 
     #[test]
+    fn fit_with_empty_corpus_yields_zero_average_length_and_empty_embedding() {
+        let mut bm = Bm25::new(16);
+        bm.fit(&[]).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(bm.vocabulary_size(), 0);
+        assert_eq!(bm.avg_doc_length, 0.0);
+        let v = bm
+            .embed("anything at all")
+            .unwrap_or_else(|e| panic!("{e}"));
+        assert!(v.iter().all(|&x| x == 0.0));
+    }
+
+    #[test]
+    fn bm25_score_is_zero_when_untrained_or_term_absent_from_corpus() {
+        // Untrained state: `avg_doc_length` is 0.0 before any `fit`.
+        let untrained = Bm25::new(8);
+        assert_eq!(untrained.bm25_score(1, 1, 1), 0.0);
+
+        // Trained state, but the queried term has doc_freq == 0 (absent).
+        let mut bm = Bm25::new(8);
+        bm.fit(&["x y", "x z"]).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(bm.bm25_score(1, 1, 0), 0.0);
+    }
+
+    #[test]
+    fn embed_skips_vocabulary_entries_with_a_stale_out_of_range_index() {
+        // A hand-edited/corrupted imported state can carry a vocabulary
+        // index that no longer fits `dimension` (e.g. after shrinking it
+        // out of band); `embed` must skip such entries instead of
+        // panicking on out-of-bounds indexing.
+        let mut vocabulary = HashMap::new();
+        vocabulary.insert("cat".to_string(), 0);
+        vocabulary.insert("dog".to_string(), 5); // out of range for dimension 2
+        let mut doc_freq = HashMap::new();
+        doc_freq.insert("cat".to_string(), 1);
+        doc_freq.insert("dog".to_string(), 1);
+        let bm = Bm25 {
+            dimension: 2,
+            vocabulary,
+            doc_freq,
+            doc_lengths: vec![2],
+            avg_doc_length: 2.0,
+            total_docs: 1,
+            k1: 1.5,
+            b: 0.75,
+        };
+        let v = bm.embed("cat dog").unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(v.len(), 2);
+        assert!(v[0] > 0.0, "in-range term must still be scored");
+        assert_eq!(v[1], 0.0, "index 5 was out of range and must be skipped");
+    }
+
+    #[test]
     fn bm25_idf_and_tf_match_the_formula() {
         // Two docs, one term "x" in both → df=2, N=2.
         let mut bm = Bm25::new(8);

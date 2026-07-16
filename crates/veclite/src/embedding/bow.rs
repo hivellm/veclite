@@ -110,6 +110,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn embed_of_unknown_terms_yields_zero_vector_without_dividing_by_zero() {
+        let mut b = BagOfWords::new(16);
+        b.fit(&["alpha beta gamma", "beta gamma delta"])
+            .unwrap_or_else(|e| panic!("{e}"));
+        let v = b.embed("zzz qqq unknown").unwrap_or_else(|e| panic!("{e}"));
+        assert!(v.iter().all(|&x| x == 0.0));
+    }
+
+    #[test]
+    fn dimension_reports_the_configured_size() {
+        let b = BagOfWords::new(24);
+        assert_eq!(b.dimension(), 24);
+    }
+
+    #[test]
     fn fit_embed_and_round_trip() {
         let mut b = BagOfWords::new(16);
         b.fit(&["alpha beta gamma", "beta gamma delta"])
