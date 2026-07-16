@@ -10,6 +10,7 @@
 //! gate). `crash-child` is the internal driver the harness spawns.
 
 mod conformance;
+mod coverage;
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -72,9 +73,10 @@ fn main() {
         "crash" => cmd_crash(&args[2..]),
         "crash-child" => cmd_crash_child(&args[2..]),
         "conformance" => conformance::run(&args[2..]),
+        "coverage" => coverage::run(&args[2..]),
         _ => {
             eprintln!(
-                "usage: cargo xtask <crash [in_process_iters] [kill_iters] | conformance [--bless] [corpus_dir]>"
+                "usage: cargo xtask <crash [in_process_iters] [kill_iters] | conformance [--bless] [corpus_dir] | coverage>"
             );
             2
         }

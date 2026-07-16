@@ -1,0 +1,42 @@
+name: VecLite Coverage
+
+# Enforces the per-crate line-coverage floors (docs/COVERAGE.md) via
+# `cargo xtask coverage`. The floors are below 100 % on purpose — the residual
+# is justified-unreachable code (defensive guards, OS-failure I/O, arch-gated
+# SIMD, test-harness panic arms), documented in docs/COVERAGE.md.
+#
+# NOTE: GitHub Actions is currently disabled for this repo (CI budget); the gate
+# runs locally with `cargo xtask coverage`.
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'crates/**'
+      - 'xtask/**'
+      - '.github/workflows/veclite-coverage.yml'
+  pull_request:
+    branches: [ '**' ]
+    paths:
+      - 'crates/**'
+      - 'xtask/**'
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  coverage:
+    name: Line-coverage floor
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: coverage
+      - name: Enforce coverage floors
+        run: cargo xtask coverage
