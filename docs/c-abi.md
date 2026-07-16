@@ -92,6 +92,33 @@ int main(void) {
 `ffi/smoke.c` + `ffi/smoke.sh` in the repo are exactly this link-and-run check,
 run against every shipped bundle in CI (the no-toolchain gate, REL-020).
 
+## Stability & safety guarantees
+
+- **Header freeze** — `crates/veclite-ffi/veclite.h` is the committed golden
+  header. A drift test regenerates it from the `extern "C"` surface and fails the
+  build on any mismatch (FFI-006), so the header can never lag the code. The ABI
+  is additive-only within a major version; gate loaders on `vl_abi_version()`.
+- **Rust API freeze** — the `veclite` crate's public API is frozen
+  (`crates/veclite/public-api.txt`); `cargo xtask api-freeze` fails on any
+  non-additive change (SPEC-004 §8).
+- **Sanitizers** — `tests/c/full_smoke.c` runs the full lifecycle
+  (open → create → upsert_batch → search → scroll → close) under AddressSanitizer
+  + LeakSanitizer (zero leaks), and `tests/c/concurrency.c` hammers one `vl_db`
+  from 16 threads under ThreadSanitizer (no data races). Run them with
+  `tests/c/sanitize.sh` on Linux.
+
+## Complete function list
+
+The full v1 surface (SPEC-008 §2) is in `veclite.h`: lifecycle
+(`vl_open`/`vl_open_memory`/`vl_db_close`/`vl_db_snapshot`/`vl_db_vacuum`/
+`vl_db_checkpoint`/`vl_db_info`), collections and aliases, single and batch
+writes (`vl_upsert`/`vl_upsert_text`/`vl_upsert_batch`/`vl_delete`/
+`vl_delete_batch`), reads and search (`vl_get`/`vl_count`/`vl_search`/
+`vl_search_text`/`vl_hybrid_search`/`vl_search_batch`/`vl_scroll`), maintenance
+(`vl_collection_reindex`/`vl_collection_refit`/`vl_payload_index_create`), the
+`vl_chunk` text utility, and the result readers/frees. Structured arguments and
+results cross as JSON (`codec = 0`) or MessagePack (`codec = 1`).
+
 ## Building the libraries yourself
 
 Not required (use the release artifacts), but if you must:
