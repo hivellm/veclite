@@ -386,12 +386,15 @@ impl Database {
             guard.take()
         };
         if let Some(db) = taken {
-            tokio::task::spawn_blocking(move || {
-                let _ = db.checkpoint(); // best-effort flush
-                drop(db); // releases the advisory lock
-            })
-            .await
-            .map_err(|e| arg_err(e.to_string()))?;
+            // Drop inline rather than on `spawn_blocking`: the handle (and its
+            // advisory file lock) must be released before this future resolves so
+            // an immediate reopen of the same path succeeds. `spawn_blocking` for
+            // a `()`-returning close is not reliably driven to completion on every
+            // napi host (e.g. Bun), which would leave the lock held; this future
+            // runs on the tokio worker pool, so the brief checkpoint does not
+            // block the JS event loop.
+            let _ = db.checkpoint(); // best-effort flush
+            drop(db); // releases the advisory lock
         }
         Ok(())
     }

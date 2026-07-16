@@ -64,10 +64,66 @@ for (const Cls of [native.Database, native.Collection]) {
   }
 }
 
+// ── leaked-handle warning (NODE-013) ────────────────────────────────────────
+// A file-backed Database holds an advisory file lock and defers a close-time
+// checkpoint until close(). If it is garbage-collected without close(), warn —
+// the same discipline Node uses for unclosed file descriptors. Memory databases
+// hold no external resource, so they are not tracked. Each tracked db carries an
+// unregister token; close() removes it so a properly-closed handle never warns.
+const registry =
+  typeof FinalizationRegistry === 'function'
+    ? new FinalizationRegistry((path) => {
+        process.emitWarning(
+          `VecLite database "${path}" was garbage-collected without close(). ` +
+            `Call db.close() to release the file lock and run the close-time ` +
+            `checkpoint deterministically (NODE-013).`,
+          { code: 'VECLITE_HANDLE_LEAK' },
+        );
+      })
+    : null;
+
+const tokens = new WeakMap();
+
+// Track a file-backed handle so a leak warns; return it unchanged.
+function track(db, path) {
+  if (registry && db && typeof db === 'object') {
+    const token = {};
+    registry.register(db, path, token);
+    tokens.set(db, token);
+  }
+  return db;
+}
+
+// Stop tracking a handle (called from close(), and idempotent).
+function untrack(db) {
+  if (registry) {
+    const token = tokens.get(db);
+    if (token !== undefined) {
+      registry.unregister(token);
+      tokens.delete(db);
+    }
+  }
+}
+
+// close() must un-track before releasing, so a closed handle never warns.
+const nativeClose = native.Database.prototype.close;
+native.Database.prototype.close = function close(...args) {
+  untrack(this);
+  return nativeClose.apply(this, args);
+};
+
+// Register file-backed databases from the two path-taking factories.
+const openWrapped = wrap(native.open);
+const openSyncWrapped = wrap(native.openSync);
+
 module.exports = {
-  open: wrap(native.open),
-  openSync: wrap(native.openSync),
-  memory: native.memory, // infallible
+  open: async function open(path, ...rest) {
+    return track(await openWrapped(path, ...rest), path);
+  },
+  openSync: function openSync(path, ...rest) {
+    return track(openSyncWrapped(path, ...rest), path);
+  },
+  memory: native.memory, // infallible; in-memory, no external resource to leak
   chunk: native.chunk, // infallible, pure (SPEC-005 §7)
   Database: native.Database,
   Collection: native.Collection,

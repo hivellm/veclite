@@ -21,7 +21,7 @@
   "scripts": {
     "build": "napi build --platform --release",
     "build:debug": "napi build --platform",
-    "test": "node --test __test__/"
+    "test": "node --expose-gc --test \"__test__/*.test.mjs\""
   },
   "devDependencies": {
     "@napi-rs/cli": "^2.18.4"

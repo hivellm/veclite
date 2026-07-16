@@ -168,10 +168,18 @@ function openDb(path) {
 // Drop leaked native handles: force GC and drain a macrotask so napi
 // finalizers run (V8 GC is not synchronous like Python refcounting), releasing
 // the advisory file lock before a reopen or the next file-backed case.
+// Force finalization of leaked per-op Collection handles (which keep file
+// mappings — and thus the OS lock — alive) so an immediate same-path reopen
+// succeeds. Node exposes `global.gc` under --expose-gc; Bun exposes `Bun.gc`.
+function forceGc() {
+  if (typeof Bun !== 'undefined' && typeof Bun.gc === 'function') Bun.gc(true);
+  else if (global.gc) global.gc();
+}
+
 async function drainHandles() {
-  if (global.gc) global.gc();
+  forceGc();
   await new Promise((r) => setImmediate(r));
-  if (global.gc) global.gc();
+  forceGc();
 }
 
 async function runCase(caseDef, golden) {
