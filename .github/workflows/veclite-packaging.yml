@@ -71,6 +71,13 @@ jobs:
           python -m pip install --no-index --find-links dist veclite
           python tests/conformance/runners/python/run.py
 
+      - name: pytest on the built wheel (register_embedder, aio, zero-copy, GIL)
+        if: matrix.native
+        shell: bash
+        run: |
+          python -m pip install numpy pytest
+          python -m pytest crates/veclite-py/tests -q
+
       - uses: actions/upload-artifact@v4
         with:
           name: wheels-${{ matrix.target }}-${{ matrix.manylinux || matrix.os }}
