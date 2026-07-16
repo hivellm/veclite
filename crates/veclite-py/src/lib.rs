@@ -4,6 +4,8 @@
 //! call (PY-030), and every `VecLiteError` variant surfaces as a dedicated
 //! exception subclass carrying the identical Rust message (PY-040).
 
+use std::cell::RefCell;
+
 use numpy::{PyArray1, PyArray2, PyArrayMethods};
 use pyo3::create_exception;
 use pyo3::exceptions::PyException;
@@ -12,7 +14,26 @@ use pyo3::types::PyDict;
 use pythonize::{depythonize, pythonize};
 
 use veclite::chunk::{ChunkOptions, Chunker};
+use veclite::embedding::Embedder;
 use veclite::{CollectionOptions, Filter, Hit, Metric, Point, Quantization, SparseVector};
+
+thread_local! {
+    /// When a Python `register_embedder` callback raises, its original `PyErr`
+    /// is stashed here so [`to_pyerr`] can chain it as the `__cause__` of the
+    /// surfaced `VecLiteError` (PY-013). The core turns the callback failure into
+    /// a `VecLiteError` that carries no Python object, so this thread-local
+    /// carries the original exception across the Rust boundary. It is set only
+    /// immediately before returning the sentinel error and consumed by the very
+    /// next `to_pyerr`, so it never goes stale.
+    static EMBEDDER_ERR: RefCell<Option<PyErr>> = const { RefCell::new(None) };
+}
+
+/// Stash a Python embedder exception and return the sentinel core error that
+/// propagates it out through the Rust core.
+fn stash_embedder_err(e: PyErr) -> veclite::VecLiteError {
+    EMBEDDER_ERR.with(|slot| *slot.borrow_mut() = Some(e));
+    veclite::VecLiteError::InvalidArgument("python embedder callback raised".to_owned())
+}
 
 // ── exception hierarchy (PY-040) ─────────────────────────────────────────────
 create_exception!(veclite, VecLiteError, PyException, "Base VecLite error.");
@@ -31,9 +52,11 @@ create_exception!(veclite, InvalidArgument, VecLiteError);
 create_exception!(veclite, IoError, VecLiteError);
 
 /// Map a core error to its dedicated Python exception with the identical message.
+/// If the failure originated in a Python `register_embedder` callback, the
+/// original exception is chained as the surfaced error's `__cause__` (PY-013).
 fn to_pyerr(e: veclite::VecLiteError) -> PyErr {
     let msg = e.to_string();
-    match e {
+    let err = match e {
         veclite::VecLiteError::CollectionNotFound(_) => CollectionNotFound::new_err(msg),
         veclite::VecLiteError::VectorNotFound(_) => VectorNotFound::new_err(msg),
         veclite::VecLiteError::AlreadyExists(_) => AlreadyExists::new_err(msg),
@@ -49,7 +72,12 @@ fn to_pyerr(e: veclite::VecLiteError) -> PyErr {
         veclite::VecLiteError::Io(_) => IoError::new_err(msg),
         // `VecLiteError` is #[non_exhaustive]; a future variant maps to the base.
         _ => VecLiteError::new_err(msg),
+    };
+    // Chain the original Python embedder exception, if this error carried one.
+    if let Some(cause) = EMBEDDER_ERR.with(|slot| slot.borrow_mut().take()) {
+        Python::with_gil(|py| err.set_cause(py, Some(cause)));
     }
+    err
 }
 
 fn metric_from_str(s: &str) -> PyResult<Metric> {
@@ -102,6 +130,109 @@ fn hit_to_py(py: Python<'_>, h: Hit) -> PyResult<PyObject> {
 
 fn hits_to_py(py: Python<'_>, hits: Vec<Hit>) -> PyResult<Vec<PyObject>> {
     hits.into_iter().map(|h| hit_to_py(py, h)).collect()
+}
+
+// ── custom Python embedders (PY-013) ─────────────────────────────────────────
+/// A `veclite::Embedder` backed by a Python object. The object must expose
+/// `embed(str) -> list[float] | np.ndarray` and a `dimension` property; `fit`,
+/// `export_state`, and `import_state` are used when present, else treated as
+/// no-ops (a stateless embedder). Every callback runs under the GIL, which the
+/// core has released via `allow_threads` before reaching here, so re-acquiring
+/// is safe. A raised Python exception is stashed (see [`stash_embedder_err`]) and
+/// surfaces as a chained `VecLiteError`.
+struct PyEmbedder {
+    obj: Py<PyAny>,
+    /// The dimension is read once at registration; embedders have a fixed width.
+    dimension: usize,
+}
+
+/// Convert an embedder's return value — a `float32`/`float64` NumPy array or any
+/// sequence of floats — into a `Vec<f32>`.
+fn extract_embedding(obj: &Bound<'_, PyAny>) -> PyResult<Vec<f32>> {
+    if let Ok(arr) = obj.downcast::<PyArray1<f32>>() {
+        return Ok(arr.readonly().as_slice()?.to_vec());
+    }
+    obj.extract::<Vec<f32>>()
+}
+
+impl Embedder for PyEmbedder {
+    fn embed(&self, text: &str) -> veclite::error::Result<Vec<f32>> {
+        Python::with_gil(|py| {
+            self.obj
+                .bind(py)
+                .call_method1("embed", (text,))
+                .and_then(|r| extract_embedding(&r))
+                .map_err(stash_embedder_err)
+        })
+    }
+
+    fn embed_batch(&self, texts: &[&str]) -> veclite::error::Result<Vec<Vec<f32>>> {
+        Python::with_gil(|py| {
+            let obj = self.obj.bind(py);
+            // Prefer a batch method when the object provides one; else fall back
+            // to per-text embed (the trait default, but kept on one GIL hold).
+            if obj.hasattr("embed_batch").unwrap_or(false) {
+                let out = obj
+                    .call_method1("embed_batch", (texts.to_vec(),))
+                    .map_err(stash_embedder_err)?;
+                let rows = out.try_iter().map_err(stash_embedder_err)?;
+                rows.map(|row| {
+                    let row = row.map_err(stash_embedder_err)?;
+                    extract_embedding(&row).map_err(stash_embedder_err)
+                })
+                .collect()
+            } else {
+                texts
+                    .iter()
+                    .map(|t| {
+                        obj.call_method1("embed", (*t,))
+                            .and_then(|r| extract_embedding(&r))
+                            .map_err(stash_embedder_err)
+                    })
+                    .collect()
+            }
+        })
+    }
+
+    fn dimension(&self) -> usize {
+        self.dimension
+    }
+
+    fn fit(&mut self, corpus: &[&str]) -> veclite::error::Result<()> {
+        Python::with_gil(|py| {
+            let obj = self.obj.bind(py);
+            if !obj.hasattr("fit").unwrap_or(false) {
+                return Ok(()); // stateless embedder
+            }
+            obj.call_method1("fit", (corpus.to_vec(),))
+                .map(|_| ())
+                .map_err(stash_embedder_err)
+        })
+    }
+
+    fn export_state(&self) -> veclite::error::Result<Vec<u8>> {
+        Python::with_gil(|py| {
+            let obj = self.obj.bind(py);
+            if !obj.hasattr("export_state").unwrap_or(false) {
+                return Ok(Vec::new()); // stateless: nothing to persist
+            }
+            obj.call_method0("export_state")
+                .and_then(|r| r.extract::<Vec<u8>>())
+                .map_err(stash_embedder_err)
+        })
+    }
+
+    fn import_state(&mut self, state: &[u8]) -> veclite::error::Result<()> {
+        Python::with_gil(|py| {
+            let obj = self.obj.bind(py);
+            if !obj.hasattr("import_state").unwrap_or(false) {
+                return Ok(());
+            }
+            obj.call_method1("import_state", (state.to_vec(),))
+                .map(|_| ())
+                .map_err(stash_embedder_err)
+        })
+    }
 }
 
 // ── Collection ───────────────────────────────────────────────────────────────
@@ -491,6 +622,35 @@ impl Database {
         py.allow_threads(|| self.inner.checkpoint())
             .map_err(to_pyerr)
     }
+
+    /// Register a custom embedding provider implemented in Python (PY-013). `obj`
+    /// must expose `embed(str) -> list[float] | np.ndarray` and a `dimension`
+    /// property; `embed_batch`, `fit`, `export_state`, and `import_state` are
+    /// used when present. Auto-embed collections created with
+    /// `embedding_provider="name"` then route through `obj`. Exceptions raised in
+    /// the callback surface as a `VecLiteError` with the original chained.
+    fn register_embedder(&self, name: &str, obj: Bound<'_, PyAny>) -> PyResult<()> {
+        if !obj.hasattr("embed")? {
+            return Err(InvalidArgument::new_err(
+                "embedder object must define embed(text)",
+            ));
+        }
+        let dimension = obj
+            .getattr("dimension")
+            .map_err(|_| InvalidArgument::new_err("embedder object must have a `dimension`"))?
+            .extract::<usize>()
+            .map_err(|_| InvalidArgument::new_err("embedder `dimension` must be an int"))?;
+        if dimension == 0 {
+            return Err(InvalidArgument::new_err("embedder `dimension` must be > 0"));
+        }
+        let embedder = PyEmbedder {
+            obj: obj.unbind(),
+            dimension,
+        };
+        self.inner
+            .register_embedder(name, Box::new(embedder))
+            .map_err(to_pyerr)
+    }
 }
 
 /// Split `text` into overlapping, UTF-8-safe chunks (SPEC-005 §7). Returns a
@@ -511,9 +671,11 @@ fn chunk(py: Python<'_>, text: &str, max_chars: usize, overlap: usize) -> PyResu
         .collect()
 }
 
-/// The `veclite` extension module.
+/// The compiled `veclite._veclite` extension module. The pure-Python `veclite`
+/// package (python/veclite/__init__.py) re-exports it and adds the lazy
+/// `veclite.aio` async facade (PY-031).
 #[pymodule]
-#[pyo3(name = "veclite")]
+#[pyo3(name = "_veclite")]
 fn veclite_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     m.add("format_version", 1u32)?;

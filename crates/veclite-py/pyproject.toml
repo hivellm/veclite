@@ -20,3 +20,7 @@ numpy = ["numpy>=1.21"]
 [tool.maturin]
 # abi3 wheel: one wheel works on CPython 3.9+ with no Rust toolchain (PY-001).
 features = ["pyo3/abi3-py39"]
+# Mixed layout: the compiled extension is `veclite._veclite`; the pure-Python
+# `veclite` package in python/ re-exports it and adds `veclite.aio` (PY-031).
+python-source = "python"
+module-name = "veclite._veclite"
