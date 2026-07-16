@@ -40,6 +40,8 @@ roaring = "0.10"
 xxhash-rust = { version = "0.8", features = ["xxh64"] }
 uuid = { version = "1", features = ["v4"] }
 fs4 = "0.13"
+# C ABI header generation + committed golden-file drift test (SPEC-008 FFI-006).
+cbindgen = "0.29"
 # mmap primary read path for larger-than-RAM collections (SPEC-002 STG-004,
 # ADR-0004). Native-only alongside the storage module gate.
 memmap2 = "0.9"

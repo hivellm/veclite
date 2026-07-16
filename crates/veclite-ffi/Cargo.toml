@@ -19,5 +19,10 @@ serde = { workspace = true }
 serde_json.workspace = true
 rmp-serde.workspace = true
 
+[dev-dependencies]
+# Golden-file drift test regenerates veclite.h in-process and diffs it against
+# the committed header (FFI-006) — no external cbindgen binary needed.
+cbindgen.workspace = true
+
 [lints]
 workspace = true

@@ -1,0 +1,1315 @@
+pub mod veclite
+pub mod veclite::chunk
+pub struct veclite::chunk::Chunk
+pub veclite::chunk::Chunk::byte_range: core::ops::range::Range<usize>
+pub veclite::chunk::Chunk::text: alloc::string::String
+impl core::clone::Clone for veclite::chunk::Chunk
+pub fn veclite::chunk::Chunk::clone(&self) -> veclite::chunk::Chunk
+impl core::cmp::Eq for veclite::chunk::Chunk
+impl core::cmp::PartialEq for veclite::chunk::Chunk
+pub fn veclite::chunk::Chunk::eq(&self, &veclite::chunk::Chunk) -> bool
+impl core::fmt::Debug for veclite::chunk::Chunk
+pub fn veclite::chunk::Chunk::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for veclite::chunk::Chunk
+impl core::marker::Freeze for veclite::chunk::Chunk
+impl core::marker::Send for veclite::chunk::Chunk
+impl core::marker::Sync for veclite::chunk::Chunk
+impl core::marker::Unpin for veclite::chunk::Chunk
+impl core::marker::UnsafeUnpin for veclite::chunk::Chunk
+impl core::panic::unwind_safe::RefUnwindSafe for veclite::chunk::Chunk
+impl core::panic::unwind_safe::UnwindSafe for veclite::chunk::Chunk
+pub struct veclite::chunk::ChunkOptions
+pub veclite::chunk::ChunkOptions::max_chars: usize
+pub veclite::chunk::ChunkOptions::overlap: usize
+impl core::clone::Clone for veclite::chunk::ChunkOptions
+pub fn veclite::chunk::ChunkOptions::clone(&self) -> veclite::chunk::ChunkOptions
+impl core::default::Default for veclite::chunk::ChunkOptions
+pub fn veclite::chunk::ChunkOptions::default() -> Self
+impl core::fmt::Debug for veclite::chunk::ChunkOptions
+pub fn veclite::chunk::ChunkOptions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for veclite::chunk::ChunkOptions
+impl core::marker::Freeze for veclite::chunk::ChunkOptions
+impl core::marker::Send for veclite::chunk::ChunkOptions
+impl core::marker::Sync for veclite::chunk::ChunkOptions
+impl core::marker::Unpin for veclite::chunk::ChunkOptions
+impl core::marker::UnsafeUnpin for veclite::chunk::ChunkOptions
+impl core::panic::unwind_safe::RefUnwindSafe for veclite::chunk::ChunkOptions
+impl core::panic::unwind_safe::UnwindSafe for veclite::chunk::ChunkOptions
+pub struct veclite::chunk::Chunker
+impl veclite::chunk::Chunker
+pub fn veclite::chunk::Chunker::chunk(&self, &str) -> alloc::vec::Vec<veclite::chunk::Chunk>
+pub fn veclite::chunk::Chunker::new(veclite::chunk::ChunkOptions) -> Self
+impl core::clone::Clone for veclite::chunk::Chunker
+pub fn veclite::chunk::Chunker::clone(&self) -> veclite::chunk::Chunker
+impl core::fmt::Debug for veclite::chunk::Chunker
+pub fn veclite::chunk::Chunker::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for veclite::chunk::Chunker
+impl core::marker::Send for veclite::chunk::Chunker
+impl core::marker::Sync for veclite::chunk::Chunker
+impl core::marker::Unpin for veclite::chunk::Chunker
+impl core::marker::UnsafeUnpin for veclite::chunk::Chunker
+impl core::panic::unwind_safe::RefUnwindSafe for veclite::chunk::Chunker
+impl core::panic::unwind_safe::UnwindSafe for veclite::chunk::Chunker
+pub mod veclite::collection
+pub struct veclite::collection::Collection
+impl veclite::collection::Collection
+pub fn veclite::collection::Collection::create_payload_index(&self, &str, veclite::options::PayloadIndexKind) -> veclite::error::Result<()>
+impl veclite::collection::Collection
+pub fn veclite::collection::Collection::delete(&self, &str) -> veclite::error::Result<bool>
+pub fn veclite::collection::Collection::delete_batch(&self, &[&str]) -> veclite::error::Result<usize>
+pub fn veclite::collection::Collection::get(&self, &str) -> veclite::error::Result<core::option::Option<veclite::point::Point>>
+pub fn veclite::collection::Collection::hybrid_query(&self) -> veclite::hybrid::HybridQuery<'_>
+pub fn veclite::collection::Collection::is_empty(&self) -> bool
+pub fn veclite::collection::Collection::len(&self) -> usize
+pub fn veclite::collection::Collection::name(&self) -> alloc::string::String
+pub fn veclite::collection::Collection::query<'a>(&'a self, &'a [f32]) -> veclite::query::QueryBuilder<'a>
+pub fn veclite::collection::Collection::refit(&self) -> veclite::error::Result<()>
+pub fn veclite::collection::Collection::reindex(&self) -> veclite::error::Result<()>
+pub fn veclite::collection::Collection::scroll(&self, core::option::Option<&str>, usize, core::option::Option<&veclite::filter::Filter>) -> veclite::error::Result<veclite::collection::ScrollPage>
+pub fn veclite::collection::Collection::search(&self, &[f32], usize) -> veclite::error::Result<alloc::vec::Vec<veclite::point::Hit>>
+pub fn veclite::collection::Collection::search_batch(&self, &[alloc::vec::Vec<f32>], usize) -> alloc::vec::Vec<veclite::error::Result<alloc::vec::Vec<veclite::point::Hit>>>
+pub fn veclite::collection::Collection::search_sparse(&self, &veclite::point::SparseVector, usize) -> veclite::error::Result<alloc::vec::Vec<veclite::point::Hit>>
+pub fn veclite::collection::Collection::search_text(&self, &str, usize) -> veclite::error::Result<alloc::vec::Vec<veclite::point::Hit>>
+pub fn veclite::collection::Collection::stats(&self) -> veclite::collection::CollectionStats
+pub fn veclite::collection::Collection::upsert(&self, veclite::point::Point) -> veclite::error::Result<()>
+pub fn veclite::collection::Collection::upsert_batch(&self, alloc::vec::Vec<veclite::point::Point>) -> veclite::error::Result<()>
+pub fn veclite::collection::Collection::upsert_text(&self, impl core::convert::Into<alloc::string::String>, impl core::convert::Into<alloc::string::String>) -> veclite::error::Result<()>
+pub fn veclite::collection::Collection::upsert_text_batch(&self, alloc::vec::Vec<(alloc::string::String, alloc::string::String, core::option::Option<serde_json::value::Value>)>) -> veclite::error::Result<()>
+pub fn veclite::collection::Collection::upsert_text_with(&self, impl core::convert::Into<alloc::string::String>, impl core::convert::Into<alloc::string::String>, serde_json::value::Value) -> veclite::error::Result<()>
+impl core::clone::Clone for veclite::collection::Collection
+pub fn veclite::collection::Collection::clone(&self) -> veclite::collection::Collection
+impl core::marker::Freeze for veclite::collection::Collection
+impl core::marker::Send for veclite::collection::Collection
+impl core::marker::Sync for veclite::collection::Collection
+impl core::marker::Unpin for veclite::collection::Collection
+impl core::marker::UnsafeUnpin for veclite::collection::Collection
+impl !core::panic::unwind_safe::RefUnwindSafe for veclite::collection::Collection
+impl !core::panic::unwind_safe::UnwindSafe for veclite::collection::Collection
+pub struct veclite::collection::CollectionStats
+pub veclite::collection::CollectionStats::auto_embed: bool
+pub veclite::collection::CollectionStats::dimension: usize
+pub veclite::collection::CollectionStats::len: usize
+pub veclite::collection::CollectionStats::name: alloc::string::String
+pub veclite::collection::CollectionStats::payload_indexes: alloc::vec::Vec<(alloc::string::String, veclite::options::PayloadIndexKind)>
+pub veclite::collection::CollectionStats::tombstones: usize
+impl core::clone::Clone for veclite::collection::CollectionStats
+pub fn veclite::collection::CollectionStats::clone(&self) -> veclite::collection::CollectionStats
+impl core::cmp::Eq for veclite::collection::CollectionStats
+impl core::cmp::PartialEq for veclite::collection::CollectionStats
+pub fn veclite::collection::CollectionStats::eq(&self, &veclite::collection::CollectionStats) -> bool
+impl core::fmt::Debug for veclite::collection::CollectionStats
+pub fn veclite::collection::CollectionStats::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for veclite::collection::CollectionStats
+impl core::marker::Freeze for veclite::collection::CollectionStats
+impl core::marker::Send for veclite::collection::CollectionStats
+impl core::marker::Sync for veclite::collection::CollectionStats
+impl core::marker::Unpin for veclite::collection::CollectionStats
+impl core::marker::UnsafeUnpin for veclite::collection::CollectionStats
+impl core::panic::unwind_safe::RefUnwindSafe for veclite::collection::CollectionStats
+impl core::panic::unwind_safe::UnwindSafe for veclite::collection::CollectionStats
+pub struct veclite::collection::ScrollPage
+pub veclite::collection::ScrollPage::next_cursor: core::option::Option<alloc::string::String>
+pub veclite::collection::ScrollPage::points: alloc::vec::Vec<veclite::point::Point>
+impl core::clone::Clone for veclite::collection::ScrollPage
+pub fn veclite::collection::ScrollPage::clone(&self) -> veclite::collection::ScrollPage
+impl core::fmt::Debug for veclite::collection::ScrollPage
+pub fn veclite::collection::ScrollPage::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for veclite::collection::ScrollPage
+impl core::marker::Send for veclite::collection::ScrollPage
+impl core::marker::Sync for veclite::collection::ScrollPage
+impl core::marker::Unpin for veclite::collection::ScrollPage
+impl core::marker::UnsafeUnpin for veclite::collection::ScrollPage
+impl core::panic::unwind_safe::RefUnwindSafe for veclite::collection::ScrollPage
+impl core::panic::unwind_safe::UnwindSafe for veclite::collection::ScrollPage
+pub mod veclite::database
+pub struct veclite::database::VecLite
+impl veclite::database::VecLite
+pub fn veclite::database::VecLite::aliases(&self) -> alloc::vec::Vec<(alloc::string::String, alloc::string::String)>
+pub fn veclite::database::VecLite::checkpoint(&self) -> veclite::error::Result<()>
+pub fn veclite::database::VecLite::collection(&self, &str) -> veclite::error::Result<veclite::collection::Collection>
+pub fn veclite::database::VecLite::create_alias(&self, &str, &str) -> veclite::error::Result<()>
+pub fn veclite::database::VecLite::create_collection(&self, &str, veclite::options::CollectionOptions) -> veclite::error::Result<veclite::collection::Collection>
+pub fn veclite::database::VecLite::delete_alias(&self, &str) -> veclite::error::Result<()>
+pub fn veclite::database::VecLite::delete_collection(&self, &str) -> veclite::error::Result<()>
+pub fn veclite::database::VecLite::list_collections(&self) -> alloc::vec::Vec<alloc::string::String>
+pub fn veclite::database::VecLite::memory() -> Self
+pub fn veclite::database::VecLite::open(impl core::convert::AsRef<std::path::Path>) -> veclite::error::Result<Self>
+pub fn veclite::database::VecLite::open_with(impl core::convert::AsRef<std::path::Path>, veclite::options::OpenOptions) -> veclite::error::Result<Self>
+pub fn veclite::database::VecLite::register_embedder(&self, &str, alloc::boxed::Box<dyn veclite::embedding::Embedder>) -> veclite::error::Result<()>
+pub fn veclite::database::VecLite::rename_collection(&self, &str, &str) -> veclite::error::Result<()>
+pub fn veclite::database::VecLite::snapshot(&self, impl core::convert::AsRef<std::path::Path>) -> veclite::error::Result<()>
+pub fn veclite::database::VecLite::vacuum(&self) -> veclite::error::Result<()>
+impl core::clone::Clone for veclite::database::VecLite
+pub fn veclite::database::VecLite::clone(&self) -> veclite::database::VecLite
+impl core::ops::drop::Drop for veclite::database::VecLite
+pub fn veclite::database::VecLite::drop(&mut self)
+impl core::marker::Freeze for veclite::database::VecLite
+impl core::marker::Send for veclite::database::VecLite
+impl core::marker::Sync for veclite::database::VecLite
+impl core::marker::Unpin for veclite::database::VecLite
+impl core::marker::UnsafeUnpin for veclite::database::VecLite
+impl !core::panic::unwind_safe::RefUnwindSafe for veclite::database::VecLite
+impl !core::panic::unwind_safe::UnwindSafe for veclite::database::VecLite
+pub mod veclite::embedding
+pub mod veclite::embedding::bm25
+pub struct veclite::embedding::bm25::Bm25
+impl veclite::embedding::bm25::Bm25
+pub fn veclite::embedding::bm25::Bm25::new(usize) -> Self
+pub fn veclite::embedding::bm25::Bm25::vocabulary_size(&self) -> usize
+impl core::clone::Clone for veclite::embedding::bm25::Bm25
+pub fn veclite::embedding::bm25::Bm25::clone(&self) -> veclite::embedding::bm25::Bm25
+impl core::fmt::Debug for veclite::embedding::bm25::Bm25
+pub fn veclite::embedding::bm25::Bm25::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for veclite::embedding::bm25::Bm25
+pub fn veclite::embedding::bm25::Bm25::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl veclite::embedding::Embedder for veclite::embedding::bm25::Bm25
+pub fn veclite::embedding::bm25::Bm25::add_document(&mut self, &str)
+pub fn veclite::embedding::bm25::Bm25::dimension(&self) -> usize
+pub fn veclite::embedding::bm25::Bm25::embed(&self, &str) -> veclite::error::Result<alloc::vec::Vec<f32>>
+pub fn veclite::embedding::bm25::Bm25::embed_batch(&self, &[&str]) -> veclite::error::Result<alloc::vec::Vec<alloc::vec::Vec<f32>>>
+pub fn veclite::embedding::bm25::Bm25::export_state(&self) -> veclite::error::Result<alloc::vec::Vec<u8>>
+pub fn veclite::embedding::bm25::Bm25::fit(&mut self, &[&str]) -> veclite::error::Result<()>
+pub fn veclite::embedding::bm25::Bm25::import_state(&mut self, &[u8]) -> veclite::error::Result<()>
+impl<'de> serde_core::de::Deserialize<'de> for veclite::embedding::bm25::Bm25
+pub fn veclite::embedding::bm25::Bm25::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for veclite::embedding::bm25::Bm25
+impl core::marker::Send for veclite::embedding::bm25::Bm25
+impl core::marker::Sync for veclite::embedding::bm25::Bm25
+impl core::marker::Unpin for veclite::embedding::bm25::Bm25
+impl core::marker::UnsafeUnpin for veclite::embedding::bm25::Bm25
+impl core::panic::unwind_safe::RefUnwindSafe for veclite::embedding::bm25::Bm25
+impl core::panic::unwind_safe::UnwindSafe for veclite::embedding::bm25::Bm25
+pub mod veclite::embedding::bow
+pub struct veclite::embedding::bow::BagOfWords
+impl veclite::embedding::bow::BagOfWords
+pub fn veclite::embedding::bow::BagOfWords::new(usize) -> Self
+impl core::clone::Clone for veclite::embedding::bow::BagOfWords
+pub fn veclite::embedding::bow::BagOfWords::clone(&self) -> veclite::embedding::bow::BagOfWords
+impl core::fmt::Debug for veclite::embedding::bow::BagOfWords
+pub fn veclite::embedding::bow::BagOfWords::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for veclite::embedding::bow::BagOfWords
+pub fn veclite::embedding::bow::BagOfWords::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl veclite::embedding::Embedder for veclite::embedding::bow::BagOfWords
+pub fn veclite::embedding::bow::BagOfWords::add_document(&mut self, &str)
+pub fn veclite::embedding::bow::BagOfWords::dimension(&self) -> usize
+pub fn veclite::embedding::bow::BagOfWords::embed(&self, &str) -> veclite::error::Result<alloc::vec::Vec<f32>>
+pub fn veclite::embedding::bow::BagOfWords::embed_batch(&self, &[&str]) -> veclite::error::Result<alloc::vec::Vec<alloc::vec::Vec<f32>>>
+pub fn veclite::embedding::bow::BagOfWords::export_state(&self) -> veclite::error::Result<alloc::vec::Vec<u8>>
+pub fn veclite::embedding::bow::BagOfWords::fit(&mut self, &[&str]) -> veclite::error::Result<()>
+pub fn veclite::embedding::bow::BagOfWords::import_state(&mut self, &[u8]) -> veclite::error::Result<()>
+impl<'de> serde_core::de::Deserialize<'de> for veclite::embedding::bow::BagOfWords
+pub fn veclite::embedding::bow::BagOfWords::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for veclite::embedding::bow::BagOfWords
+impl core::marker::Send for veclite::embedding::bow::BagOfWords
+impl core::marker::Sync for veclite::embedding::bow::BagOfWords
+impl core::marker::Unpin for veclite::embedding::bow::BagOfWords
+impl core::marker::UnsafeUnpin for veclite::embedding::bow::BagOfWords
+impl core::panic::unwind_safe::RefUnwindSafe for veclite::embedding::bow::BagOfWords
+impl core::panic::unwind_safe::UnwindSafe for veclite::embedding::bow::BagOfWords
+pub mod veclite::embedding::char_ngram
+pub struct veclite::embedding::char_ngram::CharNgram
+impl veclite::embedding::char_ngram::CharNgram
+pub fn veclite::embedding::char_ngram::CharNgram::new(usize, usize) -> Self
+impl core::clone::Clone for veclite::embedding::char_ngram::CharNgram
+pub fn veclite::embedding::char_ngram::CharNgram::clone(&self) -> veclite::embedding::char_ngram::CharNgram
+impl core::fmt::Debug for veclite::embedding::char_ngram::CharNgram
+pub fn veclite::embedding::char_ngram::CharNgram::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for veclite::embedding::char_ngram::CharNgram
+pub fn veclite::embedding::char_ngram::CharNgram::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl veclite::embedding::Embedder for veclite::embedding::char_ngram::CharNgram
+pub fn veclite::embedding::char_ngram::CharNgram::add_document(&mut self, &str)
+pub fn veclite::embedding::char_ngram::CharNgram::dimension(&self) -> usize
+pub fn veclite::embedding::char_ngram::CharNgram::embed(&self, &str) -> veclite::error::Result<alloc::vec::Vec<f32>>
+pub fn veclite::embedding::char_ngram::CharNgram::embed_batch(&self, &[&str]) -> veclite::error::Result<alloc::vec::Vec<alloc::vec::Vec<f32>>>
+pub fn veclite::embedding::char_ngram::CharNgram::export_state(&self) -> veclite::error::Result<alloc::vec::Vec<u8>>
+pub fn veclite::embedding::char_ngram::CharNgram::fit(&mut self, &[&str]) -> veclite::error::Result<()>
+pub fn veclite::embedding::char_ngram::CharNgram::import_state(&mut self, &[u8]) -> veclite::error::Result<()>
+impl<'de> serde_core::de::Deserialize<'de> for veclite::embedding::char_ngram::CharNgram
+pub fn veclite::embedding::char_ngram::CharNgram::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for veclite::embedding::char_ngram::CharNgram
+impl core::marker::Send for veclite::embedding::char_ngram::CharNgram
+impl core::marker::Sync for veclite::embedding::char_ngram::CharNgram
+impl core::marker::Unpin for veclite::embedding::char_ngram::CharNgram
+impl core::marker::UnsafeUnpin for veclite::embedding::char_ngram::CharNgram
+impl core::panic::unwind_safe::RefUnwindSafe for veclite::embedding::char_ngram::CharNgram
+impl core::panic::unwind_safe::UnwindSafe for veclite::embedding::char_ngram::CharNgram
+pub const veclite::embedding::char_ngram::DEFAULT_N: usize
+pub mod veclite::embedding::tfidf
+pub struct veclite::embedding::tfidf::TfIdf
+impl veclite::embedding::tfidf::TfIdf
+pub fn veclite::embedding::tfidf::TfIdf::new(usize) -> Self
+impl core::clone::Clone for veclite::embedding::tfidf::TfIdf
+pub fn veclite::embedding::tfidf::TfIdf::clone(&self) -> veclite::embedding::tfidf::TfIdf
+impl core::fmt::Debug for veclite::embedding::tfidf::TfIdf
+pub fn veclite::embedding::tfidf::TfIdf::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for veclite::embedding::tfidf::TfIdf
+pub fn veclite::embedding::tfidf::TfIdf::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl veclite::embedding::Embedder for veclite::embedding::tfidf::TfIdf
+pub fn veclite::embedding::tfidf::TfIdf::add_document(&mut self, &str)
+pub fn veclite::embedding::tfidf::TfIdf::dimension(&self) -> usize
+pub fn veclite::embedding::tfidf::TfIdf::embed(&self, &str) -> veclite::error::Result<alloc::vec::Vec<f32>>
+pub fn veclite::embedding::tfidf::TfIdf::embed_batch(&self, &[&str]) -> veclite::error::Result<alloc::vec::Vec<alloc::vec::Vec<f32>>>
+pub fn veclite::embedding::tfidf::TfIdf::export_state(&self) -> veclite::error::Result<alloc::vec::Vec<u8>>
+pub fn veclite::embedding::tfidf::TfIdf::fit(&mut self, &[&str]) -> veclite::error::Result<()>
+pub fn veclite::embedding::tfidf::TfIdf::import_state(&mut self, &[u8]) -> veclite::error::Result<()>
+impl<'de> serde_core::de::Deserialize<'de> for veclite::embedding::tfidf::TfIdf
+pub fn veclite::embedding::tfidf::TfIdf::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for veclite::embedding::tfidf::TfIdf
+impl core::marker::Send for veclite::embedding::tfidf::TfIdf
+impl core::marker::Sync for veclite::embedding::tfidf::TfIdf
+impl core::marker::Unpin for veclite::embedding::tfidf::TfIdf
+impl core::marker::UnsafeUnpin for veclite::embedding::tfidf::TfIdf
+impl core::panic::unwind_safe::RefUnwindSafe for veclite::embedding::tfidf::TfIdf
+impl core::panic::unwind_safe::UnwindSafe for veclite::embedding::tfidf::TfIdf
+pub const veclite::embedding::DEFAULT_PROVIDER: &str
+pub trait veclite::embedding::Embedder: core::marker::Send + core::marker::Sync
+pub fn veclite::embedding::Embedder::add_document(&mut self, &str)
+pub fn veclite::embedding::Embedder::dimension(&self) -> usize
+pub fn veclite::embedding::Embedder::embed(&self, &str) -> veclite::error::Result<alloc::vec::Vec<f32>>
+pub fn veclite::embedding::Embedder::embed_batch(&self, &[&str]) -> veclite::error::Result<alloc::vec::Vec<alloc::vec::Vec<f32>>>
+pub fn veclite::embedding::Embedder::export_state(&self) -> veclite::error::Result<alloc::vec::Vec<u8>>
+pub fn veclite::embedding::Embedder::fit(&mut self, &[&str]) -> veclite::error::Result<()>
+pub fn veclite::embedding::Embedder::import_state(&mut self, &[u8]) -> veclite::error::Result<()>
+impl veclite::embedding::Embedder for veclite::embedding::bm25::Bm25
+pub fn veclite::embedding::bm25::Bm25::add_document(&mut self, &str)
+pub fn veclite::embedding::bm25::Bm25::dimension(&self) -> usize
+pub fn veclite::embedding::bm25::Bm25::embed(&self, &str) -> veclite::error::Result<alloc::vec::Vec<f32>>
+pub fn veclite::embedding::bm25::Bm25::embed_batch(&self, &[&str]) -> veclite::error::Result<alloc::vec::Vec<alloc::vec::Vec<f32>>>
+pub fn veclite::embedding::bm25::Bm25::export_state(&self) -> veclite::error::Result<alloc::vec::Vec<u8>>
+pub fn veclite::embedding::bm25::Bm25::fit(&mut self, &[&str]) -> veclite::error::Result<()>
+pub fn veclite::embedding::bm25::Bm25::import_state(&mut self, &[u8]) -> veclite::error::Result<()>
+impl veclite::embedding::Embedder for veclite::embedding::bow::BagOfWords
+pub fn veclite::embedding::bow::BagOfWords::add_document(&mut self, &str)
+pub fn veclite::embedding::bow::BagOfWords::dimension(&self) -> usize
+pub fn veclite::embedding::bow::BagOfWords::embed(&self, &str) -> veclite::error::Result<alloc::vec::Vec<f32>>
+pub fn veclite::embedding::bow::BagOfWords::embed_batch(&self, &[&str]) -> veclite::error::Result<alloc::vec::Vec<alloc::vec::Vec<f32>>>
+pub fn veclite::embedding::bow::BagOfWords::export_state(&self) -> veclite::error::Result<alloc::vec::Vec<u8>>
+pub fn veclite::embedding::bow::BagOfWords::fit(&mut self, &[&str]) -> veclite::error::Result<()>
+pub fn veclite::embedding::bow::BagOfWords::import_state(&mut self, &[u8]) -> veclite::error::Result<()>
+impl veclite::embedding::Embedder for veclite::embedding::char_ngram::CharNgram
+pub fn veclite::embedding::char_ngram::CharNgram::add_document(&mut self, &str)
+pub fn veclite::embedding::char_ngram::CharNgram::dimension(&self) -> usize
+pub fn veclite::embedding::char_ngram::CharNgram::embed(&self, &str) -> veclite::error::Result<alloc::vec::Vec<f32>>
+pub fn veclite::embedding::char_ngram::CharNgram::embed_batch(&self, &[&str]) -> veclite::error::Result<alloc::vec::Vec<alloc::vec::Vec<f32>>>
+pub fn veclite::embedding::char_ngram::CharNgram::export_state(&self) -> veclite::error::Result<alloc::vec::Vec<u8>>
+pub fn veclite::embedding::char_ngram::CharNgram::fit(&mut self, &[&str]) -> veclite::error::Result<()>
+pub fn veclite::embedding::char_ngram::CharNgram::import_state(&mut self, &[u8]) -> veclite::error::Result<()>
+impl veclite::embedding::Embedder for veclite::embedding::tfidf::TfIdf
+pub fn veclite::embedding::tfidf::TfIdf::add_document(&mut self, &str)
+pub fn veclite::embedding::tfidf::TfIdf::dimension(&self) -> usize
+pub fn veclite::embedding::tfidf::TfIdf::embed(&self, &str) -> veclite::error::Result<alloc::vec::Vec<f32>>
+pub fn veclite::embedding::tfidf::TfIdf::embed_batch(&self, &[&str]) -> veclite::error::Result<alloc::vec::Vec<alloc::vec::Vec<f32>>>
+pub fn veclite::embedding::tfidf::TfIdf::export_state(&self) -> veclite::error::Result<alloc::vec::Vec<u8>>
+pub fn veclite::embedding::tfidf::TfIdf::fit(&mut self, &[&str]) -> veclite::error::Result<()>
+pub fn veclite::embedding::tfidf::TfIdf::import_state(&mut self, &[u8]) -> veclite::error::Result<()>
+pub fn veclite::embedding::available_providers() -> alloc::vec::Vec<alloc::string::String>
+pub fn veclite::embedding::build_provider(&str, usize) -> veclite::error::Result<alloc::boxed::Box<dyn veclite::embedding::Embedder>>
+pub fn veclite::embedding::is_onnx_provider(&str) -> bool
+pub mod veclite::error
+#[non_exhaustive] pub enum veclite::error::VecLiteError
+pub veclite::error::VecLiteError::AlreadyExists(alloc::string::String)
+pub veclite::error::VecLiteError::Closed
+pub veclite::error::VecLiteError::CollectionNotFound(alloc::string::String)
+pub veclite::error::VecLiteError::Corrupt(alloc::string::String)
+pub veclite::error::VecLiteError::DimensionMismatch
+pub veclite::error::VecLiteError::DimensionMismatch::expected: usize
+pub veclite::error::VecLiteError::DimensionMismatch::got: usize
+pub veclite::error::VecLiteError::InvalidArgument(alloc::string::String)
+pub veclite::error::VecLiteError::Io(std::io::error::Error)
+pub veclite::error::VecLiteError::Locked
+pub veclite::error::VecLiteError::ReadOnly
+pub veclite::error::VecLiteError::UnsupportedFormatVersion
+pub veclite::error::VecLiteError::UnsupportedFormatVersion::found: u32
+pub veclite::error::VecLiteError::UnsupportedFormatVersion::supported: u32
+pub veclite::error::VecLiteError::UnsupportedProvider
+pub veclite::error::VecLiteError::UnsupportedProvider::available: alloc::vec::Vec<alloc::string::String>
+pub veclite::error::VecLiteError::UnsupportedProvider::requested: alloc::string::String
+pub veclite::error::VecLiteError::VectorNotFound(alloc::string::String)
+pub veclite::error::VecLiteError::WalPending
+impl veclite::error::VecLiteError
+pub fn veclite::error::VecLiteError::ffi_code(&self) -> i32
+impl core::convert::From<std::io::error::Error> for veclite::error::VecLiteError
+pub fn veclite::error::VecLiteError::from(std::io::error::Error) -> Self
+impl core::error::Error for veclite::error::VecLiteError
+pub fn veclite::error::VecLiteError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for veclite::error::VecLiteError
+pub fn veclite::error::VecLiteError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for veclite::error::VecLiteError
+pub fn veclite::error::VecLiteError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for veclite::error::VecLiteError
+impl core::marker::Send for veclite::error::VecLiteError
+impl core::marker::Sync for veclite::error::VecLiteError
+impl core::marker::Unpin for veclite::error::VecLiteError
+impl core::marker::UnsafeUnpin for veclite::error::VecLiteError
+impl !core::panic::unwind_safe::RefUnwindSafe for veclite::error::VecLiteError
+impl !core::panic::unwind_safe::UnwindSafe for veclite::error::VecLiteError
+pub type veclite::error::Result<T> = core::result::Result<T, veclite::error::VecLiteError>
+pub mod veclite::filter
+pub enum veclite::filter::Condition
+pub veclite::filter::Condition::Eq
+pub veclite::filter::Condition::Eq::key: alloc::string::String
+pub veclite::filter::Condition::Eq::value: veclite::filter::MatchValue
+pub veclite::filter::Condition::Exists
+pub veclite::filter::Condition::Exists::key: alloc::string::String
+pub veclite::filter::Condition::In
+pub veclite::filter::Condition::In::key: alloc::string::String
+pub veclite::filter::Condition::In::values: alloc::vec::Vec<veclite::filter::MatchValue>
+pub veclite::filter::Condition::Nested(alloc::boxed::Box<veclite::filter::Filter>)
+pub veclite::filter::Condition::Range
+pub veclite::filter::Condition::Range::key: alloc::string::String
+pub veclite::filter::Condition::Range::range: veclite::filter::Range
+impl veclite::filter::Condition
+pub fn veclite::filter::Condition::eq(impl core::convert::Into<alloc::string::String>, impl core::convert::Into<veclite::filter::MatchValue>) -> veclite::filter::Condition
+pub fn veclite::filter::Condition::exists(impl core::convert::Into<alloc::string::String>) -> veclite::filter::Condition
+pub fn veclite::filter::Condition::in_<V: core::convert::Into<veclite::filter::MatchValue>>(impl core::convert::Into<alloc::string::String>, alloc::vec::Vec<V>) -> veclite::filter::Condition
+pub fn veclite::filter::Condition::nested(veclite::filter::Filter) -> veclite::filter::Condition
+pub fn veclite::filter::Condition::range(impl core::convert::Into<alloc::string::String>, veclite::filter::Range) -> veclite::filter::Condition
+impl core::clone::Clone for veclite::filter::Condition
+pub fn veclite::filter::Condition::clone(&self) -> veclite::filter::Condition
+impl core::cmp::PartialEq for veclite::filter::Condition
+pub fn veclite::filter::Condition::eq(&self, &veclite::filter::Condition) -> bool
+impl core::fmt::Debug for veclite::filter::Condition
+pub fn veclite::filter::Condition::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for veclite::filter::Condition
+impl core::marker::Freeze for veclite::filter::Condition
+impl core::marker::Send for veclite::filter::Condition
+impl core::marker::Sync for veclite::filter::Condition
+impl core::marker::Unpin for veclite::filter::Condition
+impl core::marker::UnsafeUnpin for veclite::filter::Condition
+impl core::panic::unwind_safe::RefUnwindSafe for veclite::filter::Condition
+impl core::panic::unwind_safe::UnwindSafe for veclite::filter::Condition
+pub enum veclite::filter::MatchValue
+pub veclite::filter::MatchValue::Boolean(bool)
+pub veclite::filter::MatchValue::Integer(i64)
+pub veclite::filter::MatchValue::Keyword(alloc::string::String)
+impl core::clone::Clone for veclite::filter::MatchValue
+pub fn veclite::filter::MatchValue::clone(&self) -> veclite::filter::MatchValue
+impl core::cmp::PartialEq for veclite::filter::MatchValue
+pub fn veclite::filter::MatchValue::eq(&self, &veclite::filter::MatchValue) -> bool
+impl core::convert::From<&str> for veclite::filter::MatchValue
+pub fn veclite::filter::MatchValue::from(&str) -> Self
+impl core::convert::From<alloc::string::String> for veclite::filter::MatchValue
+pub fn veclite::filter::MatchValue::from(alloc::string::String) -> Self
+impl core::convert::From<bool> for veclite::filter::MatchValue
+pub fn veclite::filter::MatchValue::from(bool) -> Self
+impl core::convert::From<i64> for veclite::filter::MatchValue
+pub fn veclite::filter::MatchValue::from(i64) -> Self
+impl core::fmt::Debug for veclite::filter::MatchValue
+pub fn veclite::filter::MatchValue::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for veclite::filter::MatchValue
+impl core::marker::Freeze for veclite::filter::MatchValue
+impl core::marker::Send for veclite::filter::MatchValue
+impl core::marker::Sync for veclite::filter::MatchValue
+impl core::marker::Unpin for veclite::filter::MatchValue
+impl core::marker::UnsafeUnpin for veclite::filter::MatchValue
+impl core::panic::unwind_safe::RefUnwindSafe for veclite::filter::MatchValue
+impl core::panic::unwind_safe::UnwindSafe for veclite::filter::MatchValue
+pub struct veclite::filter::Filter
+pub veclite::filter::Filter::must: alloc::vec::Vec<veclite::filter::Condition>
+pub veclite::filter::Filter::must_not: alloc::vec::Vec<veclite::filter::Condition>
+pub veclite::filter::Filter::should: alloc::vec::Vec<veclite::filter::Condition>
+impl veclite::filter::Filter
+pub fn veclite::filter::Filter::from_json(&serde_json::value::Value) -> veclite::error::Result<veclite::filter::Filter>
+pub fn veclite::filter::Filter::matches(&self, core::option::Option<&serde_json::value::Value>) -> bool
+pub fn veclite::filter::Filter::must(self, veclite::filter::Condition) -> Self
+pub fn veclite::filter::Filter::must_not(self, veclite::filter::Condition) -> Self
+pub fn veclite::filter::Filter::new() -> Self
+pub fn veclite::filter::Filter::should(self, veclite::filter::Condition) -> Self
+impl core::clone::Clone for veclite::filter::Filter
+pub fn veclite::filter::Filter::clone(&self) -> veclite::filter::Filter
+impl core::cmp::PartialEq for veclite::filter::Filter
+pub fn veclite::filter::Filter::eq(&self, &veclite::filter::Filter) -> bool
+impl core::default::Default for veclite::filter::Filter
+pub fn veclite::filter::Filter::default() -> veclite::filter::Filter
+impl core::fmt::Debug for veclite::filter::Filter
+pub fn veclite::filter::Filter::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for veclite::filter::Filter
+impl core::marker::Freeze for veclite::filter::Filter
+impl core::marker::Send for veclite::filter::Filter
+impl core::marker::Sync for veclite::filter::Filter
+impl core::marker::Unpin for veclite::filter::Filter
+impl core::marker::UnsafeUnpin for veclite::filter::Filter
+impl core::panic::unwind_safe::RefUnwindSafe for veclite::filter::Filter
+impl core::panic::unwind_safe::UnwindSafe for veclite::filter::Filter
+pub struct veclite::filter::Range
+pub veclite::filter::Range::gt: core::option::Option<f64>
+pub veclite::filter::Range::gte: core::option::Option<f64>
+pub veclite::filter::Range::lt: core::option::Option<f64>
+pub veclite::filter::Range::lte: core::option::Option<f64>
+impl veclite::filter::Range
+pub fn veclite::filter::Range::gt(self, f64) -> Self
+pub fn veclite::filter::Range::gte(self, f64) -> Self
+pub fn veclite::filter::Range::lt(self, f64) -> Self
+pub fn veclite::filter::Range::lte(self, f64) -> Self
+pub fn veclite::filter::Range::new() -> Self
+impl core::clone::Clone for veclite::filter::Range
+pub fn veclite::filter::Range::clone(&self) -> veclite::filter::Range
+impl core::cmp::PartialEq for veclite::filter::Range
+pub fn veclite::filter::Range::eq(&self, &veclite::filter::Range) -> bool
+impl core::default::Default for veclite::filter::Range
+pub fn veclite::filter::Range::default() -> veclite::filter::Range
+impl core::fmt::Debug for veclite::filter::Range
+pub fn veclite::filter::Range::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for veclite::filter::Range
+impl core::marker::Freeze for veclite::filter::Range
+impl core::marker::Send for veclite::filter::Range
+impl core::marker::Sync for veclite::filter::Range
+impl core::marker::Unpin for veclite::filter::Range
+impl core::marker::UnsafeUnpin for veclite::filter::Range
+impl core::panic::unwind_safe::RefUnwindSafe for veclite::filter::Range
+impl core::panic::unwind_safe::UnwindSafe for veclite::filter::Range
+pub mod veclite::hybrid
+pub struct veclite::hybrid::HybridQuery<'a>
+impl<'a> veclite::hybrid::HybridQuery<'a>
+pub fn veclite::hybrid::HybridQuery<'a>::alpha(self, f32) -> Self
+pub fn veclite::hybrid::HybridQuery<'a>::dense(self, &'a [f32]) -> Self
+pub fn veclite::hybrid::HybridQuery<'a>::filter(self, veclite::filter::Filter) -> Self
+pub fn veclite::hybrid::HybridQuery<'a>::limit(self, usize) -> Self
+pub fn veclite::hybrid::HybridQuery<'a>::rrf_k(self, f32) -> Self
+pub fn veclite::hybrid::HybridQuery<'a>::run(self) -> veclite::error::Result<alloc::vec::Vec<veclite::point::Hit>>
+pub fn veclite::hybrid::HybridQuery<'a>::sparse(self, &'a veclite::point::SparseVector) -> Self
+pub fn veclite::hybrid::HybridQuery<'a>::text(self, &'a str) -> Self
+pub fn veclite::hybrid::HybridQuery<'a>::with_payload(self, bool) -> Self
+pub fn veclite::hybrid::HybridQuery<'a>::with_vector(self, bool) -> Self
+impl<'a> core::marker::Freeze for veclite::hybrid::HybridQuery<'a>
+impl<'a> core::marker::Send for veclite::hybrid::HybridQuery<'a>
+impl<'a> core::marker::Sync for veclite::hybrid::HybridQuery<'a>
+impl<'a> core::marker::Unpin for veclite::hybrid::HybridQuery<'a>
+impl<'a> core::marker::UnsafeUnpin for veclite::hybrid::HybridQuery<'a>
+impl<'a> !core::panic::unwind_safe::RefUnwindSafe for veclite::hybrid::HybridQuery<'a>
+impl<'a> !core::panic::unwind_safe::UnwindSafe for veclite::hybrid::HybridQuery<'a>
+pub const veclite::hybrid::DEFAULT_ALPHA: f32
+pub const veclite::hybrid::DEFAULT_RRF_K: f32
+pub mod veclite::options
+pub enum veclite::options::Compression
+pub veclite::options::Compression::Lz4
+pub veclite::options::Compression::Lz4::threshold: u32
+pub veclite::options::Compression::None
+pub veclite::options::Compression::Zstd
+pub veclite::options::Compression::Zstd::threshold: u32
+impl core::clone::Clone for veclite::options::Compression
+pub fn veclite::options::Compression::clone(&self) -> veclite::options::Compression
+impl core::cmp::Eq for veclite::options::Compression
+impl core::cmp::PartialEq for veclite::options::Compression
+pub fn veclite::options::Compression::eq(&self, &veclite::options::Compression) -> bool
+impl core::default::Default for veclite::options::Compression
+pub fn veclite::options::Compression::default() -> Self
+impl core::fmt::Debug for veclite::options::Compression
+pub fn veclite::options::Compression::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for veclite::options::Compression
+impl core::marker::StructuralPartialEq for veclite::options::Compression
+impl core::marker::Freeze for veclite::options::Compression
+impl core::marker::Send for veclite::options::Compression
+impl core::marker::Sync for veclite::options::Compression
+impl core::marker::Unpin for veclite::options::Compression
+impl core::marker::UnsafeUnpin for veclite::options::Compression
+impl core::panic::unwind_safe::RefUnwindSafe for veclite::options::Compression
+impl core::panic::unwind_safe::UnwindSafe for veclite::options::Compression
+pub enum veclite::options::Durability
+pub veclite::options::Durability::Full
+pub veclite::options::Durability::Normal
+pub veclite::options::Durability::Off
+impl core::clone::Clone for veclite::options::Durability
+pub fn veclite::options::Durability::clone(&self) -> veclite::options::Durability
+impl core::cmp::Eq for veclite::options::Durability
+impl core::cmp::PartialEq for veclite::options::Durability
+pub fn veclite::options::Durability::eq(&self, &veclite::options::Durability) -> bool
+impl core::default::Default for veclite::options::Durability
+pub fn veclite::options::Durability::default() -> veclite::options::Durability
+impl core::fmt::Debug for veclite::options::Durability
+pub fn veclite::options::Durability::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for veclite::options::Durability
+impl core::marker::StructuralPartialEq for veclite::options::Durability
+impl core::marker::Freeze for veclite::options::Durability
+impl core::marker::Send for veclite::options::Durability
+impl core::marker::Sync for veclite::options::Durability
+impl core::marker::Unpin for veclite::options::Durability
+impl core::marker::UnsafeUnpin for veclite::options::Durability
+impl core::panic::unwind_safe::RefUnwindSafe for veclite::options::Durability
+impl core::panic::unwind_safe::UnwindSafe for veclite::options::Durability
+pub enum veclite::options::Metric
+pub veclite::options::Metric::Cosine
+pub veclite::options::Metric::DotProduct
+pub veclite::options::Metric::Euclidean
+impl core::clone::Clone for veclite::options::Metric
+pub fn veclite::options::Metric::clone(&self) -> veclite::options::Metric
+impl core::cmp::Eq for veclite::options::Metric
+impl core::cmp::PartialEq for veclite::options::Metric
+pub fn veclite::options::Metric::eq(&self, &veclite::options::Metric) -> bool
+impl core::default::Default for veclite::options::Metric
+pub fn veclite::options::Metric::default() -> veclite::options::Metric
+impl core::fmt::Debug for veclite::options::Metric
+pub fn veclite::options::Metric::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for veclite::options::Metric
+impl core::marker::StructuralPartialEq for veclite::options::Metric
+impl core::marker::Freeze for veclite::options::Metric
+impl core::marker::Send for veclite::options::Metric
+impl core::marker::Sync for veclite::options::Metric
+impl core::marker::Unpin for veclite::options::Metric
+impl core::marker::UnsafeUnpin for veclite::options::Metric
+impl core::panic::unwind_safe::RefUnwindSafe for veclite::options::Metric
+impl core::panic::unwind_safe::UnwindSafe for veclite::options::Metric
+pub enum veclite::options::PayloadIndexKind
+pub veclite::options::PayloadIndexKind::Float
+pub veclite::options::PayloadIndexKind::Integer
+pub veclite::options::PayloadIndexKind::Keyword
+impl core::clone::Clone for veclite::options::PayloadIndexKind
+pub fn veclite::options::PayloadIndexKind::clone(&self) -> veclite::options::PayloadIndexKind
+impl core::cmp::Eq for veclite::options::PayloadIndexKind
+impl core::cmp::PartialEq for veclite::options::PayloadIndexKind
+pub fn veclite::options::PayloadIndexKind::eq(&self, &veclite::options::PayloadIndexKind) -> bool
+impl core::fmt::Debug for veclite::options::PayloadIndexKind
+pub fn veclite::options::PayloadIndexKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for veclite::options::PayloadIndexKind
+impl core::marker::StructuralPartialEq for veclite::options::PayloadIndexKind
+impl core::marker::Freeze for veclite::options::PayloadIndexKind
+impl core::marker::Send for veclite::options::PayloadIndexKind
+impl core::marker::Sync for veclite::options::PayloadIndexKind
+impl core::marker::Unpin for veclite::options::PayloadIndexKind
+impl core::marker::UnsafeUnpin for veclite::options::PayloadIndexKind
+impl core::panic::unwind_safe::RefUnwindSafe for veclite::options::PayloadIndexKind
+impl core::panic::unwind_safe::UnwindSafe for veclite::options::PayloadIndexKind
+pub enum veclite::options::Quantization
+pub veclite::options::Quantization::Binary
+pub veclite::options::Quantization::None
+pub veclite::options::Quantization::Scalar
+pub veclite::options::Quantization::Scalar::bits: u8
+impl core::clone::Clone for veclite::options::Quantization
+pub fn veclite::options::Quantization::clone(&self) -> veclite::options::Quantization
+impl core::cmp::Eq for veclite::options::Quantization
+impl core::cmp::PartialEq for veclite::options::Quantization
+pub fn veclite::options::Quantization::eq(&self, &veclite::options::Quantization) -> bool
+impl core::default::Default for veclite::options::Quantization
+pub fn veclite::options::Quantization::default() -> Self
+impl core::fmt::Debug for veclite::options::Quantization
+pub fn veclite::options::Quantization::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for veclite::options::Quantization
+impl core::marker::StructuralPartialEq for veclite::options::Quantization
+impl core::marker::Freeze for veclite::options::Quantization
+impl core::marker::Send for veclite::options::Quantization
+impl core::marker::Sync for veclite::options::Quantization
+impl core::marker::Unpin for veclite::options::Quantization
+impl core::marker::UnsafeUnpin for veclite::options::Quantization
+impl core::panic::unwind_safe::RefUnwindSafe for veclite::options::Quantization
+impl core::panic::unwind_safe::UnwindSafe for veclite::options::Quantization
+pub struct veclite::options::CollectionOptions
+impl veclite::options::CollectionOptions
+pub fn veclite::options::CollectionOptions::auto_embed(&str, usize) -> Self
+pub fn veclite::options::CollectionOptions::hnsw(self, usize, usize, usize) -> Self
+pub fn veclite::options::CollectionOptions::new(usize, veclite::options::Metric) -> Self
+pub fn veclite::options::CollectionOptions::payload_index(self, &str, veclite::options::PayloadIndexKind) -> Self
+pub fn veclite::options::CollectionOptions::quantization(self, veclite::options::Quantization) -> Self
+impl core::clone::Clone for veclite::options::CollectionOptions
+pub fn veclite::options::CollectionOptions::clone(&self) -> veclite::options::CollectionOptions
+impl core::fmt::Debug for veclite::options::CollectionOptions
+pub fn veclite::options::CollectionOptions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for veclite::options::CollectionOptions
+impl core::marker::Send for veclite::options::CollectionOptions
+impl core::marker::Sync for veclite::options::CollectionOptions
+impl core::marker::Unpin for veclite::options::CollectionOptions
+impl core::marker::UnsafeUnpin for veclite::options::CollectionOptions
+impl core::panic::unwind_safe::RefUnwindSafe for veclite::options::CollectionOptions
+impl core::panic::unwind_safe::UnwindSafe for veclite::options::CollectionOptions
+pub struct veclite::options::HnswOptions
+pub veclite::options::HnswOptions::ef_construction: usize
+pub veclite::options::HnswOptions::ef_search: usize
+pub veclite::options::HnswOptions::m: usize
+impl core::clone::Clone for veclite::options::HnswOptions
+pub fn veclite::options::HnswOptions::clone(&self) -> veclite::options::HnswOptions
+impl core::cmp::Eq for veclite::options::HnswOptions
+impl core::cmp::PartialEq for veclite::options::HnswOptions
+pub fn veclite::options::HnswOptions::eq(&self, &veclite::options::HnswOptions) -> bool
+impl core::default::Default for veclite::options::HnswOptions
+pub fn veclite::options::HnswOptions::default() -> Self
+impl core::fmt::Debug for veclite::options::HnswOptions
+pub fn veclite::options::HnswOptions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for veclite::options::HnswOptions
+impl core::marker::StructuralPartialEq for veclite::options::HnswOptions
+impl core::marker::Freeze for veclite::options::HnswOptions
+impl core::marker::Send for veclite::options::HnswOptions
+impl core::marker::Sync for veclite::options::HnswOptions
+impl core::marker::Unpin for veclite::options::HnswOptions
+impl core::marker::UnsafeUnpin for veclite::options::HnswOptions
+impl core::panic::unwind_safe::RefUnwindSafe for veclite::options::HnswOptions
+impl core::panic::unwind_safe::UnwindSafe for veclite::options::HnswOptions
+pub struct veclite::options::OpenOptions
+impl veclite::options::OpenOptions
+pub fn veclite::options::OpenOptions::auto_vacuum_threshold(self, f32) -> Self
+pub fn veclite::options::OpenOptions::background_checkpoint(self, bool) -> Self
+pub fn veclite::options::OpenOptions::durability(self, veclite::options::Durability) -> Self
+pub fn veclite::options::OpenOptions::memory_budget(self, u64) -> Self
+pub fn veclite::options::OpenOptions::mmap(self, bool) -> Self
+pub fn veclite::options::OpenOptions::model_cache_dir(self, impl core::convert::Into<std::path::PathBuf>) -> Self
+pub fn veclite::options::OpenOptions::new() -> Self
+pub fn veclite::options::OpenOptions::read_only(self, bool) -> Self
+pub fn veclite::options::OpenOptions::read_only_ignore_wal(self, bool) -> Self
+pub fn veclite::options::OpenOptions::wal_size_limit(self, u64) -> Self
+impl core::clone::Clone for veclite::options::OpenOptions
+pub fn veclite::options::OpenOptions::clone(&self) -> veclite::options::OpenOptions
+impl core::default::Default for veclite::options::OpenOptions
+pub fn veclite::options::OpenOptions::default() -> Self
+impl core::fmt::Debug for veclite::options::OpenOptions
+pub fn veclite::options::OpenOptions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for veclite::options::OpenOptions
+impl core::marker::Send for veclite::options::OpenOptions
+impl core::marker::Sync for veclite::options::OpenOptions
+impl core::marker::Unpin for veclite::options::OpenOptions
+impl core::marker::UnsafeUnpin for veclite::options::OpenOptions
+impl core::panic::unwind_safe::RefUnwindSafe for veclite::options::OpenOptions
+impl core::panic::unwind_safe::UnwindSafe for veclite::options::OpenOptions
+pub const veclite::options::DEFAULT_EMBEDDING_PROVIDER: &str
+pub const veclite::options::DEFAULT_MEMORY_BUDGET: u64
+pub mod veclite::point
+pub struct veclite::point::Hit
+pub veclite::point::Hit::id: alloc::string::String
+pub veclite::point::Hit::payload: core::option::Option<serde_json::value::Value>
+pub veclite::point::Hit::score: f32
+pub veclite::point::Hit::vector: core::option::Option<alloc::vec::Vec<f32>>
+impl core::clone::Clone for veclite::point::Hit
+pub fn veclite::point::Hit::clone(&self) -> veclite::point::Hit
+impl core::cmp::PartialEq for veclite::point::Hit
+pub fn veclite::point::Hit::eq(&self, &veclite::point::Hit) -> bool
+impl core::fmt::Debug for veclite::point::Hit
+pub fn veclite::point::Hit::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for veclite::point::Hit
+impl core::marker::Freeze for veclite::point::Hit
+impl core::marker::Send for veclite::point::Hit
+impl core::marker::Sync for veclite::point::Hit
+impl core::marker::Unpin for veclite::point::Hit
+impl core::marker::UnsafeUnpin for veclite::point::Hit
+impl core::panic::unwind_safe::RefUnwindSafe for veclite::point::Hit
+impl core::panic::unwind_safe::UnwindSafe for veclite::point::Hit
+pub struct veclite::point::Point
+pub veclite::point::Point::id: alloc::string::String
+pub veclite::point::Point::payload: core::option::Option<serde_json::value::Value>
+pub veclite::point::Point::sparse: core::option::Option<veclite::point::SparseVector>
+pub veclite::point::Point::vector: alloc::vec::Vec<f32>
+impl veclite::point::Point
+pub fn veclite::point::Point::new(impl core::convert::Into<alloc::string::String>, alloc::vec::Vec<f32>) -> Self
+pub fn veclite::point::Point::payload(self, serde_json::value::Value) -> Self
+pub fn veclite::point::Point::sparse(self, veclite::point::SparseVector) -> Self
+impl core::clone::Clone for veclite::point::Point
+pub fn veclite::point::Point::clone(&self) -> veclite::point::Point
+impl core::cmp::PartialEq for veclite::point::Point
+pub fn veclite::point::Point::eq(&self, &veclite::point::Point) -> bool
+impl core::fmt::Debug for veclite::point::Point
+pub fn veclite::point::Point::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for veclite::point::Point
+impl serde_core::ser::Serialize for veclite::point::Point
+pub fn veclite::point::Point::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for veclite::point::Point
+pub fn veclite::point::Point::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for veclite::point::Point
+impl core::marker::Send for veclite::point::Point
+impl core::marker::Sync for veclite::point::Point
+impl core::marker::Unpin for veclite::point::Point
+impl core::marker::UnsafeUnpin for veclite::point::Point
+impl core::panic::unwind_safe::RefUnwindSafe for veclite::point::Point
+impl core::panic::unwind_safe::UnwindSafe for veclite::point::Point
+pub struct veclite::point::SparseVector
+pub veclite::point::SparseVector::indices: alloc::vec::Vec<u32>
+pub veclite::point::SparseVector::values: alloc::vec::Vec<f32>
+impl core::clone::Clone for veclite::point::SparseVector
+pub fn veclite::point::SparseVector::clone(&self) -> veclite::point::SparseVector
+impl core::cmp::PartialEq for veclite::point::SparseVector
+pub fn veclite::point::SparseVector::eq(&self, &veclite::point::SparseVector) -> bool
+impl core::fmt::Debug for veclite::point::SparseVector
+pub fn veclite::point::SparseVector::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for veclite::point::SparseVector
+impl serde_core::ser::Serialize for veclite::point::SparseVector
+pub fn veclite::point::SparseVector::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for veclite::point::SparseVector
+pub fn veclite::point::SparseVector::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for veclite::point::SparseVector
+impl core::marker::Send for veclite::point::SparseVector
+impl core::marker::Sync for veclite::point::SparseVector
+impl core::marker::Unpin for veclite::point::SparseVector
+impl core::marker::UnsafeUnpin for veclite::point::SparseVector
+impl core::panic::unwind_safe::RefUnwindSafe for veclite::point::SparseVector
+impl core::panic::unwind_safe::UnwindSafe for veclite::point::SparseVector
+pub mod veclite::query
+pub struct veclite::query::QueryBuilder<'a>
+impl<'a> veclite::query::QueryBuilder<'a>
+pub fn veclite::query::QueryBuilder<'a>::ef_search(self, usize) -> Self
+pub fn veclite::query::QueryBuilder<'a>::filter(self, veclite::filter::Filter) -> Self
+pub fn veclite::query::QueryBuilder<'a>::limit(self, usize) -> Self
+pub fn veclite::query::QueryBuilder<'a>::run(self) -> veclite::error::Result<alloc::vec::Vec<veclite::point::Hit>>
+pub fn veclite::query::QueryBuilder<'a>::with_payload(self, bool) -> Self
+pub fn veclite::query::QueryBuilder<'a>::with_vector(self, bool) -> Self
+impl<'a> core::marker::Freeze for veclite::query::QueryBuilder<'a>
+impl<'a> core::marker::Send for veclite::query::QueryBuilder<'a>
+impl<'a> core::marker::Sync for veclite::query::QueryBuilder<'a>
+impl<'a> core::marker::Unpin for veclite::query::QueryBuilder<'a>
+impl<'a> core::marker::UnsafeUnpin for veclite::query::QueryBuilder<'a>
+impl<'a> !core::panic::unwind_safe::RefUnwindSafe for veclite::query::QueryBuilder<'a>
+impl<'a> !core::panic::unwind_safe::UnwindSafe for veclite::query::QueryBuilder<'a>
+pub enum veclite::Compression
+pub veclite::Compression::Lz4
+pub veclite::Compression::Lz4::threshold: u32
+pub veclite::Compression::None
+pub veclite::Compression::Zstd
+pub veclite::Compression::Zstd::threshold: u32
+impl core::clone::Clone for veclite::options::Compression
+pub fn veclite::options::Compression::clone(&self) -> veclite::options::Compression
+impl core::cmp::Eq for veclite::options::Compression
+impl core::cmp::PartialEq for veclite::options::Compression
+pub fn veclite::options::Compression::eq(&self, &veclite::options::Compression) -> bool
+impl core::default::Default for veclite::options::Compression
+pub fn veclite::options::Compression::default() -> Self
+impl core::fmt::Debug for veclite::options::Compression
+pub fn veclite::options::Compression::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for veclite::options::Compression
+impl core::marker::StructuralPartialEq for veclite::options::Compression
+impl core::marker::Freeze for veclite::options::Compression
+impl core::marker::Send for veclite::options::Compression
+impl core::marker::Sync for veclite::options::Compression
+impl core::marker::Unpin for veclite::options::Compression
+impl core::marker::UnsafeUnpin for veclite::options::Compression
+impl core::panic::unwind_safe::RefUnwindSafe for veclite::options::Compression
+impl core::panic::unwind_safe::UnwindSafe for veclite::options::Compression
+pub enum veclite::Condition
+pub veclite::Condition::Eq
+pub veclite::Condition::Eq::key: alloc::string::String
+pub veclite::Condition::Eq::value: veclite::filter::MatchValue
+pub veclite::Condition::Exists
+pub veclite::Condition::Exists::key: alloc::string::String
+pub veclite::Condition::In
+pub veclite::Condition::In::key: alloc::string::String
+pub veclite::Condition::In::values: alloc::vec::Vec<veclite::filter::MatchValue>
+pub veclite::Condition::Nested(alloc::boxed::Box<veclite::filter::Filter>)
+pub veclite::Condition::Range
+pub veclite::Condition::Range::key: alloc::string::String
+pub veclite::Condition::Range::range: veclite::filter::Range
+impl veclite::filter::Condition
+pub fn veclite::filter::Condition::eq(impl core::convert::Into<alloc::string::String>, impl core::convert::Into<veclite::filter::MatchValue>) -> veclite::filter::Condition
+pub fn veclite::filter::Condition::exists(impl core::convert::Into<alloc::string::String>) -> veclite::filter::Condition
+pub fn veclite::filter::Condition::in_<V: core::convert::Into<veclite::filter::MatchValue>>(impl core::convert::Into<alloc::string::String>, alloc::vec::Vec<V>) -> veclite::filter::Condition
+pub fn veclite::filter::Condition::nested(veclite::filter::Filter) -> veclite::filter::Condition
+pub fn veclite::filter::Condition::range(impl core::convert::Into<alloc::string::String>, veclite::filter::Range) -> veclite::filter::Condition
+impl core::clone::Clone for veclite::filter::Condition
+pub fn veclite::filter::Condition::clone(&self) -> veclite::filter::Condition
+impl core::cmp::PartialEq for veclite::filter::Condition
+pub fn veclite::filter::Condition::eq(&self, &veclite::filter::Condition) -> bool
+impl core::fmt::Debug for veclite::filter::Condition
+pub fn veclite::filter::Condition::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for veclite::filter::Condition
+impl core::marker::Freeze for veclite::filter::Condition
+impl core::marker::Send for veclite::filter::Condition
+impl core::marker::Sync for veclite::filter::Condition
+impl core::marker::Unpin for veclite::filter::Condition
+impl core::marker::UnsafeUnpin for veclite::filter::Condition
+impl core::panic::unwind_safe::RefUnwindSafe for veclite::filter::Condition
+impl core::panic::unwind_safe::UnwindSafe for veclite::filter::Condition
+pub enum veclite::Durability
+pub veclite::Durability::Full
+pub veclite::Durability::Normal
+pub veclite::Durability::Off
+impl core::clone::Clone for veclite::options::Durability
+pub fn veclite::options::Durability::clone(&self) -> veclite::options::Durability
+impl core::cmp::Eq for veclite::options::Durability
+impl core::cmp::PartialEq for veclite::options::Durability
+pub fn veclite::options::Durability::eq(&self, &veclite::options::Durability) -> bool
+impl core::default::Default for veclite::options::Durability
+pub fn veclite::options::Durability::default() -> veclite::options::Durability
+impl core::fmt::Debug for veclite::options::Durability
+pub fn veclite::options::Durability::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for veclite::options::Durability
+impl core::marker::StructuralPartialEq for veclite::options::Durability
+impl core::marker::Freeze for veclite::options::Durability
+impl core::marker::Send for veclite::options::Durability
+impl core::marker::Sync for veclite::options::Durability
+impl core::marker::Unpin for veclite::options::Durability
+impl core::marker::UnsafeUnpin for veclite::options::Durability
+impl core::panic::unwind_safe::RefUnwindSafe for veclite::options::Durability
+impl core::panic::unwind_safe::UnwindSafe for veclite::options::Durability
+pub enum veclite::MatchValue
+pub veclite::MatchValue::Boolean(bool)
+pub veclite::MatchValue::Integer(i64)
+pub veclite::MatchValue::Keyword(alloc::string::String)
+impl core::clone::Clone for veclite::filter::MatchValue
+pub fn veclite::filter::MatchValue::clone(&self) -> veclite::filter::MatchValue
+impl core::cmp::PartialEq for veclite::filter::MatchValue
+pub fn veclite::filter::MatchValue::eq(&self, &veclite::filter::MatchValue) -> bool
+impl core::convert::From<&str> for veclite::filter::MatchValue
+pub fn veclite::filter::MatchValue::from(&str) -> Self
+impl core::convert::From<alloc::string::String> for veclite::filter::MatchValue
+pub fn veclite::filter::MatchValue::from(alloc::string::String) -> Self
+impl core::convert::From<bool> for veclite::filter::MatchValue
+pub fn veclite::filter::MatchValue::from(bool) -> Self
+impl core::convert::From<i64> for veclite::filter::MatchValue
+pub fn veclite::filter::MatchValue::from(i64) -> Self
+impl core::fmt::Debug for veclite::filter::MatchValue
+pub fn veclite::filter::MatchValue::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for veclite::filter::MatchValue
+impl core::marker::Freeze for veclite::filter::MatchValue
+impl core::marker::Send for veclite::filter::MatchValue
+impl core::marker::Sync for veclite::filter::MatchValue
+impl core::marker::Unpin for veclite::filter::MatchValue
+impl core::marker::UnsafeUnpin for veclite::filter::MatchValue
+impl core::panic::unwind_safe::RefUnwindSafe for veclite::filter::MatchValue
+impl core::panic::unwind_safe::UnwindSafe for veclite::filter::MatchValue
+pub enum veclite::Metric
+pub veclite::Metric::Cosine
+pub veclite::Metric::DotProduct
+pub veclite::Metric::Euclidean
+impl core::clone::Clone for veclite::options::Metric
+pub fn veclite::options::Metric::clone(&self) -> veclite::options::Metric
+impl core::cmp::Eq for veclite::options::Metric
+impl core::cmp::PartialEq for veclite::options::Metric
+pub fn veclite::options::Metric::eq(&self, &veclite::options::Metric) -> bool
+impl core::default::Default for veclite::options::Metric
+pub fn veclite::options::Metric::default() -> veclite::options::Metric
+impl core::fmt::Debug for veclite::options::Metric
+pub fn veclite::options::Metric::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for veclite::options::Metric
+impl core::marker::StructuralPartialEq for veclite::options::Metric
+impl core::marker::Freeze for veclite::options::Metric
+impl core::marker::Send for veclite::options::Metric
+impl core::marker::Sync for veclite::options::Metric
+impl core::marker::Unpin for veclite::options::Metric
+impl core::marker::UnsafeUnpin for veclite::options::Metric
+impl core::panic::unwind_safe::RefUnwindSafe for veclite::options::Metric
+impl core::panic::unwind_safe::UnwindSafe for veclite::options::Metric
+pub enum veclite::PayloadIndexKind
+pub veclite::PayloadIndexKind::Float
+pub veclite::PayloadIndexKind::Integer
+pub veclite::PayloadIndexKind::Keyword
+impl core::clone::Clone for veclite::options::PayloadIndexKind
+pub fn veclite::options::PayloadIndexKind::clone(&self) -> veclite::options::PayloadIndexKind
+impl core::cmp::Eq for veclite::options::PayloadIndexKind
+impl core::cmp::PartialEq for veclite::options::PayloadIndexKind
+pub fn veclite::options::PayloadIndexKind::eq(&self, &veclite::options::PayloadIndexKind) -> bool
+impl core::fmt::Debug for veclite::options::PayloadIndexKind
+pub fn veclite::options::PayloadIndexKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for veclite::options::PayloadIndexKind
+impl core::marker::StructuralPartialEq for veclite::options::PayloadIndexKind
+impl core::marker::Freeze for veclite::options::PayloadIndexKind
+impl core::marker::Send for veclite::options::PayloadIndexKind
+impl core::marker::Sync for veclite::options::PayloadIndexKind
+impl core::marker::Unpin for veclite::options::PayloadIndexKind
+impl core::marker::UnsafeUnpin for veclite::options::PayloadIndexKind
+impl core::panic::unwind_safe::RefUnwindSafe for veclite::options::PayloadIndexKind
+impl core::panic::unwind_safe::UnwindSafe for veclite::options::PayloadIndexKind
+pub enum veclite::Quantization
+pub veclite::Quantization::Binary
+pub veclite::Quantization::None
+pub veclite::Quantization::Scalar
+pub veclite::Quantization::Scalar::bits: u8
+impl core::clone::Clone for veclite::options::Quantization
+pub fn veclite::options::Quantization::clone(&self) -> veclite::options::Quantization
+impl core::cmp::Eq for veclite::options::Quantization
+impl core::cmp::PartialEq for veclite::options::Quantization
+pub fn veclite::options::Quantization::eq(&self, &veclite::options::Quantization) -> bool
+impl core::default::Default for veclite::options::Quantization
+pub fn veclite::options::Quantization::default() -> Self
+impl core::fmt::Debug for veclite::options::Quantization
+pub fn veclite::options::Quantization::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for veclite::options::Quantization
+impl core::marker::StructuralPartialEq for veclite::options::Quantization
+impl core::marker::Freeze for veclite::options::Quantization
+impl core::marker::Send for veclite::options::Quantization
+impl core::marker::Sync for veclite::options::Quantization
+impl core::marker::Unpin for veclite::options::Quantization
+impl core::marker::UnsafeUnpin for veclite::options::Quantization
+impl core::panic::unwind_safe::RefUnwindSafe for veclite::options::Quantization
+impl core::panic::unwind_safe::UnwindSafe for veclite::options::Quantization
+#[non_exhaustive] pub enum veclite::VecLiteError
+pub veclite::VecLiteError::AlreadyExists(alloc::string::String)
+pub veclite::VecLiteError::Closed
+pub veclite::VecLiteError::CollectionNotFound(alloc::string::String)
+pub veclite::VecLiteError::Corrupt(alloc::string::String)
+pub veclite::VecLiteError::DimensionMismatch
+pub veclite::VecLiteError::DimensionMismatch::expected: usize
+pub veclite::VecLiteError::DimensionMismatch::got: usize
+pub veclite::VecLiteError::InvalidArgument(alloc::string::String)
+pub veclite::VecLiteError::Io(std::io::error::Error)
+pub veclite::VecLiteError::Locked
+pub veclite::VecLiteError::ReadOnly
+pub veclite::VecLiteError::UnsupportedFormatVersion
+pub veclite::VecLiteError::UnsupportedFormatVersion::found: u32
+pub veclite::VecLiteError::UnsupportedFormatVersion::supported: u32
+pub veclite::VecLiteError::UnsupportedProvider
+pub veclite::VecLiteError::UnsupportedProvider::available: alloc::vec::Vec<alloc::string::String>
+pub veclite::VecLiteError::UnsupportedProvider::requested: alloc::string::String
+pub veclite::VecLiteError::VectorNotFound(alloc::string::String)
+pub veclite::VecLiteError::WalPending
+impl veclite::error::VecLiteError
+pub fn veclite::error::VecLiteError::ffi_code(&self) -> i32
+impl core::convert::From<std::io::error::Error> for veclite::error::VecLiteError
+pub fn veclite::error::VecLiteError::from(std::io::error::Error) -> Self
+impl core::error::Error for veclite::error::VecLiteError
+pub fn veclite::error::VecLiteError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for veclite::error::VecLiteError
+pub fn veclite::error::VecLiteError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for veclite::error::VecLiteError
+pub fn veclite::error::VecLiteError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for veclite::error::VecLiteError
+impl core::marker::Send for veclite::error::VecLiteError
+impl core::marker::Sync for veclite::error::VecLiteError
+impl core::marker::Unpin for veclite::error::VecLiteError
+impl core::marker::UnsafeUnpin for veclite::error::VecLiteError
+impl !core::panic::unwind_safe::RefUnwindSafe for veclite::error::VecLiteError
+impl !core::panic::unwind_safe::UnwindSafe for veclite::error::VecLiteError
+pub struct veclite::Collection
+impl veclite::collection::Collection
+pub fn veclite::collection::Collection::create_payload_index(&self, &str, veclite::options::PayloadIndexKind) -> veclite::error::Result<()>
+impl veclite::collection::Collection
+pub fn veclite::collection::Collection::delete(&self, &str) -> veclite::error::Result<bool>
+pub fn veclite::collection::Collection::delete_batch(&self, &[&str]) -> veclite::error::Result<usize>
+pub fn veclite::collection::Collection::get(&self, &str) -> veclite::error::Result<core::option::Option<veclite::point::Point>>
+pub fn veclite::collection::Collection::hybrid_query(&self) -> veclite::hybrid::HybridQuery<'_>
+pub fn veclite::collection::Collection::is_empty(&self) -> bool
+pub fn veclite::collection::Collection::len(&self) -> usize
+pub fn veclite::collection::Collection::name(&self) -> alloc::string::String
+pub fn veclite::collection::Collection::query<'a>(&'a self, &'a [f32]) -> veclite::query::QueryBuilder<'a>
+pub fn veclite::collection::Collection::refit(&self) -> veclite::error::Result<()>
+pub fn veclite::collection::Collection::reindex(&self) -> veclite::error::Result<()>
+pub fn veclite::collection::Collection::scroll(&self, core::option::Option<&str>, usize, core::option::Option<&veclite::filter::Filter>) -> veclite::error::Result<veclite::collection::ScrollPage>
+pub fn veclite::collection::Collection::search(&self, &[f32], usize) -> veclite::error::Result<alloc::vec::Vec<veclite::point::Hit>>
+pub fn veclite::collection::Collection::search_batch(&self, &[alloc::vec::Vec<f32>], usize) -> alloc::vec::Vec<veclite::error::Result<alloc::vec::Vec<veclite::point::Hit>>>
+pub fn veclite::collection::Collection::search_sparse(&self, &veclite::point::SparseVector, usize) -> veclite::error::Result<alloc::vec::Vec<veclite::point::Hit>>
+pub fn veclite::collection::Collection::search_text(&self, &str, usize) -> veclite::error::Result<alloc::vec::Vec<veclite::point::Hit>>
+pub fn veclite::collection::Collection::stats(&self) -> veclite::collection::CollectionStats
+pub fn veclite::collection::Collection::upsert(&self, veclite::point::Point) -> veclite::error::Result<()>
+pub fn veclite::collection::Collection::upsert_batch(&self, alloc::vec::Vec<veclite::point::Point>) -> veclite::error::Result<()>
+pub fn veclite::collection::Collection::upsert_text(&self, impl core::convert::Into<alloc::string::String>, impl core::convert::Into<alloc::string::String>) -> veclite::error::Result<()>
+pub fn veclite::collection::Collection::upsert_text_batch(&self, alloc::vec::Vec<(alloc::string::String, alloc::string::String, core::option::Option<serde_json::value::Value>)>) -> veclite::error::Result<()>
+pub fn veclite::collection::Collection::upsert_text_with(&self, impl core::convert::Into<alloc::string::String>, impl core::convert::Into<alloc::string::String>, serde_json::value::Value) -> veclite::error::Result<()>
+impl core::clone::Clone for veclite::collection::Collection
+pub fn veclite::collection::Collection::clone(&self) -> veclite::collection::Collection
+impl core::marker::Freeze for veclite::collection::Collection
+impl core::marker::Send for veclite::collection::Collection
+impl core::marker::Sync for veclite::collection::Collection
+impl core::marker::Unpin for veclite::collection::Collection
+impl core::marker::UnsafeUnpin for veclite::collection::Collection
+impl !core::panic::unwind_safe::RefUnwindSafe for veclite::collection::Collection
+impl !core::panic::unwind_safe::UnwindSafe for veclite::collection::Collection
+pub struct veclite::CollectionOptions
+impl veclite::options::CollectionOptions
+pub fn veclite::options::CollectionOptions::auto_embed(&str, usize) -> Self
+pub fn veclite::options::CollectionOptions::hnsw(self, usize, usize, usize) -> Self
+pub fn veclite::options::CollectionOptions::new(usize, veclite::options::Metric) -> Self
+pub fn veclite::options::CollectionOptions::payload_index(self, &str, veclite::options::PayloadIndexKind) -> Self
+pub fn veclite::options::CollectionOptions::quantization(self, veclite::options::Quantization) -> Self
+impl core::clone::Clone for veclite::options::CollectionOptions
+pub fn veclite::options::CollectionOptions::clone(&self) -> veclite::options::CollectionOptions
+impl core::fmt::Debug for veclite::options::CollectionOptions
+pub fn veclite::options::CollectionOptions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for veclite::options::CollectionOptions
+impl core::marker::Send for veclite::options::CollectionOptions
+impl core::marker::Sync for veclite::options::CollectionOptions
+impl core::marker::Unpin for veclite::options::CollectionOptions
+impl core::marker::UnsafeUnpin for veclite::options::CollectionOptions
+impl core::panic::unwind_safe::RefUnwindSafe for veclite::options::CollectionOptions
+impl core::panic::unwind_safe::UnwindSafe for veclite::options::CollectionOptions
+pub struct veclite::CollectionStats
+pub veclite::CollectionStats::auto_embed: bool
+pub veclite::CollectionStats::dimension: usize
+pub veclite::CollectionStats::len: usize
+pub veclite::CollectionStats::name: alloc::string::String
+pub veclite::CollectionStats::payload_indexes: alloc::vec::Vec<(alloc::string::String, veclite::options::PayloadIndexKind)>
+pub veclite::CollectionStats::tombstones: usize
+impl core::clone::Clone for veclite::collection::CollectionStats
+pub fn veclite::collection::CollectionStats::clone(&self) -> veclite::collection::CollectionStats
+impl core::cmp::Eq for veclite::collection::CollectionStats
+impl core::cmp::PartialEq for veclite::collection::CollectionStats
+pub fn veclite::collection::CollectionStats::eq(&self, &veclite::collection::CollectionStats) -> bool
+impl core::fmt::Debug for veclite::collection::CollectionStats
+pub fn veclite::collection::CollectionStats::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for veclite::collection::CollectionStats
+impl core::marker::Freeze for veclite::collection::CollectionStats
+impl core::marker::Send for veclite::collection::CollectionStats
+impl core::marker::Sync for veclite::collection::CollectionStats
+impl core::marker::Unpin for veclite::collection::CollectionStats
+impl core::marker::UnsafeUnpin for veclite::collection::CollectionStats
+impl core::panic::unwind_safe::RefUnwindSafe for veclite::collection::CollectionStats
+impl core::panic::unwind_safe::UnwindSafe for veclite::collection::CollectionStats
+pub struct veclite::Filter
+pub veclite::Filter::must: alloc::vec::Vec<veclite::filter::Condition>
+pub veclite::Filter::must_not: alloc::vec::Vec<veclite::filter::Condition>
+pub veclite::Filter::should: alloc::vec::Vec<veclite::filter::Condition>
+impl veclite::filter::Filter
+pub fn veclite::filter::Filter::from_json(&serde_json::value::Value) -> veclite::error::Result<veclite::filter::Filter>
+pub fn veclite::filter::Filter::matches(&self, core::option::Option<&serde_json::value::Value>) -> bool
+pub fn veclite::filter::Filter::must(self, veclite::filter::Condition) -> Self
+pub fn veclite::filter::Filter::must_not(self, veclite::filter::Condition) -> Self
+pub fn veclite::filter::Filter::new() -> Self
+pub fn veclite::filter::Filter::should(self, veclite::filter::Condition) -> Self
+impl core::clone::Clone for veclite::filter::Filter
+pub fn veclite::filter::Filter::clone(&self) -> veclite::filter::Filter
+impl core::cmp::PartialEq for veclite::filter::Filter
+pub fn veclite::filter::Filter::eq(&self, &veclite::filter::Filter) -> bool
+impl core::default::Default for veclite::filter::Filter
+pub fn veclite::filter::Filter::default() -> veclite::filter::Filter
+impl core::fmt::Debug for veclite::filter::Filter
+pub fn veclite::filter::Filter::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for veclite::filter::Filter
+impl core::marker::Freeze for veclite::filter::Filter
+impl core::marker::Send for veclite::filter::Filter
+impl core::marker::Sync for veclite::filter::Filter
+impl core::marker::Unpin for veclite::filter::Filter
+impl core::marker::UnsafeUnpin for veclite::filter::Filter
+impl core::panic::unwind_safe::RefUnwindSafe for veclite::filter::Filter
+impl core::panic::unwind_safe::UnwindSafe for veclite::filter::Filter
+pub struct veclite::Hit
+pub veclite::Hit::id: alloc::string::String
+pub veclite::Hit::payload: core::option::Option<serde_json::value::Value>
+pub veclite::Hit::score: f32
+pub veclite::Hit::vector: core::option::Option<alloc::vec::Vec<f32>>
+impl core::clone::Clone for veclite::point::Hit
+pub fn veclite::point::Hit::clone(&self) -> veclite::point::Hit
+impl core::cmp::PartialEq for veclite::point::Hit
+pub fn veclite::point::Hit::eq(&self, &veclite::point::Hit) -> bool
+impl core::fmt::Debug for veclite::point::Hit
+pub fn veclite::point::Hit::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for veclite::point::Hit
+impl core::marker::Freeze for veclite::point::Hit
+impl core::marker::Send for veclite::point::Hit
+impl core::marker::Sync for veclite::point::Hit
+impl core::marker::Unpin for veclite::point::Hit
+impl core::marker::UnsafeUnpin for veclite::point::Hit
+impl core::panic::unwind_safe::RefUnwindSafe for veclite::point::Hit
+impl core::panic::unwind_safe::UnwindSafe for veclite::point::Hit
+pub struct veclite::HnswOptions
+pub veclite::HnswOptions::ef_construction: usize
+pub veclite::HnswOptions::ef_search: usize
+pub veclite::HnswOptions::m: usize
+impl core::clone::Clone for veclite::options::HnswOptions
+pub fn veclite::options::HnswOptions::clone(&self) -> veclite::options::HnswOptions
+impl core::cmp::Eq for veclite::options::HnswOptions
+impl core::cmp::PartialEq for veclite::options::HnswOptions
+pub fn veclite::options::HnswOptions::eq(&self, &veclite::options::HnswOptions) -> bool
+impl core::default::Default for veclite::options::HnswOptions
+pub fn veclite::options::HnswOptions::default() -> Self
+impl core::fmt::Debug for veclite::options::HnswOptions
+pub fn veclite::options::HnswOptions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for veclite::options::HnswOptions
+impl core::marker::StructuralPartialEq for veclite::options::HnswOptions
+impl core::marker::Freeze for veclite::options::HnswOptions
+impl core::marker::Send for veclite::options::HnswOptions
+impl core::marker::Sync for veclite::options::HnswOptions
+impl core::marker::Unpin for veclite::options::HnswOptions
+impl core::marker::UnsafeUnpin for veclite::options::HnswOptions
+impl core::panic::unwind_safe::RefUnwindSafe for veclite::options::HnswOptions
+impl core::panic::unwind_safe::UnwindSafe for veclite::options::HnswOptions
+pub struct veclite::HybridQuery<'a>
+impl<'a> veclite::hybrid::HybridQuery<'a>
+pub fn veclite::hybrid::HybridQuery<'a>::alpha(self, f32) -> Self
+pub fn veclite::hybrid::HybridQuery<'a>::dense(self, &'a [f32]) -> Self
+pub fn veclite::hybrid::HybridQuery<'a>::filter(self, veclite::filter::Filter) -> Self
+pub fn veclite::hybrid::HybridQuery<'a>::limit(self, usize) -> Self
+pub fn veclite::hybrid::HybridQuery<'a>::rrf_k(self, f32) -> Self
+pub fn veclite::hybrid::HybridQuery<'a>::run(self) -> veclite::error::Result<alloc::vec::Vec<veclite::point::Hit>>
+pub fn veclite::hybrid::HybridQuery<'a>::sparse(self, &'a veclite::point::SparseVector) -> Self
+pub fn veclite::hybrid::HybridQuery<'a>::text(self, &'a str) -> Self
+pub fn veclite::hybrid::HybridQuery<'a>::with_payload(self, bool) -> Self
+pub fn veclite::hybrid::HybridQuery<'a>::with_vector(self, bool) -> Self
+impl<'a> core::marker::Freeze for veclite::hybrid::HybridQuery<'a>
+impl<'a> core::marker::Send for veclite::hybrid::HybridQuery<'a>
+impl<'a> core::marker::Sync for veclite::hybrid::HybridQuery<'a>
+impl<'a> core::marker::Unpin for veclite::hybrid::HybridQuery<'a>
+impl<'a> core::marker::UnsafeUnpin for veclite::hybrid::HybridQuery<'a>
+impl<'a> !core::panic::unwind_safe::RefUnwindSafe for veclite::hybrid::HybridQuery<'a>
+impl<'a> !core::panic::unwind_safe::UnwindSafe for veclite::hybrid::HybridQuery<'a>
+pub struct veclite::OpenOptions
+impl veclite::options::OpenOptions
+pub fn veclite::options::OpenOptions::auto_vacuum_threshold(self, f32) -> Self
+pub fn veclite::options::OpenOptions::background_checkpoint(self, bool) -> Self
+pub fn veclite::options::OpenOptions::durability(self, veclite::options::Durability) -> Self
+pub fn veclite::options::OpenOptions::memory_budget(self, u64) -> Self
+pub fn veclite::options::OpenOptions::mmap(self, bool) -> Self
+pub fn veclite::options::OpenOptions::model_cache_dir(self, impl core::convert::Into<std::path::PathBuf>) -> Self
+pub fn veclite::options::OpenOptions::new() -> Self
+pub fn veclite::options::OpenOptions::read_only(self, bool) -> Self
+pub fn veclite::options::OpenOptions::read_only_ignore_wal(self, bool) -> Self
+pub fn veclite::options::OpenOptions::wal_size_limit(self, u64) -> Self
+impl core::clone::Clone for veclite::options::OpenOptions
+pub fn veclite::options::OpenOptions::clone(&self) -> veclite::options::OpenOptions
+impl core::default::Default for veclite::options::OpenOptions
+pub fn veclite::options::OpenOptions::default() -> Self
+impl core::fmt::Debug for veclite::options::OpenOptions
+pub fn veclite::options::OpenOptions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for veclite::options::OpenOptions
+impl core::marker::Send for veclite::options::OpenOptions
+impl core::marker::Sync for veclite::options::OpenOptions
+impl core::marker::Unpin for veclite::options::OpenOptions
+impl core::marker::UnsafeUnpin for veclite::options::OpenOptions
+impl core::panic::unwind_safe::RefUnwindSafe for veclite::options::OpenOptions
+impl core::panic::unwind_safe::UnwindSafe for veclite::options::OpenOptions
+pub struct veclite::Point
+pub veclite::Point::id: alloc::string::String
+pub veclite::Point::payload: core::option::Option<serde_json::value::Value>
+pub veclite::Point::sparse: core::option::Option<veclite::point::SparseVector>
+pub veclite::Point::vector: alloc::vec::Vec<f32>
+impl veclite::point::Point
+pub fn veclite::point::Point::new(impl core::convert::Into<alloc::string::String>, alloc::vec::Vec<f32>) -> Self
+pub fn veclite::point::Point::payload(self, serde_json::value::Value) -> Self
+pub fn veclite::point::Point::sparse(self, veclite::point::SparseVector) -> Self
+impl core::clone::Clone for veclite::point::Point
+pub fn veclite::point::Point::clone(&self) -> veclite::point::Point
+impl core::cmp::PartialEq for veclite::point::Point
+pub fn veclite::point::Point::eq(&self, &veclite::point::Point) -> bool
+impl core::fmt::Debug for veclite::point::Point
+pub fn veclite::point::Point::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for veclite::point::Point
+impl serde_core::ser::Serialize for veclite::point::Point
+pub fn veclite::point::Point::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for veclite::point::Point
+pub fn veclite::point::Point::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for veclite::point::Point
+impl core::marker::Send for veclite::point::Point
+impl core::marker::Sync for veclite::point::Point
+impl core::marker::Unpin for veclite::point::Point
+impl core::marker::UnsafeUnpin for veclite::point::Point
+impl core::panic::unwind_safe::RefUnwindSafe for veclite::point::Point
+impl core::panic::unwind_safe::UnwindSafe for veclite::point::Point
+pub struct veclite::QueryBuilder<'a>
+impl<'a> veclite::query::QueryBuilder<'a>
+pub fn veclite::query::QueryBuilder<'a>::ef_search(self, usize) -> Self
+pub fn veclite::query::QueryBuilder<'a>::filter(self, veclite::filter::Filter) -> Self
+pub fn veclite::query::QueryBuilder<'a>::limit(self, usize) -> Self
+pub fn veclite::query::QueryBuilder<'a>::run(self) -> veclite::error::Result<alloc::vec::Vec<veclite::point::Hit>>
+pub fn veclite::query::QueryBuilder<'a>::with_payload(self, bool) -> Self
+pub fn veclite::query::QueryBuilder<'a>::with_vector(self, bool) -> Self
+impl<'a> core::marker::Freeze for veclite::query::QueryBuilder<'a>
+impl<'a> core::marker::Send for veclite::query::QueryBuilder<'a>
+impl<'a> core::marker::Sync for veclite::query::QueryBuilder<'a>
+impl<'a> core::marker::Unpin for veclite::query::QueryBuilder<'a>
+impl<'a> core::marker::UnsafeUnpin for veclite::query::QueryBuilder<'a>
+impl<'a> !core::panic::unwind_safe::RefUnwindSafe for veclite::query::QueryBuilder<'a>
+impl<'a> !core::panic::unwind_safe::UnwindSafe for veclite::query::QueryBuilder<'a>
+pub struct veclite::Range
+pub veclite::Range::gt: core::option::Option<f64>
+pub veclite::Range::gte: core::option::Option<f64>
+pub veclite::Range::lt: core::option::Option<f64>
+pub veclite::Range::lte: core::option::Option<f64>
+impl veclite::filter::Range
+pub fn veclite::filter::Range::gt(self, f64) -> Self
+pub fn veclite::filter::Range::gte(self, f64) -> Self
+pub fn veclite::filter::Range::lt(self, f64) -> Self
+pub fn veclite::filter::Range::lte(self, f64) -> Self
+pub fn veclite::filter::Range::new() -> Self
+impl core::clone::Clone for veclite::filter::Range
+pub fn veclite::filter::Range::clone(&self) -> veclite::filter::Range
+impl core::cmp::PartialEq for veclite::filter::Range
+pub fn veclite::filter::Range::eq(&self, &veclite::filter::Range) -> bool
+impl core::default::Default for veclite::filter::Range
+pub fn veclite::filter::Range::default() -> veclite::filter::Range
+impl core::fmt::Debug for veclite::filter::Range
+pub fn veclite::filter::Range::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for veclite::filter::Range
+impl core::marker::Freeze for veclite::filter::Range
+impl core::marker::Send for veclite::filter::Range
+impl core::marker::Sync for veclite::filter::Range
+impl core::marker::Unpin for veclite::filter::Range
+impl core::marker::UnsafeUnpin for veclite::filter::Range
+impl core::panic::unwind_safe::RefUnwindSafe for veclite::filter::Range
+impl core::panic::unwind_safe::UnwindSafe for veclite::filter::Range
+pub struct veclite::ScrollPage
+pub veclite::ScrollPage::next_cursor: core::option::Option<alloc::string::String>
+pub veclite::ScrollPage::points: alloc::vec::Vec<veclite::point::Point>
+impl core::clone::Clone for veclite::collection::ScrollPage
+pub fn veclite::collection::ScrollPage::clone(&self) -> veclite::collection::ScrollPage
+impl core::fmt::Debug for veclite::collection::ScrollPage
+pub fn veclite::collection::ScrollPage::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for veclite::collection::ScrollPage
+impl core::marker::Send for veclite::collection::ScrollPage
+impl core::marker::Sync for veclite::collection::ScrollPage
+impl core::marker::Unpin for veclite::collection::ScrollPage
+impl core::marker::UnsafeUnpin for veclite::collection::ScrollPage
+impl core::panic::unwind_safe::RefUnwindSafe for veclite::collection::ScrollPage
+impl core::panic::unwind_safe::UnwindSafe for veclite::collection::ScrollPage
+pub struct veclite::SparseVector
+pub veclite::SparseVector::indices: alloc::vec::Vec<u32>
+pub veclite::SparseVector::values: alloc::vec::Vec<f32>
+impl core::clone::Clone for veclite::point::SparseVector
+pub fn veclite::point::SparseVector::clone(&self) -> veclite::point::SparseVector
+impl core::cmp::PartialEq for veclite::point::SparseVector
+pub fn veclite::point::SparseVector::eq(&self, &veclite::point::SparseVector) -> bool
+impl core::fmt::Debug for veclite::point::SparseVector
+pub fn veclite::point::SparseVector::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for veclite::point::SparseVector
+impl serde_core::ser::Serialize for veclite::point::SparseVector
+pub fn veclite::point::SparseVector::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for veclite::point::SparseVector
+pub fn veclite::point::SparseVector::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for veclite::point::SparseVector
+impl core::marker::Send for veclite::point::SparseVector
+impl core::marker::Sync for veclite::point::SparseVector
+impl core::marker::Unpin for veclite::point::SparseVector
+impl core::marker::UnsafeUnpin for veclite::point::SparseVector
+impl core::panic::unwind_safe::RefUnwindSafe for veclite::point::SparseVector
+impl core::panic::unwind_safe::UnwindSafe for veclite::point::SparseVector
+pub struct veclite::VecLite
+impl veclite::database::VecLite
+pub fn veclite::database::VecLite::aliases(&self) -> alloc::vec::Vec<(alloc::string::String, alloc::string::String)>
+pub fn veclite::database::VecLite::checkpoint(&self) -> veclite::error::Result<()>
+pub fn veclite::database::VecLite::collection(&self, &str) -> veclite::error::Result<veclite::collection::Collection>
+pub fn veclite::database::VecLite::create_alias(&self, &str, &str) -> veclite::error::Result<()>
+pub fn veclite::database::VecLite::create_collection(&self, &str, veclite::options::CollectionOptions) -> veclite::error::Result<veclite::collection::Collection>
+pub fn veclite::database::VecLite::delete_alias(&self, &str) -> veclite::error::Result<()>
+pub fn veclite::database::VecLite::delete_collection(&self, &str) -> veclite::error::Result<()>
+pub fn veclite::database::VecLite::list_collections(&self) -> alloc::vec::Vec<alloc::string::String>
+pub fn veclite::database::VecLite::memory() -> Self
+pub fn veclite::database::VecLite::open(impl core::convert::AsRef<std::path::Path>) -> veclite::error::Result<Self>
+pub fn veclite::database::VecLite::open_with(impl core::convert::AsRef<std::path::Path>, veclite::options::OpenOptions) -> veclite::error::Result<Self>
+pub fn veclite::database::VecLite::register_embedder(&self, &str, alloc::boxed::Box<dyn veclite::embedding::Embedder>) -> veclite::error::Result<()>
+pub fn veclite::database::VecLite::rename_collection(&self, &str, &str) -> veclite::error::Result<()>
+pub fn veclite::database::VecLite::snapshot(&self, impl core::convert::AsRef<std::path::Path>) -> veclite::error::Result<()>
+pub fn veclite::database::VecLite::vacuum(&self) -> veclite::error::Result<()>
+impl core::clone::Clone for veclite::database::VecLite
+pub fn veclite::database::VecLite::clone(&self) -> veclite::database::VecLite
+impl core::ops::drop::Drop for veclite::database::VecLite
+pub fn veclite::database::VecLite::drop(&mut self)
+impl core::marker::Freeze for veclite::database::VecLite
+impl core::marker::Send for veclite::database::VecLite
+impl core::marker::Sync for veclite::database::VecLite
+impl core::marker::Unpin for veclite::database::VecLite
+impl core::marker::UnsafeUnpin for veclite::database::VecLite
+impl !core::panic::unwind_safe::RefUnwindSafe for veclite::database::VecLite
+impl !core::panic::unwind_safe::UnwindSafe for veclite::database::VecLite
+pub const veclite::DEFAULT_EMBEDDING_PROVIDER: &str
+pub const veclite::DEFAULT_PROVIDER: &str
+pub trait veclite::Embedder: core::marker::Send + core::marker::Sync
+pub fn veclite::Embedder::add_document(&mut self, &str)
+pub fn veclite::Embedder::dimension(&self) -> usize
+pub fn veclite::Embedder::embed(&self, &str) -> veclite::error::Result<alloc::vec::Vec<f32>>
+pub fn veclite::Embedder::embed_batch(&self, &[&str]) -> veclite::error::Result<alloc::vec::Vec<alloc::vec::Vec<f32>>>
+pub fn veclite::Embedder::export_state(&self) -> veclite::error::Result<alloc::vec::Vec<u8>>
+pub fn veclite::Embedder::fit(&mut self, &[&str]) -> veclite::error::Result<()>
+pub fn veclite::Embedder::import_state(&mut self, &[u8]) -> veclite::error::Result<()>
+impl veclite::embedding::Embedder for veclite::embedding::bm25::Bm25
+pub fn veclite::embedding::bm25::Bm25::add_document(&mut self, &str)
+pub fn veclite::embedding::bm25::Bm25::dimension(&self) -> usize
+pub fn veclite::embedding::bm25::Bm25::embed(&self, &str) -> veclite::error::Result<alloc::vec::Vec<f32>>
+pub fn veclite::embedding::bm25::Bm25::embed_batch(&self, &[&str]) -> veclite::error::Result<alloc::vec::Vec<alloc::vec::Vec<f32>>>
+pub fn veclite::embedding::bm25::Bm25::export_state(&self) -> veclite::error::Result<alloc::vec::Vec<u8>>
+pub fn veclite::embedding::bm25::Bm25::fit(&mut self, &[&str]) -> veclite::error::Result<()>
+pub fn veclite::embedding::bm25::Bm25::import_state(&mut self, &[u8]) -> veclite::error::Result<()>
+impl veclite::embedding::Embedder for veclite::embedding::bow::BagOfWords
+pub fn veclite::embedding::bow::BagOfWords::add_document(&mut self, &str)
+pub fn veclite::embedding::bow::BagOfWords::dimension(&self) -> usize
+pub fn veclite::embedding::bow::BagOfWords::embed(&self, &str) -> veclite::error::Result<alloc::vec::Vec<f32>>
+pub fn veclite::embedding::bow::BagOfWords::embed_batch(&self, &[&str]) -> veclite::error::Result<alloc::vec::Vec<alloc::vec::Vec<f32>>>
+pub fn veclite::embedding::bow::BagOfWords::export_state(&self) -> veclite::error::Result<alloc::vec::Vec<u8>>
+pub fn veclite::embedding::bow::BagOfWords::fit(&mut self, &[&str]) -> veclite::error::Result<()>
+pub fn veclite::embedding::bow::BagOfWords::import_state(&mut self, &[u8]) -> veclite::error::Result<()>
+impl veclite::embedding::Embedder for veclite::embedding::char_ngram::CharNgram
+pub fn veclite::embedding::char_ngram::CharNgram::add_document(&mut self, &str)
+pub fn veclite::embedding::char_ngram::CharNgram::dimension(&self) -> usize
+pub fn veclite::embedding::char_ngram::CharNgram::embed(&self, &str) -> veclite::error::Result<alloc::vec::Vec<f32>>
+pub fn veclite::embedding::char_ngram::CharNgram::embed_batch(&self, &[&str]) -> veclite::error::Result<alloc::vec::Vec<alloc::vec::Vec<f32>>>
+pub fn veclite::embedding::char_ngram::CharNgram::export_state(&self) -> veclite::error::Result<alloc::vec::Vec<u8>>
+pub fn veclite::embedding::char_ngram::CharNgram::fit(&mut self, &[&str]) -> veclite::error::Result<()>
+pub fn veclite::embedding::char_ngram::CharNgram::import_state(&mut self, &[u8]) -> veclite::error::Result<()>
+impl veclite::embedding::Embedder for veclite::embedding::tfidf::TfIdf
+pub fn veclite::embedding::tfidf::TfIdf::add_document(&mut self, &str)
+pub fn veclite::embedding::tfidf::TfIdf::dimension(&self) -> usize
+pub fn veclite::embedding::tfidf::TfIdf::embed(&self, &str) -> veclite::error::Result<alloc::vec::Vec<f32>>
+pub fn veclite::embedding::tfidf::TfIdf::embed_batch(&self, &[&str]) -> veclite::error::Result<alloc::vec::Vec<alloc::vec::Vec<f32>>>
+pub fn veclite::embedding::tfidf::TfIdf::export_state(&self) -> veclite::error::Result<alloc::vec::Vec<u8>>
+pub fn veclite::embedding::tfidf::TfIdf::fit(&mut self, &[&str]) -> veclite::error::Result<()>
+pub fn veclite::embedding::tfidf::TfIdf::import_state(&mut self, &[u8]) -> veclite::error::Result<()>
+pub fn veclite::available_providers() -> alloc::vec::Vec<alloc::string::String>
+pub fn veclite::build_provider(&str, usize) -> veclite::error::Result<alloc::boxed::Box<dyn veclite::embedding::Embedder>>
+pub type veclite::Result<T> = core::result::Result<T, veclite::error::VecLiteError>

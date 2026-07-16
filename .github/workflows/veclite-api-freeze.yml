@@ -1,0 +1,47 @@
+name: VecLite API Freeze
+
+# Enforces the Rust public-API freeze (SPEC-004 §8 / accept-3, API-062). The
+# `veclite` crate's public API was frozen at T4.1; within 1.x it is additive-only.
+# `cargo xtask api-freeze` regenerates the surface with `cargo public-api` and
+# diffs it against the committed snapshot crates/veclite/public-api.txt — any
+# removal, rename, or signature change fails the gate. Purely additive changes are
+# re-blessed with `cargo xtask api-freeze --bless` in the same PR.
+#
+# NOTE: GitHub Actions is currently disabled for this repo (CI budget); the gate
+# runs locally with `cargo xtask api-freeze`.
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'crates/veclite/**'
+      - 'xtask/**'
+      - 'crates/veclite/public-api.txt'
+      - '.github/workflows/veclite-api-freeze.yml'
+  pull_request:
+    branches: [ '**' ]
+    paths:
+      - 'crates/veclite/**'
+      - 'xtask/**'
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  api-freeze:
+    name: Public-API additive-only
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      # cargo public-api needs a nightly rustdoc; stable is the default build.
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-public-api
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: api-freeze
+      - name: Enforce public-API freeze
+        run: cargo xtask api-freeze
