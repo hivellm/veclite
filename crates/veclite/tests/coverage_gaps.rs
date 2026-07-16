@@ -4,8 +4,8 @@
 //! each asserts the documented result.
 
 use veclite::{
-    CollectionOptions, Condition, Filter, Metric, Point, Quantization, SparseVector, VecLite,
-    build_provider,
+    CollectionOptions, Condition, Filter, Metric, PayloadIndexKind, Point, Quantization,
+    SparseVector, VecLite, build_provider,
 };
 
 #[test]
@@ -97,6 +97,71 @@ fn nested_condition_matches_via_builder() {
     let f = Filter::new().must(Condition::Nested(Box::new(inner)));
     assert!(f.matches(Some(&serde_json::json!({ "lang": "en" }))));
     assert!(!f.matches(Some(&serde_json::json!({ "lang": "pt" }))));
+}
+
+#[test]
+fn cosine_search_projects_scores_and_vectors() {
+    // Cosine metric exercises the `1.0 - distance` score transform and the
+    // with_vector projection branch.
+    let db = VecLite::memory();
+    let c = db
+        .create_collection(
+            "cos",
+            CollectionOptions::new(3, Metric::Cosine).quantization(Quantization::None),
+        )
+        .unwrap_or_else(|e| panic!("{e}"));
+    c.upsert(Point::new("x", vec![1.0, 0.0, 0.0]))
+        .unwrap_or_else(|e| panic!("{e}"));
+    c.upsert(Point::new("y", vec![0.0, 1.0, 0.0]))
+        .unwrap_or_else(|e| panic!("{e}"));
+    let hits = c
+        .query(&[1.0, 0.0, 0.0])
+        .limit(1)
+        .with_vector(true)
+        .run()
+        .unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(hits[0].id, "x");
+    assert!(
+        (hits[0].score - 1.0).abs() < 1e-5,
+        "cosine self-sim ~1: {}",
+        hits[0].score
+    );
+    assert!(hits[0].vector.is_some());
+}
+
+#[test]
+fn filtered_search_over_an_indexed_collection() {
+    // A keyword-indexed collection large enough to route through the HNSW
+    // filtered-search path (over-fetch + post-filter).
+    let db = VecLite::memory();
+    let c = db
+        .create_collection(
+            "f",
+            CollectionOptions::new(2, Metric::Euclidean)
+                .quantization(Quantization::None)
+                .payload_index("lang", PayloadIndexKind::Keyword),
+        )
+        .unwrap_or_else(|e| panic!("{e}"));
+    for i in 0..60u32 {
+        let lang = if i % 2 == 0 { "en" } else { "pt" };
+        c.upsert(
+            Point::new(format!("k{i}"), vec![i as f32, 0.0])
+                .payload(serde_json::json!({ "lang": lang })),
+        )
+        .unwrap_or_else(|e| panic!("{e}"));
+    }
+    let hits = c
+        .query(&[0.0, 0.0])
+        .limit(3)
+        .filter(Filter::new().must(Condition::eq("lang", "pt")))
+        .run()
+        .unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(hits.len(), 3);
+    // Nearest odd-index (pt) points to the origin: k1, k3, k5.
+    assert_eq!(
+        hits.iter().map(|h| h.id.clone()).collect::<Vec<_>>(),
+        vec!["k1", "k3", "k5"]
+    );
 }
 
 #[test]

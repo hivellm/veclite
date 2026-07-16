@@ -701,6 +701,156 @@ mod tests {
         assert_eq!(actual, expected);
     }
 
+    /// `quantize_vector`/`dequantize_vector` dispatch on `self.bits` and
+    /// only support 1/2/4/8. `new()` rejects any other value, but nothing
+    /// stops a caller from mutating the public `bits` field afterwards
+    /// (e.g. after a corrupted deserialize), so the `_` fallback arms must
+    /// still return a real error instead of panicking.
+    #[test]
+    fn test_quantize_dequantize_vector_reject_unsupported_bits() {
+        let mut sq = ScalarQuantization::new(8).unwrap_or_else(|e| panic!("{e}"));
+        sq.bits = 3;
+
+        let Err(err) = sq.quantize_vector(&[1.0, 2.0, 3.0]) else {
+            panic!("bits=3 is not 1/2/4/8, quantize_vector must error")
+        };
+        assert!(matches!(err, QuantizationError::InvalidParameters(_)));
+
+        let Err(err) = sq.dequantize_vector(&[0u8, 1u8]) else {
+            panic!("bits=3 is not 1/2/4/8, dequantize_vector must error")
+        };
+        assert!(matches!(err, QuantizationError::InvalidParameters(_)));
+    }
+
+    /// `QuantizationMethod::dequantize` computes `bytes_per_vector` with
+    /// its own match on `self.bits`; the `_` arm (unsupported bits) and
+    /// `memory_usage`'s `_ => 0` fallback are separate call sites from the
+    /// per-vector `dequantize_vector` dispatch, so they need their own
+    /// coverage with a corrupted `bits` value.
+    #[test]
+    fn test_dequantize_and_memory_usage_reject_unsupported_bits() {
+        let mut sq = ScalarQuantization::new(8).unwrap_or_else(|e| panic!("{e}"));
+        sq.bits = 3;
+
+        assert_eq!(sq.memory_usage(10, 4), 0);
+
+        let quantized = QuantizedVectors {
+            data: vec![0u8; 8],
+            dimension: 4,
+            count: 2,
+            parameters: QuantizationParams::Scalar {
+                bits: 3,
+                min_value: 0.0,
+                max_value: 1.0,
+                scale: 0.1,
+            },
+        };
+        let Err(err) = sq.dequantize(&quantized) else {
+            panic!("bits=3 is not 1/2/4/8, dequantize must error")
+        };
+        assert!(matches!(err, QuantizationError::InvalidParameters(_)));
+    }
+
+    /// `calculate_quantization_error` compares `original` against the
+    /// dequantized reconstruction element-by-element, so a caller passing
+    /// an `original` slice whose length doesn't match what `quantized`
+    /// decodes to (8-bit: one byte per dimension, so a 2-byte payload
+    /// decodes to length 2) must get a `DimensionMismatch`, not a panic
+    /// from the zipped iterator silently truncating.
+    #[test]
+    fn test_calculate_quantization_error_dimension_mismatch() {
+        let mut sq = ScalarQuantization::new(8).unwrap_or_else(|e| panic!("{e}"));
+        sq.fit(&[vec![0.0, 1.0]]).unwrap_or_else(|e| panic!("{e}"));
+
+        let quantized = sq
+            .quantize_vector(&[0.0, 1.0])
+            .unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(quantized.len(), 2);
+
+        let original = vec![0.0, 0.5, 1.0]; // length 3, dequantized will be length 2
+        let Err(err) = sq.calculate_quantization_error(&original, &quantized) else {
+            panic!("mismatched lengths must be rejected")
+        };
+        match err {
+            QuantizationError::DimensionMismatch { expected, actual } => {
+                assert_eq!(expected, 3);
+                assert_eq!(actual, 2);
+            }
+            other => panic!("expected DimensionMismatch, got {other}"),
+        }
+    }
+
+    /// `validate_parameters` must reject a non-positive `scale`: a
+    /// zero-or-negative scale makes every dequantized value collapse to
+    /// (or diverge from) `offset` regardless of the quantized code,
+    /// silently destroying the quantization instead of erroring.
+    #[test]
+    fn test_validate_parameters_rejects_non_positive_scale() {
+        let mut sq = ScalarQuantization::new(8).unwrap_or_else(|e| panic!("{e}"));
+        sq.min_value = 0.0;
+        sq.max_value = 1.0;
+
+        sq.scale = 0.0;
+        assert!(sq.validate_parameters().is_err());
+
+        sq.scale = -0.5;
+        assert!(sq.validate_parameters().is_err());
+    }
+
+    /// `quantized_similarity` dequantizes both operands and requires them
+    /// to be the same length before computing cosine similarity; feeding
+    /// two byte payloads of different lengths (8-bit: one byte per
+    /// dimension) must surface as a `DimensionMismatch`, not a truncated
+    /// zip that silently ignores the tail.
+    #[test]
+    fn test_quantized_similarity_dimension_mismatch() {
+        let mut sq = ScalarQuantization::new(8).unwrap_or_else(|e| panic!("{e}"));
+        sq.fit(&[vec![0.0, 1.0, 2.0]])
+            .unwrap_or_else(|e| panic!("{e}"));
+
+        let a = sq
+            .quantize_vector(&[0.0, 1.0, 2.0])
+            .unwrap_or_else(|e| panic!("{e}"));
+        let b = sq
+            .quantize_vector(&[0.0, 1.0])
+            .unwrap_or_else(|e| panic!("{e}"));
+
+        let Err(err) = sq.quantized_similarity(&a, &b) else {
+            panic!("mismatched dequantized lengths must be rejected")
+        };
+        match err {
+            QuantizationError::DimensionMismatch { expected, actual } => {
+                assert_eq!(expected, 3);
+                assert_eq!(actual, 2);
+            }
+            other => panic!("expected DimensionMismatch, got {other}"),
+        }
+    }
+
+    /// `quantized_similarity` special-cases a zero-norm operand (all
+    /// dequantized values are 0.0, e.g. an all-zero-code vector with
+    /// `offset == 0.0`) to avoid a 0/0 division and returns `Ok(0.0)`
+    /// instead of `NaN`.
+    #[test]
+    fn test_quantized_similarity_zero_norm_returns_zero() {
+        let mut sq = ScalarQuantization::new(8).unwrap_or_else(|e| panic!("{e}"));
+        // offset == 0.0 and min_value == 0.0 so an all-zero-code vector
+        // dequantizes to all-zero, giving norm_a == 0.0.
+        sq.fit(&[vec![0.0, 1.0, 2.0]])
+            .unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(sq.offset, 0.0);
+
+        let zero_codes = vec![0u8, 0u8, 0u8];
+        let nonzero = sq
+            .quantize_vector(&[0.0, 1.0, 2.0])
+            .unwrap_or_else(|e| panic!("{e}"));
+
+        let similarity = sq
+            .quantized_similarity(&zero_codes, &nonzero)
+            .unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(similarity, 0.0);
+    }
+
     /// Pins the SQ-8 encoding to a hand-computed byte sequence, per the
     /// module formula: `scale = (max - min) / 255`,
     /// `code = round((v - min) / scale)`. `min = 0.0`, `max = 510.0` keeps

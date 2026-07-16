@@ -403,6 +403,28 @@ mod tests {
     }
 
     #[test]
+    fn round_trip_sq4_sq2_sq1_encodings() {
+        // dimension 5: Sq4 stride = ceil(5/2) = 3, Sq2 stride = ceil(5/4) = 2,
+        // Sq1 stride = ceil(5/8) = 1.
+        let cases: [(Encoding, usize); 3] =
+            [(Encoding::Sq4, 3), (Encoding::Sq2, 2), (Encoding::Sq1, 1)];
+        for (encoding, stride) in cases {
+            let body = VectorsBody {
+                encoding,
+                dimension: 5,
+                first_slot: 100,
+                count: 2,
+                sq_params: Some((2.0, -3.5)),
+                records: (0..(stride * 2) as u8).collect(),
+            };
+            let bytes = body.encode();
+            let back = VectorsBody::decode(&bytes).unwrap_or_else(|e| panic!("{e} ({encoding:?})"));
+            assert_eq!(back, body, "encoding {encoding:?}");
+            assert_eq!(back.stride().unwrap_or_else(|e| panic!("{e}")), stride);
+        }
+    }
+
+    #[test]
     fn wrong_record_length_is_corrupt() {
         let body = VectorsBody {
             encoding: Encoding::Sq8,
@@ -417,6 +439,39 @@ mod tests {
             VectorsBody::decode(&bytes),
             Err(VecLiteError::Corrupt(_))
         ));
+    }
+
+    #[test]
+    fn round_trip_binary_with_valid_dimension() {
+        let body = VectorsBody {
+            encoding: Encoding::Binary,
+            dimension: 16, // multiple of 8: stride = 2 bytes/record
+            first_slot: 5,
+            count: 3,
+            sq_params: None,
+            records: vec![0xFF, 0x00, 0x0F, 0xF0, 0x01, 0x02],
+        };
+        let bytes = body.encode();
+        let back = VectorsBody::decode(&bytes).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(back, body);
+        assert_eq!(back.stride().unwrap_or_else(|e| panic!("{e}")), 2);
+        assert_eq!(back.record(6), Some(&[0x0F, 0xF0][..]));
+    }
+
+    #[test]
+    fn pq_encoding_stride_is_corrupt_not_supported() {
+        // decode() rejects Pq before reaching stride_for, but a VectorsBody can
+        // be constructed directly (pub(crate)) with a Pq encoding; `.stride()`
+        // must still fail cleanly rather than panic.
+        let body = VectorsBody {
+            encoding: Encoding::Pq,
+            dimension: 8,
+            first_slot: 0,
+            count: 0,
+            sq_params: None,
+            records: Vec::new(),
+        };
+        assert!(matches!(body.stride(), Err(VecLiteError::Corrupt(_))));
     }
 
     #[test]

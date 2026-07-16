@@ -236,4 +236,17 @@ mod tests {
             panic!("ef_search above 4096 must be rejected")
         };
     }
+
+    #[test]
+    fn insert_batch_dispatches_every_metric() {
+        // The parallel batch path has one arm per metric graph; exercise all.
+        for metric in [Metric::Cosine, Metric::Euclidean, Metric::DotProduct] {
+            let index = HnswIndex::new(metric, 3, 16, 200, 100).unwrap_or_else(|e| panic!("{e}"));
+            index.insert_batch(&[(0, vec![1.0, 0.0, 0.0]), (1, vec![0.0, 1.0, 0.0])]);
+            let hits = index
+                .search(&[1.0, 0.0, 0.0], 1, 32)
+                .unwrap_or_else(|e| panic!("{e}"));
+            assert_eq!(hits.first().map(|(s, _)| *s), Some(0), "metric {metric:?}");
+        }
+    }
 }

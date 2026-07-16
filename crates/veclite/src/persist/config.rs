@@ -147,4 +147,51 @@ mod tests {
             assert_eq!(back.hnsw.ef_search, 150);
         }
     }
+
+    #[test]
+    fn compression_round_trips_none_and_zstd() {
+        let mut opts = CollectionOptions::new(3, Metric::Cosine);
+
+        opts.compression = Compression::None;
+        let stored = to_stored(&opts, 1000);
+        assert_eq!(stored.compression, 0);
+        let back = from_stored(&stored).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(back.compression, Compression::None);
+
+        // The threshold is not persisted (see `compression_from` doc comment):
+        // it always comes back as the default 1024, regardless of what was set.
+        opts.compression = Compression::Zstd { threshold: 4096 };
+        let stored = to_stored(&opts, 1000);
+        assert_eq!(stored.compression, 2);
+        let back = from_stored(&stored).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(back.compression, Compression::Zstd { threshold: 1024 });
+    }
+
+    #[test]
+    fn metric_from_rejects_unknown_byte() {
+        let Err(err) = metric_from(9) else {
+            panic!("unknown metric byte must be rejected")
+        };
+        assert!(matches!(err, VecLiteError::Corrupt(ref msg) if msg == "config: unknown metric 9"));
+    }
+
+    #[test]
+    fn quant_from_rejects_unknown_byte() {
+        let Err(err) = quant_from(9, 0) else {
+            panic!("unknown quantization byte must be rejected")
+        };
+        assert!(
+            matches!(err, VecLiteError::Corrupt(ref msg) if msg == "config: unknown quantization 9")
+        );
+    }
+
+    #[test]
+    fn compression_from_rejects_unknown_byte() {
+        let Err(err) = compression_from(9) else {
+            panic!("unknown compression byte must be rejected")
+        };
+        assert!(
+            matches!(err, VecLiteError::Corrupt(ref msg) if msg == "config: unknown compression 9")
+        );
+    }
 }

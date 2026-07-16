@@ -350,6 +350,37 @@ mod tests {
         }
     }
 
+    /// `train` only early-returns on an empty *outer* slice; a non-empty
+    /// outer slice whose inner vectors are all empty still reaches the
+    /// `flat_map` with zero elements, so `all_values.is_empty()` is true
+    /// and the threshold must fall back to `0.0` instead of panicking on
+    /// an out-of-bounds median index.
+    #[test]
+    fn test_train_with_all_empty_vectors_defaults_threshold_to_zero() {
+        let mut quantizer = BinaryQuantization::new();
+
+        let vectors: Vec<Vec<f32>> = vec![vec![], vec![]];
+        quantizer.train(&vectors).unwrap_or_else(|e| panic!("{e}"));
+
+        assert!(quantizer.is_trained());
+        assert_eq!(quantizer.threshold(), 0.0);
+    }
+
+    /// `validate_parameters` must reject an untrained quantizer: without
+    /// training, `threshold` is meaningless (defaults to `0.0`) and using
+    /// it for quantize/dequantize would silently produce garbage instead
+    /// of surfacing the missing `train()` call.
+    #[test]
+    fn test_validate_parameters_rejects_untrained_quantizer() {
+        let quantizer = BinaryQuantization::new();
+        assert!(!quantizer.is_trained());
+
+        let Err(err) = quantizer.validate_parameters() else {
+            panic!("untrained quantizer must fail validation")
+        };
+        assert!(matches!(err, QuantizationError::InvalidParameters(_)));
+    }
+
     #[test]
     fn test_binary_quantization_memory_usage() {
         let quantizer = BinaryQuantization::new();

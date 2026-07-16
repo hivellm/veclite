@@ -380,6 +380,38 @@ mod tests {
     }
 
     #[test]
+    fn sync_flushes_without_error() {
+        let (path, mut wal) = fresh("sync");
+        wal.append(0, WalOp::UpsertBatch, b"x".to_vec(), Durability::Off)
+            .unwrap_or_else(|e| panic!("{e}"));
+        wal.sync().unwrap_or_else(|e| panic!("{e}"));
+        // The synced entry survives a fresh open of the same file.
+        let mut re = Wal::open(&path, UUID).unwrap_or_else(|e| panic!("{e}"));
+        let replay = re.replay().unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(replay.entries.len(), 1);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn replay_of_file_shorter_than_header_is_fresh_not_discarded() {
+        let (path, mut wal) = fresh("short");
+        // The header is written by `open`; truncate below WAL_HEADER_SIZE to
+        // simulate a file that never got a complete header written.
+        {
+            let f = OpenOptions::new()
+                .write(true)
+                .open(&path)
+                .unwrap_or_else(|e| panic!("{e}"));
+            f.set_len(WAL_HEADER_SIZE - 1)
+                .unwrap_or_else(|e| panic!("{e}"));
+        }
+        let replay = wal.replay().unwrap_or_else(|e| panic!("{e}"));
+        assert!(replay.entries.is_empty());
+        assert!(!replay.discarded_tail);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
     fn truncate_resets_and_persists_across_reopen() {
         let (path, mut wal) = fresh("trunc");
         wal.append(0, WalOp::UpsertBatch, b"a".to_vec(), Durability::Full)
