@@ -1,0 +1,108 @@
+name: VecLite Clean-Machine Install
+
+# The no-toolchain bar (SPEC-016 REL-020, gate G4): installing any package on a
+# clean machine never requires a Rust toolchain. Each ecosystem builds its
+# artifact in a toolchain job, then a second job on a Rust-free container
+# installs *only* the prebuilt artifact and runs the quickstart (examples/).
+#
+# NOTE: GitHub Actions is currently disabled for this repo (CI budget). Locally
+# the same guarantee is checked by building the wheel / napi prebuild and
+# running examples/quickstart.py and examples/quickstart.mjs against them.
+
+on:
+  pull_request:
+    branches: [ '**' ]
+    paths:
+      - 'crates/veclite-py/**'
+      - 'crates/veclite-node/**'
+      - 'examples/**'
+      - '.github/workflows/veclite-clean-install.yml'
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # ── Python: build the manylinux wheel, install it on a clean container ──────
+  build-wheel:
+    name: Build manylinux wheel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Build abi3 wheel (manylinux)
+        uses: PyO3/maturin-action@v1
+        with:
+          target: x86_64
+          manylinux: auto
+          args: --release --out dist -m crates/veclite-py/Cargo.toml
+      - uses: actions/upload-artifact@v4
+        with:
+          name: clean-wheel
+          path: dist/*.whl
+          if-no-files-found: error
+
+  pip-clean-install:
+    name: pip install on a Rust-free container
+    needs: build-wheel
+    runs-on: ubuntu-latest
+    container: python:3.12-slim
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          name: clean-wheel
+          path: dist
+      - name: Assert no Rust toolchain is present
+        run: |
+          if command -v cargo >/dev/null 2>&1; then echo "::error::cargo present — not a clean machine"; exit 1; fi
+      - name: Install the prebuilt wheel only (no build backend)
+        run: pip install --no-index --find-links dist veclite
+      - name: Run the quickstart
+        run: python examples/quickstart.py
+
+  # ── Node: build the prebuild, install the package on a clean container ──────
+  build-node:
+    name: Build linux-x64 napi prebuild
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: crates/veclite-node
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: dtolnay/rust-toolchain@stable
+      - run: npm ci
+      - name: Build prebuild + pack the package
+        run: |
+          npx napi build --platform --release
+          npm pack --pack-destination "$GITHUB_WORKSPACE/dist-node"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: clean-node
+          path: dist-node/*.tgz
+          if-no-files-found: error
+
+  npm-clean-install:
+    name: npm install on a Rust-free container
+    needs: build-node
+    runs-on: ubuntu-latest
+    container: node:20-slim
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          name: clean-node
+          path: dist-node
+      - name: Assert no Rust toolchain is present
+        run: |
+          if command -v cargo >/dev/null 2>&1; then echo "::error::cargo present — not a clean machine"; exit 1; fi
+      - name: Install the packed package (prebuilt addon) into a scratch project
+        run: |
+          mkdir -p /tmp/app && cd /tmp/app
+          npm init -y >/dev/null
+          npm install "$GITHUB_WORKSPACE"/dist-node/*.tgz
+          cp "$GITHUB_WORKSPACE"/examples/quickstart.mjs .
+      - name: Run the quickstart
+        run: cd /tmp/app && node quickstart.mjs
