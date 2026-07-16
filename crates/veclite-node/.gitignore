@@ -1,4 +1,5 @@
 /target
 node_modules/
 *.node
-npm/
+# The npm/<platform>/ package templates are committed (napi publish uses them);
+# only their built *.node binaries (matched above) stay out of git.

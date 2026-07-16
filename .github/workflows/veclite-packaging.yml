@@ -123,7 +123,11 @@ jobs:
       - name: Build napi prebuild
         run: npx napi build --platform --release --target ${{ matrix.target }}
 
-      - name: Conformance corpus on the built addon (gate G4)
+      - name: Behavioral + leak/zero-copy tests (native)
+        if: matrix.native
+        run: npm test
+
+      - name: Conformance corpus on the built addon — Node (gate G4)
         if: matrix.native
         shell: bash
         working-directory: ${{ github.workspace }}
@@ -133,8 +137,30 @@ jobs:
         env:
           VECLITE_NODE: ${{ github.workspace }}/crates/veclite-node/veclite.js
 
+      - name: Set up Bun
+        if: matrix.native
+        uses: oven-sh/setup-bun@v2
+
+      - name: Conformance corpus on the built addon — Bun (acceptance 1/4)
+        if: matrix.native
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: bun tests/conformance/runners/node/run.mjs
+        env:
+          VECLITE_NODE: ${{ github.workspace }}/crates/veclite-node/veclite.js
+
+      - name: Stage the addon into its platform package (publish layout)
+        shell: bash
+        working-directory: crates/veclite-node
+        run: |
+          node_file="$(ls veclite.*.node | head -n1)"
+          platform="${node_file#veclite.}"; platform="${platform%.node}"
+          if [ -d "npm/$platform" ]; then cp "$node_file" "npm/$platform/"; fi
+
       - uses: actions/upload-artifact@v4
         with:
           name: node-prebuild-${{ matrix.target }}
-          path: crates/veclite-node/*.node
+          path: |
+            crates/veclite-node/*.node
+            crates/veclite-node/npm/*/
           if-no-files-found: error

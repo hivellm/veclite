@@ -34,20 +34,48 @@ await db.close();
 - **`close()`** flushes and drops the handle so the advisory file lock releases
   immediately; later operations reject with `code: "CLOSED"` (NODE-013). A
   still-referenced `Collection` keeps the file open, so drop collections before
-  reopening the same path in-process.
+  reopening the same path in-process. A file-backed database garbage-collected
+  **without** `close()` emits a `process` warning (`code:
+  "VECLITE_HANDLE_LEAK"`) — call `close()` to avoid it.
+- **Zero-copy hit vectors** (NODE-012): returned vectors are `Float32Array`
+  views backed by an *external* `ArrayBuffer` over the Rust allocation (with a
+  finalizer), not a V8-heap copy.
 - TypeScript definitions ship in the package (`tsc --strict`-clean, NODE-003).
+
+## Install (prebuilt — no toolchain)
+
+`npm install veclite` pulls a prebuilt native addon: the main package ships the
+loader + types, and npm resolves the matching `veclite-<platform>` package
+(`veclite-linux-x64-gnu`, `veclite-darwin-arm64`, `veclite-win32-x64-msvc`, …)
+by `os`/`cpu` via `optionalDependencies` (NODE-001). Installing never compiles
+Rust. Prebuilds cover the FR-66 platform set; runs on **Node 18/20/22** and
+**Bun**.
+
+## Runtimes
+
+Node.js ≥ 18 and Bun are both supported and gated by the shared conformance
+corpus (SPEC-015 §3). `close()` releases the file lock inline (not on a deferred
+task) so an immediate same-path reopen works on every host.
+
+## ONNX embedders
+
+The base addon excludes the ONNX/`fastembed:*` provider family to stay small.
+When the `onnx` core feature lands (tracked in `phase5c_onnx-feature`), those
+providers ship as a separate optional `@veclite/onnx` addon built with
+`--features onnx`; until then `fastembed:*` providers report
+`UNSUPPORTED_PROVIDER` (EMB-040).
 
 ## Building locally
 
 ```bash
 npm install
-npm run build:debug      # napi build → veclite.<platform>.node + index.{js,d.ts}
-node --test __test__/    # behavioral tests
+npm run build:debug            # napi build → veclite.<platform>.node + index.{js,d.ts}
+npm test                       # behavioral + leak/zero-copy tests (node --test)
+bash clean_install_e2e.sh      # pack + install prebuild in a fresh project, run quickstart
 ```
 
-`npm run build` produces the release artifact. Cross-platform prebuilds, the
-`@veclite/*` platform packages, Bun/Deno CI, and the shared conformance corpus
-run are tracked in `phase4i_node-prebuilds-conformance`.
+`npm run build` produces the release artifact. `npx napi create-npm-dir -t .`
+regenerates the `npm/<platform>/` package templates from `napi.triples`.
 
 ## License
 

@@ -11,10 +11,22 @@
     "name": "veclite",
     "triples": {
       "defaults": true,
-      "additional": ["x86_64-unknown-linux-musl", "aarch64-apple-darwin"]
+      "additional": [
+        "aarch64-apple-darwin",
+        "aarch64-unknown-linux-gnu",
+        "x86_64-unknown-linux-musl"
+      ]
     }
   },
   "files": ["veclite.js", "veclite.d.ts", "index.js", "index.d.ts"],
+  "optionalDependencies": {
+    "veclite-darwin-arm64": "0.1.0",
+    "veclite-darwin-x64": "0.1.0",
+    "veclite-linux-arm64-gnu": "0.1.0",
+    "veclite-linux-x64-gnu": "0.1.0",
+    "veclite-linux-x64-musl": "0.1.0",
+    "veclite-win32-x64-msvc": "0.1.0"
+  },
   "engines": {
     "node": ">= 18"
   },

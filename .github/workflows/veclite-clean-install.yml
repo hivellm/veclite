@@ -74,10 +74,17 @@ jobs:
           node-version: 20
       - uses: dtolnay/rust-toolchain@stable
       - run: npm ci
-      - name: Build prebuild + pack the package
+      - name: Build prebuild + pack the main and platform packages
         run: |
+          # The main package ships the loader + types (no .node); the platform
+          # package ships the built addon. npm resolves the latter by os/cpu via
+          # optionalDependencies — the prebuild install model (NODE-001).
           npx napi build --platform --release
+          node_file="$(ls veclite.*.node | head -n1)"
+          platform="${node_file#veclite.}"; platform="${platform%.node}"
+          cp "$node_file" "npm/$platform/"
           npm pack --pack-destination "$GITHUB_WORKSPACE/dist-node"
+          ( cd "npm/$platform" && npm pack --pack-destination "$GITHUB_WORKSPACE/dist-node" )
       - uses: actions/upload-artifact@v4
         with:
           name: clean-node
@@ -98,10 +105,11 @@ jobs:
       - name: Assert no Rust toolchain is present
         run: |
           if command -v cargo >/dev/null 2>&1; then echo "::error::cargo present — not a clean machine"; exit 1; fi
-      - name: Install the packed package (prebuilt addon) into a scratch project
+      - name: Install the prebuilt packages (main + platform) into a scratch project
         run: |
           mkdir -p /tmp/app && cd /tmp/app
           npm init -y >/dev/null
+          # Install from tarballs only — no registry, no build step.
           npm install "$GITHUB_WORKSPACE"/dist-node/*.tgz
           cp "$GITHUB_WORKSPACE"/examples/quickstart.mjs .
       - name: Run the quickstart

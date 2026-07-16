@@ -1,0 +1,27 @@
+{
+  "name": "veclite-darwin-x64",
+  "version": "0.1.0",
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "main": "veclite.darwin-x64.node",
+  "files": [
+    "veclite.darwin-x64.node"
+  ],
+  "description": "Embedded, single-file, in-process vector database (Node.js binding).",
+  "keywords": [
+    "vector-database",
+    "embeddings",
+    "search",
+    "embedded",
+    "hnsw"
+  ],
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">= 18"
+  },
+  "repository": "https://github.com/hivellm/veclite"
+}

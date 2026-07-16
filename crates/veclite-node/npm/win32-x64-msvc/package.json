@@ -1,0 +1,27 @@
+{
+  "name": "veclite-win32-x64-msvc",
+  "version": "0.1.0",
+  "os": [
+    "win32"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "main": "veclite.win32-x64-msvc.node",
+  "files": [
+    "veclite.win32-x64-msvc.node"
+  ],
+  "description": "Embedded, single-file, in-process vector database (Node.js binding).",
+  "keywords": [
+    "vector-database",
+    "embeddings",
+    "search",
+    "embedded",
+    "hnsw"
+  ],
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">= 18"
+  },
+  "repository": "https://github.com/hivellm/veclite"
+}
