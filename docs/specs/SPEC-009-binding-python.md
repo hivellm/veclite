@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Core implemented (phase4b): the `veclite-py` PyO3 crate (abi3 wheel via maturin), Database/Collection surface, NumPy zero-copy search + batch upsert, GIL release around every core call, and a per-variant exception hierarchy with Rust-identical messages. `register_embedder` (PY-013), the `veclite.aio` facade (PY-031), Python-side `scroll`, the tracemalloc/8-thread proofs, and the abi3 wheel CI are tracked in `phase4h_python-aio-register-wheels`. |
+| **Status** | Implemented (phase4b + phase4h): the `veclite-py` PyO3 crate (abi3 wheel via maturin, mixed layout `veclite._veclite`), Database/Collection surface, NumPy zero-copy search + batch upsert, GIL release around every core call, a per-variant exception hierarchy with Rust-identical messages, `register_embedder` for custom Python embedders with chained tracebacks (PY-013), the lazily-imported `veclite.aio` async facade (PY-031), and `scroll`. Proven by the tracemalloc zero-copy test (PY-020), the 8-thread GIL-release throughput test (PY-030), and a fresh-venv wheel e2e; the abi3 wheel CI matrix (FR-66) runs the conformance corpus + pytest on every native build. |
 | **Phase / tasks** | Phase 4 · T4.3 ([DAG](../DAG.md)) |
 | **PRD requirements** | FR-61, FR-65, FR-66 |
 | **Planning source** | [06-sdk-bindings.md §Python](../vectorizer-lite/06-sdk-bindings.md) |
