@@ -12,6 +12,7 @@
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
 use serde_json::Value;
+use veclite::chunk::{ChunkOptions, Chunker};
 use veclite::{
     CollectionOptions, HnswOptions, Metric, OpenOptions, PayloadIndexKind, Point, Quantization,
     SparseVector, VecLite, VecLiteError,
@@ -112,12 +113,14 @@ pub struct JsHit {
     pub vector: Option<Float32Array>,
 }
 
-/// A point for `upsertBatch` (BYO vectors): id + vector + optional payload.
+/// A point for `upsertBatch` (BYO vectors): id + vector + optional payload and
+/// optional `{indices, values}` sparse lane (SPEC-007).
 #[napi(object)]
 pub struct JsPoint {
     pub id: String,
     pub vector: Float32Array,
     pub payload: Option<Value>,
+    pub sparse: Option<Value>,
 }
 
 fn metric_of(s: &Option<String>) -> Result<Metric> {
@@ -318,6 +321,18 @@ impl Database {
         self.handle()?.delete_collection(&name).map_err(js_err)
     }
 
+    /// Create an alias that resolves to `target` (CORE-051).
+    #[napi]
+    pub fn create_alias(&self, alias: String, target: String) -> Result<()> {
+        self.handle()?.create_alias(&alias, &target).map_err(js_err)
+    }
+
+    /// Delete an alias (CORE-051).
+    #[napi]
+    pub fn delete_alias(&self, alias: String) -> Result<()> {
+        self.handle()?.delete_alias(&alias).map_err(js_err)
+    }
+
     /// Flush acked state to disk (WAL-030b).
     #[napi]
     pub async fn checkpoint(&self) -> Result<()> {
@@ -382,6 +397,34 @@ impl Database {
     }
 }
 
+/// One chunk projected to JS: its trimmed text and byte range in the source.
+#[napi(object)]
+pub struct JsChunk {
+    pub text: String,
+    pub start: u32,
+    pub end: u32,
+}
+
+/// Split `text` into overlapping, UTF-8-safe chunks (SPEC-005 §7). Pure and
+/// deterministic; `maxChars`/`overlap` default to 2048/128.
+#[napi]
+pub fn chunk(text: String, max_chars: Option<u32>, overlap: Option<u32>) -> Vec<JsChunk> {
+    let d = ChunkOptions::default();
+    let opts = ChunkOptions {
+        max_chars: max_chars.map_or(d.max_chars, |v| v as usize),
+        overlap: overlap.map_or(d.overlap, |v| v as usize),
+    };
+    Chunker::new(opts)
+        .chunk(&text)
+        .into_iter()
+        .map(|c| JsChunk {
+            text: c.text,
+            start: c.byte_range.start as u32,
+            end: c.byte_range.end as u32,
+        })
+        .collect()
+}
+
 // ── Collection ──────────────────────────────────────────────────────────────
 
 /// A collection handle (SPEC-004 §4). Cheap to clone (Arc inside).
@@ -404,17 +447,20 @@ impl Collection {
         self.inner.is_empty()
     }
 
-    /// Insert-or-replace one point (API-020). Async: off the event loop.
+    /// Insert-or-replace one point (API-020). Async: off the event loop. The
+    /// optional `sparse` `{indices, values}` sets the hybrid-search lane (SPEC-007).
     #[napi]
     pub async fn upsert(
         &self,
         id: String,
         vector: Float32Array,
         payload: Option<Value>,
+        sparse: Option<Value>,
     ) -> Result<()> {
         let v = vector.to_vec(); // owned copy: the JS buffer can't cross threads
+        let p = point(id, v, payload, sparse)?;
         let coll = self.inner.clone();
-        tokio::task::spawn_blocking(move || coll.upsert(point(id, v, payload)))
+        tokio::task::spawn_blocking(move || coll.upsert(p))
             .await
             .map_err(|e| arg_err(e.to_string()))?
             .map_err(js_err)
@@ -427,9 +473,10 @@ impl Collection {
         id: String,
         vector: Float32Array,
         payload: Option<Value>,
+        sparse: Option<Value>,
     ) -> Result<()> {
         self.inner
-            .upsert(point(id, vector.as_ref().to_vec(), payload))
+            .upsert(point(id, vector.as_ref().to_vec(), payload, sparse)?)
             .map_err(js_err)
     }
 
@@ -438,8 +485,8 @@ impl Collection {
     pub async fn upsert_batch(&self, points: Vec<JsPoint>) -> Result<()> {
         let owned: Vec<Point> = points
             .into_iter()
-            .map(|p| point(p.id, p.vector.to_vec(), p.payload))
-            .collect();
+            .map(|p| point(p.id, p.vector.to_vec(), p.payload, p.sparse))
+            .collect::<Result<_>>()?;
         let coll = self.inner.clone();
         tokio::task::spawn_blocking(move || coll.upsert_batch(owned))
             .await
@@ -451,9 +498,15 @@ impl Collection {
     pub fn upsert_batch_sync(&self, points: Vec<JsPoint>) -> Result<()> {
         let owned: Vec<Point> = points
             .into_iter()
-            .map(|p| point(p.id, p.vector.as_ref().to_vec(), p.payload))
-            .collect();
+            .map(|p| point(p.id, p.vector.as_ref().to_vec(), p.payload, p.sparse))
+            .collect::<Result<_>>()?;
         self.inner.upsert_batch(owned).map_err(js_err)
+    }
+
+    /// Force a full recompute of an auto-embed collection's vocabulary (SPEC-005).
+    #[napi]
+    pub fn refit(&self) -> Result<()> {
+        self.inner.refit().map_err(js_err)
     }
 
     /// Insert-or-replace one text document on an auto-embed collection.
@@ -665,13 +718,22 @@ pub struct JsStats {
     pub auto_embed: bool,
 }
 
-/// Build a BYO `Point` from JS parts.
-fn point(id: String, vector: Vec<f32>, payload: Option<Value>) -> Point {
+/// Build a BYO `Point` from JS parts, with an optional `{indices, values}`
+/// sparse lane for hybrid search (SPEC-007).
+fn point(
+    id: String,
+    vector: Vec<f32>,
+    payload: Option<Value>,
+    sparse: Option<Value>,
+) -> Result<Point> {
     let mut p = Point::new(id, vector);
     if let Some(v) = payload {
         p = p.payload(v);
     }
-    p
+    if let Some(s) = sparse {
+        p = p.sparse(sparse_from_value(&s)?);
+    }
+    Ok(p)
 }
 
 /// Run a k-NN query with the JS options, projecting to `JsHit`.

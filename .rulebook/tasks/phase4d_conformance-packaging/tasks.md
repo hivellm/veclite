@@ -1,8 +1,8 @@
 ## 1. Implementation
-- [ ] 1.1 Context: read docs/specs/SPEC-015 §3, SPEC-016 §2–3; DAG T4.5, T4.6 and gate G4
-- [ ] 1.2 Corpus schema + case-id convention (conf-xxx); author coverage per TST-021
-- [ ] 1.3 Rust reference runner (defines golden outcomes)
-- [ ] 1.4 Python + Node runners consuming the same YAML; 1e-5 score tolerance (TST-022)
+- [x] 1.1 Context: read docs/specs/SPEC-015 §3, SPEC-016 §2–3; DAG T4.5, T4.6 and gate G4
+- [x] 1.2 Corpus schema + case-id convention (conf-xxx); author coverage per TST-021 — tests/conformance/README.md + corpus/*.yaml (34 cases, 7 suites)
+- [x] 1.3 Rust reference runner (defines golden outcomes) — `cargo xtask conformance [--bless]`, golden.json sidecar
+- [x] 1.4 Python + Node runners consuming the same YAML; 1e-5 score tolerance (TST-022) — runners/{python/run.py,node/run.mjs}; all 34 cases green on Rust+Py+Node. Completed binding surface: sparse-lane upsert (py+node), scroll+chunk (py), refit+chunk+aliases (node)
 - [ ] 1.5 Wheel matrix CI (maturin) + prebuild matrix CI (napi-rs) per FR-66
 - [ ] 1.6 Clean-machine install jobs: no-toolchain containers run pip/npm install + quickstart (REL-020)
 - [ ] 1.7 Release workflow skeleton with atomic all-or-nothing publish (REL-012)

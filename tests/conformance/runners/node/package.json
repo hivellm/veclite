@@ -1,0 +1,13 @@
+{
+  "name": "veclite-conformance-node",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Node.js binding conformance runner (SPEC-015 §3)",
+  "type": "module",
+  "scripts": {
+    "conformance": "node --expose-gc run.mjs"
+  },
+  "dependencies": {
+    "js-yaml": "^4.1.0"
+  }
+}

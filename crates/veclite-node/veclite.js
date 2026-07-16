@@ -68,6 +68,7 @@ module.exports = {
   open: wrap(native.open),
   openSync: wrap(native.openSync),
   memory: native.memory, // infallible
+  chunk: native.chunk, // infallible, pure (SPEC-005 §7)
   Database: native.Database,
   Collection: native.Collection,
   VecLiteError,

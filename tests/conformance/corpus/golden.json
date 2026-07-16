@@ -467,6 +467,11 @@
   "conf-hybrid-balanced": [
     {},
     {},
+    {},
+    {},
+    {},
+    {},
+    {},
     {
       "ids": [
         "c",
@@ -489,6 +494,8 @@
   "conf-hybrid-dense-heavy": [
     {},
     {},
+    {},
+    {},
     {
       "ids": [
         "x",
@@ -503,6 +510,8 @@
     }
   ],
   "conf-hybrid-sparse-heavy": [
+    {},
+    {},
     {},
     {},
     {

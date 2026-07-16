@@ -2,6 +2,7 @@ suite: hybrid
 # Dense lane: doc at vector [k] sits at distance k from the query [0.0], so the
 # dense ranking is the insertion order. Sparse lane: a single shared term whose
 # weight descends by rank. RRF fusion is pure rank-based (SPEC-007 HYB-020).
+# Seeded with single upserts because the sparse lane is per-point (SPEC-007).
 cases:
   - id: conf-hybrid-balanced
     desc: alpha 0.5 fuses dense and sparse ranks equally (SPEC-007 §fusion)
@@ -9,16 +10,18 @@ cases:
     steps:
       - op: create_collection
         args: { name: c, dimension: 1, metric: euclidean, quantization_bits: 0 }
-      - op: upsert_batch
-        args:
-          collection: c
-          points:
-            - { id: a, vector: [1.0] }
-            - { id: b, vector: [2.0] }
-            - { id: c, vector: [3.0], sparse: { indices: [0], values: [4.0] } }
-            - { id: d, vector: [4.0], sparse: { indices: [0], values: [3.0] } }
-            - { id: e, vector: [5.0], sparse: { indices: [0], values: [2.0] } }
-            - { id: f, vector: [6.0], sparse: { indices: [0], values: [1.0] } }
+      - op: upsert
+        args: { collection: c, id: a, vector: [1.0] }
+      - op: upsert
+        args: { collection: c, id: b, vector: [2.0] }
+      - op: upsert
+        args: { collection: c, id: c, vector: [3.0], sparse: { indices: [0], values: [4.0] } }
+      - op: upsert
+        args: { collection: c, id: d, vector: [4.0], sparse: { indices: [0], values: [3.0] } }
+      - op: upsert
+        args: { collection: c, id: e, vector: [5.0], sparse: { indices: [0], values: [2.0] } }
+      - op: upsert
+        args: { collection: c, id: f, vector: [6.0], sparse: { indices: [0], values: [1.0] } }
       - op: hybrid_search
         args:
           collection: c
@@ -36,13 +39,12 @@ cases:
     steps:
       - op: create_collection
         args: { name: c, dimension: 1, metric: euclidean, quantization_bits: 0 }
-      - op: upsert_batch
-        args:
-          collection: c
-          points:
-            - { id: x, vector: [1.0], sparse: { indices: [0], values: [1.0] } }
-            - { id: y, vector: [2.0], sparse: { indices: [0], values: [2.0] } }
-            - { id: z, vector: [3.0], sparse: { indices: [0], values: [3.0] } }
+      - op: upsert
+        args: { collection: c, id: x, vector: [1.0], sparse: { indices: [0], values: [1.0] } }
+      - op: upsert
+        args: { collection: c, id: y, vector: [2.0], sparse: { indices: [0], values: [2.0] } }
+      - op: upsert
+        args: { collection: c, id: z, vector: [3.0], sparse: { indices: [0], values: [3.0] } }
       - op: hybrid_search
         args:
           collection: c
@@ -60,13 +62,12 @@ cases:
     steps:
       - op: create_collection
         args: { name: c, dimension: 1, metric: euclidean, quantization_bits: 0 }
-      - op: upsert_batch
-        args:
-          collection: c
-          points:
-            - { id: x, vector: [1.0], sparse: { indices: [0], values: [1.0] } }
-            - { id: y, vector: [2.0], sparse: { indices: [0], values: [2.0] } }
-            - { id: z, vector: [3.0], sparse: { indices: [0], values: [3.0] } }
+      - op: upsert
+        args: { collection: c, id: x, vector: [1.0], sparse: { indices: [0], values: [1.0] } }
+      - op: upsert
+        args: { collection: c, id: y, vector: [2.0], sparse: { indices: [0], values: [2.0] } }
+      - op: upsert
+        args: { collection: c, id: z, vector: [3.0], sparse: { indices: [0], values: [3.0] } }
       - op: hybrid_search
         args:
           collection: c

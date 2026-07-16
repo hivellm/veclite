@@ -310,10 +310,11 @@ if (!nativeBinding) {
   throw new Error(`Failed to load native binding`)
 }
 
-const { Database, memory, open, openSync, Collection } = nativeBinding
+const { Database, memory, open, openSync, chunk, Collection } = nativeBinding
 
 module.exports.Database = Database
 module.exports.memory = memory
 module.exports.open = open
 module.exports.openSync = openSync
+module.exports.chunk = chunk
 module.exports.Collection = Collection

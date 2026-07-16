@@ -48,11 +48,15 @@ export interface JsHit {
   payload?: any
   vector?: Float32Array
 }
-/** A point for `upsertBatch` (BYO vectors): id + vector + optional payload. */
+/**
+ * A point for `upsertBatch` (BYO vectors): id + vector + optional payload and
+ * optional `{indices, values}` sparse lane (SPEC-007).
+ */
 export interface JsPoint {
   id: string
   vector: Float32Array
   payload?: any
+  sparse?: any
 }
 /** Open an ephemeral in-memory database (FR-02) — no file, identical API. */
 export declare function memory(): Database
@@ -60,6 +64,17 @@ export declare function memory(): Database
 export declare function open(path: string, options?: OpenOpts | undefined | null): Promise<Database>
 /** Synchronous [`open`] for CLIs/scripts. */
 export declare function openSync(path: string, options?: OpenOpts | undefined | null): Database
+/** One chunk projected to JS: its trimmed text and byte range in the source. */
+export interface JsChunk {
+  text: string
+  start: number
+  end: number
+}
+/**
+ * Split `text` into overlapping, UTF-8-safe chunks (SPEC-005 §7). Pure and
+ * deterministic; `maxChars`/`overlap` default to 2048/128.
+ */
+export declare function chunk(text: string, maxChars?: number | undefined | null, overlap?: number | undefined | null): Array<JsChunk>
 /** Hybrid query options (SPEC-007). */
 export interface HybridOpts {
   dense?: Float32Array
@@ -105,6 +120,10 @@ export declare class Database {
   listCollections(): Array<string>
   /** Delete a collection (CORE-021). */
   deleteCollection(name: string): void
+  /** Create an alias that resolves to `target` (CORE-051). */
+  createAlias(alias: string, target: string): void
+  /** Delete an alias (CORE-051). */
+  deleteAlias(alias: string): void
   /** Flush acked state to disk (WAL-030b). */
   checkpoint(): Promise<void>
   /** Write a standalone compacted copy at `path` (STG-070). */
@@ -128,13 +147,18 @@ export declare class Collection {
   len(): number
   /** Whether the collection holds no live vectors. */
   isEmpty(): boolean
-  /** Insert-or-replace one point (API-020). Async: off the event loop. */
-  upsert(id: string, vector: Float32Array, payload?: any | undefined | null): Promise<void>
+  /**
+   * Insert-or-replace one point (API-020). Async: off the event loop. The
+   * optional `sparse` `{indices, values}` sets the hybrid-search lane (SPEC-007).
+   */
+  upsert(id: string, vector: Float32Array, payload?: any | undefined | null, sparse?: any | undefined | null): Promise<void>
   /** Synchronous [`upsert`] — `vector` crosses zero-copy (NODE-012). */
-  upsertSync(id: string, vector: Float32Array, payload?: any | undefined | null): void
+  upsertSync(id: string, vector: Float32Array, payload?: any | undefined | null, sparse?: any | undefined | null): void
   /** Insert-or-replace a batch (API-020, one WAL entry). */
   upsertBatch(points: Array<JsPoint>): Promise<void>
   upsertBatchSync(points: Array<JsPoint>): void
+  /** Force a full recompute of an auto-embed collection's vocabulary (SPEC-005). */
+  refit(): void
   /** Insert-or-replace one text document on an auto-embed collection. */
   upsertText(id: string, text: string, payload?: any | undefined | null): Promise<void>
   upsertTextSync(id: string, text: string, payload?: any | undefined | null): void

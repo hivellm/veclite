@@ -11,6 +11,7 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use pythonize::{depythonize, pythonize};
 
+use veclite::chunk::{ChunkOptions, Chunker};
 use veclite::{CollectionOptions, Filter, Hit, Metric, Point, Quantization, SparseVector};
 
 // ── exception hierarchy (PY-040) ─────────────────────────────────────────────
@@ -56,7 +57,9 @@ fn metric_from_str(s: &str) -> PyResult<Metric> {
         "cosine" => Ok(Metric::Cosine),
         "euclidean" | "l2" => Ok(Metric::Euclidean),
         "dot" | "dotproduct" | "dot_product" => Ok(Metric::DotProduct),
-        other => Err(InvalidArgument::new_err(format!("unknown metric '{other}'"))),
+        other => Err(InvalidArgument::new_err(format!(
+            "unknown metric '{other}'"
+        ))),
     }
 }
 
@@ -110,14 +113,16 @@ struct Collection {
 
 #[pymethods]
 impl Collection {
-    /// Insert-or-replace one point with an optional dict payload.
-    #[pyo3(signature = (id, vector, payload=None))]
+    /// Insert-or-replace one point with an optional dict payload and an optional
+    /// `{indices, values}` sparse lane for hybrid search (SPEC-007).
+    #[pyo3(signature = (id, vector, payload=None, sparse=None))]
     fn upsert(
         &self,
         py: Python<'_>,
         id: &str,
         vector: &Bound<'_, PyAny>,
         payload: Option<&Bound<'_, PyAny>>,
+        sparse: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<()> {
         let vec = extract_vector(vector)?;
         let payload = payload_from_py(payload)?;
@@ -125,7 +130,12 @@ impl Collection {
         if let Some(p) = payload {
             point = point.payload(p);
         }
-        py.allow_threads(|| self.inner.upsert(point)).map_err(to_pyerr)
+        if let Some(s) = sparse.filter(|s| !s.is_none()) {
+            let sv: SparseVector = depythonize(s)?;
+            point = point.sparse(sv);
+        }
+        py.allow_threads(|| self.inner.upsert(point))
+            .map_err(to_pyerr)
     }
 
     /// Batch upsert from a `(n, dim)` `float32` NumPy array (or a list of lists),
@@ -160,7 +170,9 @@ impl Collection {
                 if ps.len() != ids.len() {
                     return Err(InvalidArgument::new_err("ids and payloads length mismatch"));
                 }
-                ps.iter().map(|p| payload_from_py(Some(p))).collect::<PyResult<Vec<_>>>()?
+                ps.iter()
+                    .map(|p| payload_from_py(Some(p)))
+                    .collect::<PyResult<Vec<_>>>()?
             }
             None => vec![None; ids.len()],
         };
@@ -242,10 +254,30 @@ impl Collection {
         let hits = if let Ok(arr) = vector.downcast::<PyArray1<f32>>() {
             let ro = arr.readonly();
             let slice = ro.as_slice()?;
-            py.allow_threads(|| run_query(&self.inner, slice, limit, ef_search, with_payload, with_vector, filter))
+            py.allow_threads(|| {
+                run_query(
+                    &self.inner,
+                    slice,
+                    limit,
+                    ef_search,
+                    with_payload,
+                    with_vector,
+                    filter,
+                )
+            })
         } else {
             let v = vector.extract::<Vec<f32>>()?;
-            py.allow_threads(|| run_query(&self.inner, &v, limit, ef_search, with_payload, with_vector, filter))
+            py.allow_threads(|| {
+                run_query(
+                    &self.inner,
+                    &v,
+                    limit,
+                    ef_search,
+                    with_payload,
+                    with_vector,
+                    filter,
+                )
+            })
         }
         .map_err(to_pyerr)?;
         hits_to_py(py, hits)
@@ -286,6 +318,44 @@ impl Collection {
             })
             .map_err(to_pyerr)?;
         hits_to_py(py, hits)
+    }
+
+    /// Cursor-based pagination over live points in stable slot order (API-022).
+    /// Returns `{points: [{id, vector, payload}], next_cursor}`; pass
+    /// `next_cursor` as `offset_id` for the next page (`None` when exhausted).
+    #[pyo3(signature = (limit=100, offset_id=None, filter=None))]
+    fn scroll(
+        &self,
+        py: Python<'_>,
+        limit: usize,
+        offset_id: Option<String>,
+        filter: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<PyObject> {
+        let filter = match filter {
+            Some(f) if !f.is_none() => Some(Filter::from_json(&depythonize(f)?).map_err(to_pyerr)?),
+            _ => None,
+        };
+        let page = py
+            .allow_threads(|| {
+                self.inner
+                    .scroll(offset_id.as_deref(), limit, filter.as_ref())
+            })
+            .map_err(to_pyerr)?;
+        let points: Vec<PyObject> = page
+            .points
+            .into_iter()
+            .map(|p| {
+                let d = PyDict::new(py);
+                d.set_item("id", p.id)?;
+                d.set_item("vector", p.vector)?;
+                d.set_item("payload", payload_to_py(py, p.payload)?)?;
+                Ok::<PyObject, PyErr>(d.into())
+            })
+            .collect::<PyResult<_>>()?;
+        let out = PyDict::new(py);
+        out.set_item("points", points)?;
+        out.set_item("next_cursor", page.next_cursor)?;
+        Ok(out.into())
     }
 
     /// Force a full recompute of an auto-embed collection's vocabulary.
@@ -418,8 +488,27 @@ impl Database {
 
     /// Force a checkpoint.
     fn checkpoint(&self, py: Python<'_>) -> PyResult<()> {
-        py.allow_threads(|| self.inner.checkpoint()).map_err(to_pyerr)
+        py.allow_threads(|| self.inner.checkpoint())
+            .map_err(to_pyerr)
     }
+}
+
+/// Split `text` into overlapping, UTF-8-safe chunks (SPEC-005 §7). Returns a
+/// list of `{text, start, end}` dicts; deterministic for a given input.
+#[pyfunction]
+#[pyo3(signature = (text, max_chars=2048, overlap=128))]
+fn chunk(py: Python<'_>, text: &str, max_chars: usize, overlap: usize) -> PyResult<Vec<PyObject>> {
+    Chunker::new(ChunkOptions { max_chars, overlap })
+        .chunk(text)
+        .into_iter()
+        .map(|c| {
+            let d = PyDict::new(py);
+            d.set_item("text", c.text)?;
+            d.set_item("start", c.byte_range.start)?;
+            d.set_item("end", c.byte_range.end)?;
+            Ok(d.into())
+        })
+        .collect()
 }
 
 /// The `veclite` extension module.
@@ -430,6 +519,7 @@ fn veclite_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("format_version", 1u32)?;
     m.add_class::<Database>()?;
     m.add_class::<Collection>()?;
+    m.add_function(wrap_pyfunction!(chunk, m)?)?;
 
     let py = m.py();
     m.add("VecLiteError", py.get_type::<VecLiteError>())?;
