@@ -9,6 +9,26 @@ Versions 0.x are pre-release: the public API may change between minors until 1.0
 ## [Unreleased]
 
 ### Added
+- Binding conformance corpus + packaging CI (task `phase4d`, SPEC-015 §3 /
+  SPEC-016, gate G4): one language-agnostic YAML corpus in
+  `tests/conformance/corpus/` (34 cases across defaults, every error variant,
+  CRUD + scroll, filter semantics, hybrid rankings, auto-embed reopen
+  determinism, chunker boundaries, and in-memory ≡ file-backed) executed by a
+  runner in each binding. The **Rust reference runner** (`cargo xtask
+  conformance [--bless]`, TST-020) defines the golden outcomes; a committed
+  `golden.json` sidecar pins per-step scores and lossy round-trips (1e-5
+  tolerance, TST-022) with a documented mutation guard (TST-023). Python
+  (`runners/python/run.py`) and Node (`runners/node/run.mjs`) runners reproduce
+  the reference exactly — orderings/ids exact, scores within 1e-5 — green on
+  Rust, Python, and Node. Completing the surface so every op runs on every
+  binding: sparse-lane `upsert` (Python + Node), `Collection.scroll` +
+  module-level `chunk` (Python), `Collection.refit`, `Database.createAlias` /
+  `deleteAlias` + module-level `chunk` (Node). Packaging CI authors the full
+  FR-66 artifact matrix (maturin abi3 wheels + napi prebuilds across
+  manylinux/musllinux/macOS/Windows × x64/arm64), a clean-machine no-toolchain
+  install gate (REL-020) running `examples/quickstart.{py,mjs}` on Rust-free
+  containers, and one atomic all-or-nothing release workflow (REL-012) with a
+  TestPyPI + npm dist-tag `next` dry run (SPEC-016 acceptance 2).
 - Node.js binding core (task `phase4c`, `crates/veclite-node`, SPEC-010): a
   napi-rs crate binding the Rust engine directly, mirroring SPEC-004 in
   camelCase. Every heavy operation is async by default (runs off the JS thread

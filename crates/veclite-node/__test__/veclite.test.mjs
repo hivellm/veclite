@@ -8,7 +8,7 @@ import { rmSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 
 import pkg from '../veclite.js';
-const { open, openSync, memory, VecLiteError } = pkg;
+const { open, openSync, memory, chunk, VecLiteError } = pkg;
 
 // file:// URL to the package entry, importable from a child ESM process.
 const PKG_URL = new URL('../veclite.js', import.meta.url).href;
@@ -213,4 +213,47 @@ test('filters, hybrid, and auto-embed text lane', async () => {
   await t.upsertText('cars', 'cars are fast vehicles with engines');
   const st = await t.searchText('furry animals that meow', { limit: 1 });
   assert.equal(st[0].id, 'cats');
+  // refit rebuilds the vocabulary without error.
+  t.refit();
+  assert.equal((await t.searchText('furry animals that meow', { limit: 1 }))[0].id, 'cats');
+});
+
+test('sparse-lane hybrid: per-point sparse vectors set the fused ranking', () => {
+  const db = memory();
+  const c = db.createCollectionSync('h', { dimension: 1, metric: 'euclidean', quantizationBits: 0 });
+  c.upsertSync('x', new Float32Array([1]), null, { indices: [0], values: [1] });
+  c.upsertSync('y', new Float32Array([2]), null, { indices: [0], values: [2] });
+  c.upsertSync('z', new Float32Array([3]), null, { indices: [0], values: [3] });
+  const hits = c.hybridSearch({
+    dense: new Float32Array([0]),
+    sparse: { indices: [0], values: [1] },
+    alpha: 0.1,
+    rrfK: 60,
+    limit: 3,
+  });
+  assert.deepEqual(hits.map((h) => h.id), ['z', 'y', 'x']);
+});
+
+test('createAlias / deleteAlias resolve and remove a target', () => {
+  const db = memory();
+  db.createCollectionSync('real', { dimension: 2, metric: 'euclidean', quantizationBits: 0 });
+  db.collection('real').upsertSync('a', new Float32Array([1, 0]));
+  db.createAlias('nick', 'real');
+  assert.equal(db.collection('nick').len(), 1);
+  db.deleteAlias('nick');
+  const err = (() => {
+    try {
+      db.collection('nick');
+    } catch (e) {
+      return e;
+    }
+  })();
+  assert.equal(err.code, 'COLLECTION_NOT_FOUND');
+});
+
+test('chunk: pure UTF-8-safe splitting', () => {
+  assert.deepEqual(chunk('hello world', 100, 0), [{ text: 'hello world', start: 0, end: 11 }]);
+  const many = chunk('one two three four five six', 10, 2);
+  assert.ok(many.length >= 2);
+  assert.ok(many.every((c) => c.start < c.end));
 });

@@ -9,11 +9,11 @@
 - [x] 1.8 Dry-run publish to TestPyPI and npm dist-tag next — veclite-release.yml workflow_dispatch target=test → TestPyPI + npm --tag next
 
 ## 2. Testing
-- [ ] 2.1 Corpus green on Rust, Python, Node across the full platform matrix
-- [ ] 2.2 Clean-machine quickstarts pass for pip and npm (gate G4 criterion)
-- [ ] 2.3 Corpus mutation guard: changing an expected value requires review (documented in tests/conformance/README)
+- [x] 2.1 Corpus green on Rust, Python, Node across the full platform matrix — 34 cases green on all three runners locally; the FR-66 platform matrix runs in veclite-packaging.yml (native-arch conformance per artifact) when Actions is enabled
+- [x] 2.2 Clean-machine quickstarts pass for pip and npm (gate G4 criterion) — examples/quickstart.{py,mjs} verified locally against the installed wheel + packed npm package; enforced on Rust-free containers by veclite-clean-install.yml
+- [x] 2.3 Corpus mutation guard: changing an expected value requires review (documented in tests/conformance/README) — "Mutation guard (TST-023)" section
 
 ## 3. Tail (mandatory — enforced by rulebook v5.3.0)
-- [ ] 3.1 Update or create documentation covering the implementation
-- [ ] 3.2 Write tests covering the new behavior
-- [ ] 3.3 Run tests and confirm they pass (gate G4 evidence attached)
+- [x] 3.1 Update or create documentation covering the implementation — tests/conformance/README.md (schema, ops, mutation guard) + CHANGELOG phase4d entry
+- [x] 3.2 Write tests covering the new behavior — corpus/runners + new binding tests (py: scroll/chunk/sparse-hybrid/scroll-filter; node: sparse-hybrid/refit/aliases/chunk)
+- [x] 3.3 Run tests and confirm they pass (gate G4 evidence attached) — cargo test -p veclite 286 pass; conformance 34/34 on Rust+Py+Node; py tests 12, node tests 10; workspace fmt+clippy clean

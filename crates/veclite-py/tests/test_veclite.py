@@ -103,6 +103,49 @@ def test_hybrid_search():
     assert hits[0]["id"] == "a"
 
 
+def test_sparse_lane_hybrid():
+    db = veclite.Database.memory()
+    c = db.create_collection("h", dimension=1, metric="euclidean", quantization_bits=0)
+    # Sparse lane set per point; alpha 0.1 lets it dominate the dense order.
+    c.upsert("x", [1.0], None, {"indices": [0], "values": [1.0]})
+    c.upsert("y", [2.0], None, {"indices": [0], "values": [2.0]})
+    c.upsert("z", [3.0], None, {"indices": [0], "values": [3.0]})
+    hits = c.hybrid_search([0.0], {"indices": [0], "values": [1.0]}, limit=3, alpha=0.1)
+    assert [h["id"] for h in hits] == ["z", "y", "x"]
+
+
+def test_scroll_pagination():
+    db = veclite.Database.memory()
+    c = db.create_collection("s", dimension=1, metric="euclidean", quantization_bits=0)
+    for i, name in enumerate(["a", "b", "c"]):
+        c.upsert(name, [float(i)])
+    page1 = c.scroll(limit=2)
+    assert [p["id"] for p in page1["points"]] == ["a", "b"]
+    assert page1["next_cursor"] == "b"
+    page2 = c.scroll(limit=2, offset_id="b")
+    assert [p["id"] for p in page2["points"]] == ["c"]
+    assert page2["next_cursor"] is None
+
+
+def test_scroll_with_filter():
+    db = veclite.Database.memory()
+    c = db.create_collection("s", dimension=1, metric="euclidean", quantization_bits=0)
+    c.upsert("a", [0.0], {"keep": True})
+    c.upsert("b", [1.0], {"keep": False})
+    c.upsert("c", [2.0], {"keep": True})
+    page = c.scroll(limit=100, filter={"must": [{"key": "keep", "match": {"value": True}}]})
+    assert [p["id"] for p in page["points"]] == ["a", "c"]
+
+
+def test_chunk():
+    chunks = veclite.chunk("hello world", max_chars=100, overlap=0)
+    assert chunks == [{"text": "hello world", "start": 0, "end": 11}]
+    # Longer text splits into multiple chunks, each within the source bytes.
+    many = veclite.chunk("one two three four five six", max_chars=10, overlap=2)
+    assert len(many) >= 2
+    assert all(c["start"] < c["end"] for c in many)
+
+
 def test_metadata():
     assert isinstance(veclite.__version__, str)
     assert veclite.format_version == 1
