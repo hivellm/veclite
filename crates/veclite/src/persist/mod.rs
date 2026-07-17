@@ -368,7 +368,7 @@ impl crate::collection::WalSink for Persistence {
 
 /// The WAL sidecar path: `<db>.veclite-wal` (WAL-001).
 #[cfg(not(target_arch = "wasm32"))]
-fn wal_path(db: &Path) -> std::path::PathBuf {
+pub(crate) fn wal_path(db: &Path) -> std::path::PathBuf {
     let mut name = db.file_name().unwrap_or_default().to_os_string();
     name.push("-wal");
     db.with_file_name(name)

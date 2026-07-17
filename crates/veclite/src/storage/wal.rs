@@ -190,19 +190,28 @@ impl Wal {
         self.file.seek(SeekFrom::Start(0))?;
         let mut all = Vec::new();
         self.file.read_to_end(&mut all)?;
+        let replay = Self::scan(&all, self.uuid_prefix);
+        self.next_seq = replay.entries.last().map_or(1, |entry| entry.seq + 1);
+        Ok(replay)
+    }
+
+    /// Scan raw WAL bytes with the [`replay`](Self::replay) semantics, without
+    /// a file handle. Shared by `replay` and the read-only `verify` pass
+    /// (SPEC-014), which must not open the sidecar for writing.
+    pub(crate) fn scan(all: &[u8], uuid_prefix: [u8; 8]) -> Replay {
         if all.len() < WAL_HEADER_SIZE as usize {
             // Fresh/empty WAL.
-            return Ok(Replay {
+            return Replay {
                 entries: Vec::new(),
                 discarded_tail: false,
-            });
+            };
         }
-        if all[0..4] != WAL_MAGIC || all[8..16] != self.uuid_prefix {
+        if all[0..4] != WAL_MAGIC || all[8..16] != uuid_prefix {
             // Foreign or corrupt header → ignore the whole WAL (WAL-002).
-            return Ok(Replay {
+            return Replay {
                 entries: Vec::new(),
                 discarded_tail: true,
-            });
+            };
         }
 
         let mut entries = Vec::new();
@@ -210,7 +219,7 @@ impl Wal {
         let mut expected_seq = 1u64;
         let mut discarded_tail = false;
         while at < all.len() {
-            match decode_entry(&all, at, expected_seq) {
+            match decode_entry(all, at, expected_seq) {
                 Some((entry, next)) => {
                     expected_seq = entry.seq + 1;
                     at = next;
@@ -223,11 +232,10 @@ impl Wal {
                 }
             }
         }
-        self.next_seq = expected_seq;
-        Ok(Replay {
+        Replay {
             entries,
             discarded_tail,
-        })
+        }
     }
 
     /// Truncate to the bare 16-byte header and reset `seq` — the last step of a

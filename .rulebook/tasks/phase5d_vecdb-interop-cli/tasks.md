@@ -1,8 +1,8 @@
 ## 1. Implementation
-- [ ] 1.1 Context: read docs/specs/SPEC-013 and SPEC-014 in full; DAG T5.5, T5.6 and gate G5
-- [ ] 1.2 Export writer: Compact .vecdb + .vecidx accepted by the server StorageReader; scope options (IOP-010..013)
-- [ ] 1.3 Import reader: detect_format for Compact + Legacy; --collections subsetting (IOP-020/021)
-- [ ] 1.4 Degradation matrix: tenant/shard/graph warnings, encrypted refusal, BYO fallback with origin_provider (IOP-022/023)
+- [x] 1.1 Context: read docs/specs/SPEC-013 and SPEC-014 in full; DAG T5.5, T5.6 and gate G5 — plus the pinned server's storage sources (writer/reader/index/persistence/models/tokenizers) to fix the exact wire shapes
+- [x] 1.2 Export writer: Compact .vecdb + .vecidx accepted by the server StorageReader; scope options (IOP-010..013) — `interop::export_vecdb` (feature `vecdb-interop`): ZIP/DEFLATE + SHA-256 .vecidx, f32-exact vectors, `_text`→`content`, per-provider tokenizer translation, aliases/pidx/BYO in .vecidx metadata, refit settles before snapshot
+- [x] 1.3 Import reader: detect_format for Compact + Legacy; --collections subsetting (IOP-020/021) — `interop::{detect_layout, import_vecdb}`; Legacy gzip+plain JSON, .vecidx optional-with-warning
+- [x] 1.4 Degradation matrix: tenant/shard/graph warnings, encrypted refusal, BYO fallback with origin_provider (IOP-022/023) — owner/tenant + sharding + graph + normalization + seed + PQ/SQ-N warnings; required-encryption refuses before any creation; server-only providers defer to a Missing slot (origin kept in CONFIG)
 - [ ] 1.5 crates/veclite-cli: inspect/export/import/vacuum/snapshot/verify; exit codes 0/1/2/3; --json where offered (CLI-001..003)
 - [ ] 1.6 verify command: full-file integrity pass naming damaged segments (CLI table)
 - [ ] 1.7 Graduation round-trip automation vs dockerized pinned server (TST-032)

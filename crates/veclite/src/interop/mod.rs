@@ -10,10 +10,14 @@
 mod config;
 mod export;
 mod import;
+mod inspect;
 mod model;
+mod verify;
 mod vocab;
 
 pub use export::{ExportOptions, ExportReport, ExportedCollection, export_vecdb};
 pub use import::{
     ImportOptions, ImportReport, ImportedCollection, ServerLayout, detect_layout, import_vecdb,
 };
+pub use inspect::{CollectionInfo, InspectReport, SegmentInfo, inspect_file};
+pub use verify::{Finding, VerifyReport, WalStatus, verify_file};
