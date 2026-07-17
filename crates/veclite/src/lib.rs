@@ -24,6 +24,12 @@ pub mod error;
 pub mod filter;
 // Hybrid dense+sparse search with reciprocal rank fusion (SPEC-007).
 pub mod hybrid;
+// `.vecdb` interop (SPEC-013): export/import between `.veclite` and the
+// Vectorizer server's Compact/Legacy layouts, plus the full-file integrity
+// pass behind the CLI `verify` (SPEC-014). Opt-in (`vecdb-interop`) and
+// native-only — the archive bridge is filesystem I/O.
+#[cfg(all(feature = "vecdb-interop", not(target_arch = "wasm32")))]
+pub mod interop;
 // HNSW index over the pinned hnsw_rs. Native-only: hnsw_rs cannot build on
 // wasm32 (ADR-0002). Consumed by the collection index integration.
 #[cfg(not(target_arch = "wasm32"))]

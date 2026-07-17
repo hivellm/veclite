@@ -387,7 +387,7 @@ fn embed_nonzero(embedder: &dyn Embedder, text: &str, dim: usize) -> Result<Vec<
 /// in index order (SPEC-007 HYB-002a). `None` when the embedding is all-zero
 /// (nothing to score). Indices are ascending by construction, satisfying the
 /// `SparseVector` sorted-unique invariant (HYB-001).
-fn sparse_from_dense(vector: &[f32]) -> Option<SparseVector> {
+pub(crate) fn sparse_from_dense(vector: &[f32]) -> Option<SparseVector> {
     let mut indices = Vec::new();
     let mut values = Vec::new();
     for (i, &x) in vector.iter().enumerate() {
@@ -769,7 +769,9 @@ impl Collection {
 
     /// Run [`do_refit`](Self::do_refit) only when `_text` changed since the last
     /// recompute (lazy, amortizes a batch of text upserts into one rebuild).
-    fn refit_if_dirty(&self) -> Result<()> {
+    /// Crate-visible: the `.vecdb` export settles the text state first so the
+    /// archive carries exactly what a search would score (SPEC-013 §4 gate).
+    pub(crate) fn refit_if_dirty(&self) -> Result<()> {
         if self.inner.text_dirty.swap(false, Ordering::AcqRel) {
             self.do_refit()?;
         }
@@ -1413,6 +1415,13 @@ impl Collection {
 /// (native) and `VecLite::serialize`/`deserialize` (all targets, incl. wasm),
 /// so they live outside the native-only persistence-hooks block below.
 impl Collection {
+    /// The immutable creation-time configuration (crate-internal: the
+    /// `.vecdb` interop projection reads it directly).
+    #[cfg(all(feature = "vecdb-interop", not(target_arch = "wasm32")))]
+    pub(crate) fn config(&self) -> &CollectionOptions {
+        &self.inner.config
+    }
+
     /// Live points `(id, dense vector, payload, sparse)` in slot order — the
     /// input a seal writes (SPEC-002 §5, SPEC-007 HYB-030).
     pub(crate) fn live_points(&self) -> Vec<crate::persist::seal::LivePoint> {

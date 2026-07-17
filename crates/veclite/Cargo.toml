@@ -29,6 +29,10 @@ svd = []
 # wasm32 excludes it unconditionally (EMB-042): `fastembed` is declared only in
 # the non-wasm target table below, and the provider code is cfg-gated off wasm32.
 onnx = ["dep:fastembed"]
+# `.vecdb` interop (SPEC-013) + the file-integrity surface behind the `veclite`
+# CLI (SPEC-014). Native-only (the archive is filesystem I/O); off by default so
+# the library dependency tree stays lean — the CLI crate turns it on.
+vecdb-interop = ["dep:zip", "dep:flate2", "dep:sha2"]
 
 [dependencies]
 thiserror.workspace = true
@@ -61,6 +65,11 @@ memmap2 = { workspace = true }
 # build on wasm32, EMB-042). Off by default, so the base tree has no ONNX/network
 # crates (NFR-08).
 fastembed = { version = "5", optional = true }
+# `.vecdb` interop only (the `vecdb-interop` feature): ZIP/DEFLATE archive
+# container, gzip Legacy layout, SHA-256 `.vecidx` checksums (SPEC-013).
+zip = { workspace = true, optional = true }
+flate2 = { workspace = true, optional = true }
+sha2 = { workspace = true, optional = true }
 
 [dev-dependencies]
 proptest.workspace = true

@@ -614,6 +614,30 @@ impl VecLite {
     /// Create a collection; `AlreadyExists` when the name is taken
     /// (CORE-020).
     pub fn create_collection(&self, name: &str, options: CollectionOptions) -> Result<Collection> {
+        self.create_collection_impl(name, options, false)
+    }
+
+    /// `.vecdb` import path (SPEC-013 IOP-022): as [`create_collection`]
+    /// (Self::create_collection), but an unavailable embedding provider defers
+    /// to a `Missing` slot instead of failing — the provider id stays recorded
+    /// in CONFIG as the `origin_provider` while text operations answer
+    /// `UnsupportedProvider`, exactly like reopening a file whose provider is
+    /// absent in this build.
+    #[cfg(all(feature = "vecdb-interop", not(target_arch = "wasm32")))]
+    pub(crate) fn create_collection_deferred(
+        &self,
+        name: &str,
+        options: CollectionOptions,
+    ) -> Result<Collection> {
+        self.create_collection_impl(name, options, true)
+    }
+
+    fn create_collection_impl(
+        &self,
+        name: &str,
+        options: CollectionOptions,
+        defer_missing_provider: bool,
+    ) -> Result<Collection> {
         validate_collection_name(name)?;
         if options.dimension == 0 || options.dimension > MAX_DIMENSION {
             return Err(VecLiteError::InvalidArgument(format!(
@@ -634,6 +658,7 @@ impl VecLite {
                 Ok(built) => EmbedderSlot::Ready(Arc::new(Mutex::new(built))),
                 Err(e) => match self.inner.registered_embedders.get(provider) {
                     Some(shared) => EmbedderSlot::Ready(Arc::clone(shared.value())),
+                    None if defer_missing_provider => EmbedderSlot::Missing(provider.clone()),
                     None => return Err(self.with_registered_in_available(e)),
                 },
             },

@@ -45,6 +45,13 @@ cbindgen = "0.29"
 # mmap primary read path for larger-than-RAM collections (SPEC-002 STG-004,
 # ADR-0004). Native-only alongside the storage module gate.
 memmap2 = "0.9"
+# `.vecdb` interop (SPEC-013, `vecdb-interop` feature): the server archive is a
+# ZIP/DEFLATE container with a SHA-256-checksummed `.vecidx` sidecar; the Legacy
+# layout is gzip JSON. Versions match the pinned server (`zip 8`, `flate2 1.1`,
+# `sha2 0.11`).
+zip = { version = "8.0", default-features = false, features = ["deflate"] }
+flate2 = "1.1"
+sha2 = "0.11"
 
 [workspace.lints.clippy]
 unwrap_used = "deny"
