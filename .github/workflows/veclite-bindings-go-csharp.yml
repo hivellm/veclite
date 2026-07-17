@@ -1,0 +1,71 @@
+name: VecLite Go & .NET Bindings
+
+# Builds the C ABI library and runs the Go and .NET bindings' unit tests + the
+# shared conformance corpus (SPEC-015 §3, gate G5) over them. Both bindings wrap
+# veclite-ffi; neither links the Rust crate directly (FR-63).
+#
+# NOTE: GitHub Actions is currently disabled for this repo (CI budget); these run
+# locally — see bindings/go/README.md and bindings/csharp/README.md.
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'bindings/go/**'
+      - 'bindings/csharp/**'
+      - 'crates/veclite-ffi/**'
+      - 'tests/conformance/**'
+      - '.github/workflows/veclite-bindings-go-csharp.yml'
+  pull_request:
+    branches: [ '**' ]
+    paths:
+      - 'bindings/**'
+      - 'crates/veclite-ffi/**'
+      - 'tests/conformance/**'
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  go:
+    name: Go binding (linux-x64)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+      - name: Build the static C ABI library and bundle it
+        run: |
+          cargo build -p veclite-ffi --release
+          mkdir -p bindings/go/lib/linux_amd64
+          cp target/release/libveclite_ffi.a bindings/go/lib/linux_amd64/
+          cp crates/veclite-ffi/veclite.h bindings/go/internal/csrc/veclite.h
+      - name: Go tests
+        working-directory: bindings/go
+        run: go test ./...
+      - name: Go conformance corpus (gate G5)
+        working-directory: tests/conformance/runners/go
+        run: go run .
+
+  dotnet:
+    name: .NET binding (linux-x64)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Build the shared C ABI library and bundle it
+        run: |
+          cargo build -p veclite-ffi --release
+          mkdir -p bindings/csharp/VecLite/runtimes/linux-x64/native
+          cp target/release/libveclite_ffi.so bindings/csharp/VecLite/runtimes/linux-x64/native/
+      - name: .NET tests
+        run: dotnet test bindings/csharp/VecLite.Tests -c Release
+      - name: .NET conformance corpus (gate G5)
+        working-directory: tests/conformance/runners/csharp
+        run: dotnet run -c Release -- ../../corpus

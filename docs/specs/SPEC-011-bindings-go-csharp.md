@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Draft |
+| **Status** | Implemented (phase5a): `bindings/go` (cgo over veclite.h — sentinel errors + errors.Is, pinned []float32 zero-copy, SetFinalizer safety nets, goroutine-safe) and `bindings/csharp` (P/Invoke + SafeHandle wrappers, ReadOnlySpan<float> pinned interop, VecLiteException + ErrorCode enum, sync v1). Both wrap veclite-ffi only. Shared conformance corpus green in both (34 cases, memory + file); Go + .NET unit tests cover quickstart, concurrency, error mapping, and finalizer/SafeHandle leak-release. Per-platform static/dynamic library bundling is a release-CI artifact (dormant while Actions is off). |
 | **Phase / tasks** | Phase 5 · T5.1, T5.2 ([DAG](../DAG.md)) |
 | **PRD requirements** | FR-63, FR-65, FR-66 |
 | **Planning source** | [06-sdk-bindings.md](../vectorizer-lite/06-sdk-bindings.md) |
