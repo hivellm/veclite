@@ -12,7 +12,9 @@ publish = false
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 serde_yaml = "0.9.34"
-veclite = { path = "../crates/veclite" }
+# `vecdb-interop` powers `cargo xtask graduation` (SPEC-013 §4 / TST-032):
+# the dev-task runner drives the export/import bridge directly.
+veclite = { path = "../crates/veclite", features = ["vecdb-interop"] }
 
 [lints]
 workspace = true

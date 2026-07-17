@@ -12,6 +12,7 @@
 mod api_freeze;
 mod conformance;
 mod coverage;
+mod graduation;
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -76,9 +77,10 @@ fn main() {
         "conformance" => conformance::run(&args[2..]),
         "coverage" => coverage::run(&args[2..]),
         "api-freeze" => api_freeze::run(&args[2..]),
+        "graduation" => graduation::run(&args[2..]),
         _ => {
             eprintln!(
-                "usage: cargo xtask <crash [in_process_iters] [kill_iters] | conformance [--bless] [corpus_dir] | coverage | api-freeze [--bless]>"
+                "usage: cargo xtask <crash [in_process_iters] [kill_iters] | conformance [--bless] [corpus_dir] | coverage | api-freeze [--bless] | graduation [--bless] [--skip-server] [--vectorizer <path>]>"
             );
             2
         }
