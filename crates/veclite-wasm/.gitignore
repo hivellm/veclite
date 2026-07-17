@@ -1,0 +1,11 @@
+# Rust build output (the crate is excluded from the workspace, so it has its own
+# target/; the repo root also ignores target/ at any depth).
+/target
+
+# JS deps and build scratch.
+/node_modules
+/.build-tmp
+
+# The pkg/ prebuilt wasm + glue ARE committed (like the Node binding's
+# prebuilds) so the package installs and the conformance/tests run without a
+# Rust+wasm toolchain. Regenerate with ./build-pkg.sh.

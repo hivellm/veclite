@@ -14,11 +14,20 @@ pub(crate) mod compression;
 mod gates;
 pub(crate) mod header;
 pub(crate) mod iddir;
-pub(crate) mod mmap;
-pub(crate) mod pager;
+// The full-image (`Vec<u8>`) codec: portable on all targets, so wasm can read
+// and write byte-compatible `.veclite` v1 images (WASM-010) with no filesystem.
+pub(crate) mod image;
 pub(crate) mod segment;
 pub(crate) mod toc;
 pub(crate) mod vectors;
+// File/mmap-coupled layers are native-only (CORE-004, ADR-0002/0004): the pager
+// (std::fs + advisory locks), the mmap read tier (memmap2), and the WAL. wasm32
+// persists only through the in-memory `image` codec above.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) mod mmap;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) mod pager;
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod wal;
 
 /// Little-endian readers over a byte slice, returning `Corrupt(ctx)` on a short

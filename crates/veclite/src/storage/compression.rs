@@ -41,15 +41,23 @@ impl Codec {
 }
 
 /// Default zstd level, matching the server (SPEC-002 §3 parity).
+#[cfg(not(target_arch = "wasm32"))]
 const ZSTD_LEVEL: i32 = 3;
 
-/// Compress `data` with `codec`. `None` is the identity.
+/// Compress `data` with `codec`. `None` is the identity. Zstd links a C library
+/// and is native-only (CORE-004); on wasm32 it is never emitted (the default
+/// write path uses LZ4, STG-020) and requesting it is `Corrupt`.
 pub(crate) fn compress(codec: Codec, data: &[u8]) -> Result<Vec<u8>> {
     match codec {
         Codec::None => Ok(data.to_vec()),
         Codec::Lz4 => Ok(lz4_flex::compress_prepend_size(data)),
+        #[cfg(not(target_arch = "wasm32"))]
         Codec::Zstd => zstd::stream::encode_all(data, ZSTD_LEVEL)
             .map_err(|e| VecLiteError::Corrupt(format!("zstd compress: {e}"))),
+        #[cfg(target_arch = "wasm32")]
+        Codec::Zstd => Err(VecLiteError::Corrupt(
+            "zstd compression is not available on wasm32".to_owned(),
+        )),
     }
 }
 
@@ -61,8 +69,19 @@ pub(crate) fn decompress(codec: Codec, data: &[u8], uncompressed_len: usize) -> 
         Codec::None => data.to_vec(),
         Codec::Lz4 => lz4_flex::decompress_size_prepended(data)
             .map_err(|e| VecLiteError::Corrupt(format!("lz4 decompress: {e}")))?,
+        // A zstd-tagged segment can only come from a native writer that was
+        // asked for zstd explicitly (never the default path, STG-020). On wasm32
+        // there is no decoder — report it rather than silently mis-reading.
+        #[cfg(not(target_arch = "wasm32"))]
         Codec::Zstd => zstd::stream::decode_all(data)
             .map_err(|e| VecLiteError::Corrupt(format!("zstd decompress: {e}")))?,
+        #[cfg(target_arch = "wasm32")]
+        Codec::Zstd => {
+            return Err(VecLiteError::Corrupt(
+                "zstd-compressed segment cannot be read on wasm32 (re-serialize with LZ4)"
+                    .to_owned(),
+            ));
+        }
     };
     if out.len() != uncompressed_len {
         return Err(VecLiteError::Corrupt(format!(

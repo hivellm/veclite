@@ -23,7 +23,7 @@ use crate::persist::{Persistence, config, now_epoch_s, seal, wal_body};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::point::Point;
 #[cfg(not(target_arch = "wasm32"))]
-use crate::storage::pager::CheckpointColl;
+use crate::storage::image::CheckpointColl;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::storage::wal::{WalEntry, WalOp};
 #[cfg(not(target_arch = "wasm32"))]
@@ -413,6 +413,91 @@ impl VecLite {
                 persistence: None,
             }),
         }
+    }
+
+    /// Serialize the whole database to a self-contained `.veclite` v1 file image
+    /// (SPEC-002). The bytes are a compacted, single-generation image readable by
+    /// native [`VecLite::open`] (write them to a file) and by
+    /// [`VecLite::deserialize`] — the interchange contract (WASM-010). Every
+    /// collection is sealed fresh (tombstones dropped); the HNSW graph is not
+    /// stored (STG-063) — a reader rebuilds it. Portable: this is the wasm
+    /// persistence path, but it runs identically on native.
+    pub fn serialize(&self) -> Result<Vec<u8>> {
+        use crate::storage::compression::Codec;
+        // On wasm there is no clock/RNG dependency (getrandom is not linked); a
+        // zero uuid/epoch is a valid header (uuid is only a multi-file identity
+        // hint, never read back into behavior). Native stamps real values.
+        #[cfg(not(target_arch = "wasm32"))]
+        let (epoch, file_uuid) = (now_epoch_s(), *uuid::Uuid::new_v4().as_bytes());
+        #[cfg(target_arch = "wasm32")]
+        let (epoch, file_uuid) = (0u64, [0u8; 16]);
+
+        let mut colls = Vec::new();
+        for entry in self.inner.collections.iter() {
+            let ci = entry.value();
+            if ci.deleted.load(Ordering::Acquire) {
+                continue;
+            }
+            let handle = Collection {
+                inner: Arc::clone(ci),
+            };
+            let name = ci.name.read().clone();
+            let aliases = ci.aliases.read().clone();
+            let live = handle.live_points();
+            let vocab = handle.export_vocab_state()?;
+            colls.push(crate::persist::seal::seal(
+                ci.coll_id,
+                name,
+                aliases,
+                &ci.config,
+                // The declared payload indexes live in the immutable config; the
+                // runtime accelerator (`declared_indexes`) is native-only, so read
+                // the declarations directly to seal PIDX on every target.
+                &ci.config.payload_indexes,
+                vocab.as_deref(),
+                &live,
+                epoch,
+            )?);
+        }
+        crate::storage::image::write_image(file_uuid, epoch, epoch, 1, colls, Codec::Lz4)
+    }
+
+    /// Load a database from a `.veclite` v1 file image produced by
+    /// [`serialize`](Self::serialize) or by a native file's committed bytes
+    /// (WASM-010). The result is an in-memory database (no file binding); call
+    /// [`serialize`](Self::serialize) again to persist. Collections, aliases,
+    /// payloads, sparse lanes, and auto-embed vocabulary are all restored; the
+    /// HNSW graph (native) is rebuilt from the vectors as they install.
+    pub fn deserialize(bytes: &[u8]) -> Result<Self> {
+        let db = VecLite::memory();
+        for ic in crate::storage::image::read_image(bytes)? {
+            let loaded = crate::persist::seal::load(&ic.segments)?;
+            let handle = db.create_collection(&ic.entry.name, loaded.options)?;
+            for alias in &ic.entry.aliases {
+                db.create_alias(alias, &ic.entry.name)?;
+            }
+            // Import the checkpointed embedder state before points so text search
+            // needs no rebuild (mirrors the native load order, EMB-030).
+            if let Some(state) = &loaded.vocab {
+                handle.replay_import_vocab(state)?;
+            }
+            if !loaded.points.is_empty() {
+                let points: Vec<crate::point::Point> = loaded
+                    .points
+                    .into_iter()
+                    .map(|(id, vector, payload, sparse)| crate::point::Point {
+                        id,
+                        vector,
+                        sparse,
+                        payload,
+                    })
+                    .collect();
+                // Install without vocabulary updates — the sealed VOCAB already
+                // accounts for these points (double-counting guard, EMB-030).
+                handle.install_points(points)?;
+            }
+        }
+        Ok(db)
     }
 
     /// Open (or create) a durable single-file database at `path` with default

@@ -2,8 +2,10 @@
 //! for `Keyword`/`Integer`/`Float` keys. They are **accelerators, not gates**
 //! (FLT-022): `candidates` returns a *superset* of the matching slots for the
 //! `must` clause (the caller always applies the full `Filter` afterward, so the
-//! result set is identical with or without an index — FLT-031). Native-only:
-//! `roaring` is not built for wasm32.
+//! result set is identical with or without an index — FLT-031). The query-time
+//! accelerator is wired only on native (wasm filters by scan, FLT-022), but this
+//! module is portable — the seal path builds PIDX bitmaps and load harvests the
+//! declarations on every target (roaring is pure Rust).
 //!
 //! Persistence is by rebuild: like the HNSW graph, indexes are reconstructed
 //! from the loaded payloads on open rather than stored as PIDX segments.

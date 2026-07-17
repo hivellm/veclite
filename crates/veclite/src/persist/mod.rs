@@ -5,28 +5,46 @@
 //! (`config`, `seal`), records mutations in the WAL (`wal_body`), and drives
 //! open/checkpoint/recovery/close.
 //!
-//! Native-only, like `storage` — wasm32 has no file storage (CORE-004).
+//! The segment mapping (`config`, `seal`) is portable — it is also the wasm
+//! in-memory image path (WASM-010). The file-backed orchestrator below (pager +
+//! WAL + advisory locks) is native-only: wasm32 has no file storage (CORE-004).
 
 pub(crate) mod config;
 pub(crate) mod seal;
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod wal_body;
 
+#[cfg(not(target_arch = "wasm32"))]
 use std::path::Path;
+#[cfg(not(target_arch = "wasm32"))]
 use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(not(target_arch = "wasm32"))]
 use std::sync::{Arc, OnceLock};
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[cfg(not(target_arch = "wasm32"))]
 use parking_lot::Mutex;
 
+#[cfg(not(target_arch = "wasm32"))]
 use crate::error::{Result, VecLiteError};
+#[cfg(not(target_arch = "wasm32"))]
 use crate::options::Durability;
+#[cfg(not(target_arch = "wasm32"))]
 use crate::storage::compression::Codec;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::storage::image::CheckpointColl;
+#[cfg(not(target_arch = "wasm32"))]
 use crate::storage::mmap::FileMap;
-use crate::storage::pager::{CheckpointColl, Pager};
+#[cfg(not(target_arch = "wasm32"))]
+use crate::storage::pager::Pager;
+#[cfg(not(target_arch = "wasm32"))]
 use crate::storage::segment::SegmentType;
+#[cfg(not(target_arch = "wasm32"))]
 use crate::storage::wal::{Wal, WalEntry, WalOp};
 
 /// Seconds since the Unix epoch, saturating on a pre-1970 clock (never panics).
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn now_epoch_s() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -37,6 +55,7 @@ pub(crate) fn now_epoch_s() -> u64 {
 /// The mutable journal: the main-file pager and the WAL, plus the running
 /// generation. Guarded by one mutex so the commit sequence (SPEC-002 §5) and
 /// WAL appends never interleave.
+#[cfg(not(target_arch = "wasm32"))]
 struct Journal {
     pager: Pager,
     wal: Wal,
@@ -46,9 +65,11 @@ struct Journal {
 /// A checkpoint callback, wired after the database is constructed so the
 /// WAL-size trigger (WAL-030) can drive `Database::checkpoint` without this
 /// layer depending on the database type.
+#[cfg(not(target_arch = "wasm32"))]
 type CheckpointFn = Box<dyn Fn() -> Result<()> + Send + Sync>;
 
 /// The persistence state shared by a file-backed database and its collections.
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) struct Persistence {
     journal: Mutex<Journal>,
     uuid: [u8; 16],
@@ -67,6 +88,7 @@ pub(crate) struct Persistence {
 
 /// Everything an `open` recovered: the checkpointed collections, the WAL
 /// entries to replay on top, and whether a torn/stale WAL tail was discarded.
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) struct LoadedState {
     /// `(name, coll_id, aliases, loaded)` per collection recovered from the TOC.
     pub(crate) collections: Vec<(String, u32, Vec<String>, seal::LoadedCollection)>,
@@ -75,6 +97,7 @@ pub(crate) struct LoadedState {
 }
 
 /// `Persistence::open` knobs, mirroring the relevant `OpenOptions` fields.
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) struct OpenConfig {
     pub(crate) durability: Durability,
     pub(crate) wal_size_limit: u64,
@@ -89,8 +112,10 @@ pub(crate) struct OpenConfig {
 
 /// Auto-mmap threshold (SPEC-004 §1): collections whose VECTORS segments exceed
 /// this stay in the file map instead of being materialized.
+#[cfg(not(target_arch = "wasm32"))]
 const MMAP_AUTO_THRESHOLD: u64 = 64 * 1024 * 1024;
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Persistence {
     /// Open (or create) the pager + WAL for `path`, take the advisory lock, load
     /// each collection from its checkpointed segments, and read (but do not yet
@@ -331,6 +356,7 @@ impl Persistence {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl crate::collection::WalSink for Persistence {
     fn log(&self, coll_id: u32, op: u8, body: Vec<u8>) -> Result<()> {
         self.append(coll_id, WalOp::from_byte(op)?, body)
@@ -341,6 +367,7 @@ impl crate::collection::WalSink for Persistence {
 }
 
 /// The WAL sidecar path: `<db>.veclite-wal` (WAL-001).
+#[cfg(not(target_arch = "wasm32"))]
 fn wal_path(db: &Path) -> std::path::PathBuf {
     let mut name = db.file_name().unwrap_or_default().to_os_string();
     name.push("-wal");
@@ -349,6 +376,7 @@ fn wal_path(db: &Path) -> std::path::PathBuf {
 
 /// The vacuum scratch path: `<db>.veclite-vac`. The compacted file is written
 /// here, then atomically renamed onto the live path (STG-071).
+#[cfg(not(target_arch = "wasm32"))]
 fn vacuum_temp_path(db: &Path) -> std::path::PathBuf {
     let mut name = db.file_name().unwrap_or_default().to_os_string();
     name.push("-vac");
@@ -357,6 +385,7 @@ fn vacuum_temp_path(db: &Path) -> std::path::PathBuf {
 
 /// Open an existing `.veclite` file, or create a fresh one with an empty gen-0
 /// TOC. Returns the pager and its current TOC.
+#[cfg(not(target_arch = "wasm32"))]
 fn open_pager(
     path: &Path,
     created_epoch_s: u64,
@@ -375,7 +404,7 @@ fn open_pager(
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
 

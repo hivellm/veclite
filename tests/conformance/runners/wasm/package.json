@@ -1,0 +1,12 @@
+{
+  "name": "veclite-conformance-wasm",
+  "private": true,
+  "type": "module",
+  "description": "WASM binding conformance runner over the shared corpus (SPEC-012 §5, gate G5).",
+  "scripts": {
+    "conformance": "node run.mjs"
+  },
+  "dependencies": {
+    "js-yaml": "^4.1.0"
+  }
+}

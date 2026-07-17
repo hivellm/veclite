@@ -30,9 +30,11 @@ pub mod hybrid;
 #[allow(dead_code)]
 pub(crate) mod index;
 pub mod options;
-// Persistence orchestration (open/checkpoint/recovery). Native-only, on top of
-// the storage codec (ADR-0002/CORE-004). Consumed by VecLite::open (phase2b+).
-#[cfg(not(target_arch = "wasm32"))]
+// Persistence: the portable segment mapping (`config`, `seal`) plus the
+// native-only file orchestrator (open/checkpoint/recovery/WAL). The portable
+// half is the wasm in-memory image path (WASM-010); the native half is gated
+// inside the module (ADR-0002/CORE-004). Consumed by VecLite::open (native) and
+// VecLite::serialize/deserialize (all targets).
 #[allow(dead_code)]
 pub(crate) mod persist;
 pub mod point;
@@ -59,11 +61,11 @@ pub(crate) mod quantization;
 // full trait is kept complete for the future ISA backends that override it.
 #[allow(dead_code)]
 pub(crate) mod simd;
-// On-disk `.veclite` format v1 (SPEC-002). Native-only: wasm32 has no file
-// storage (CORE-004), and zstd links a C library. Consumed by the persistent
-// database open/checkpoint path (phase2b+); the codec + commit protocol land
-// here first.
-#[cfg(not(target_arch = "wasm32"))]
+// On-disk `.veclite` format v1 (SPEC-002). The segment codec (header, TOC,
+// segments, bodies, LZ4 compression, vectors, id-directory) and the in-memory
+// full-image codec (`image`) are portable — they are the wasm persistence path
+// (WASM-010). The file/mmap/lock/zstd layers (`pager`, `mmap`, `wal`, and the
+// zstd arm) are gated native-only inside the module (CORE-004, ADR-0002/0004).
 #[allow(dead_code)]
 pub(crate) mod storage;
 // Retrieval-quality gates (recall, SQ-8 recall, tombstone). Native-only:

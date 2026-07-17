@@ -1408,6 +1408,43 @@ impl Collection {
     }
 }
 
+/// Portable seal/load hooks: the live-point snapshot a seal writes and the
+/// checkpoint-loaded install a load applies. Used by `VecLite::checkpoint`
+/// (native) and `VecLite::serialize`/`deserialize` (all targets, incl. wasm),
+/// so they live outside the native-only persistence-hooks block below.
+impl Collection {
+    /// Live points `(id, dense vector, payload, sparse)` in slot order — the
+    /// input a seal writes (SPEC-002 §5, SPEC-007 HYB-030).
+    pub(crate) fn live_points(&self) -> Vec<crate::persist::seal::LivePoint> {
+        let data = self.inner.data.read();
+        let dim = self.inner.config.dimension;
+        let mut out = Vec::with_capacity(data.id_to_slot.len());
+        for slot in 0..data.ids.len() {
+            if data.id_to_slot.get(&data.ids[slot]) == Some(&slot) {
+                out.push((
+                    data.ids[slot].clone(),
+                    data.copy_vector(slot, dim),
+                    data.payloads[slot].clone(),
+                    data.sparses[slot].clone(),
+                ));
+            }
+        }
+        out
+    }
+
+    /// Install checkpoint-loaded points (open/deserialize path): validate + apply
+    /// with NO vocabulary updates — the sealed VOCAB already reflects these
+    /// documents, so folding them in again would double-count (EMB-030).
+    pub(crate) fn install_points(&self, points: Vec<Point>) -> Result<()> {
+        let prepared: Vec<PreparedPoint> = points
+            .into_iter()
+            .map(|p| self.prepare_inner(p, true))
+            .collect::<Result<_>>()?;
+        self.apply_prepared(prepared);
+        Ok(())
+    }
+}
+
 /// Persistence hooks (native-only): WAL logging around writes, the live-point
 /// snapshot a checkpoint seals, and the replay paths recovery drives.
 #[cfg(not(target_arch = "wasm32"))]
@@ -1435,25 +1472,6 @@ impl Collection {
             p.after_write()?;
         }
         Ok(())
-    }
-
-    /// Live points `(id, dense vector, payload)` in slot order — the input a
-    /// checkpoint seals (sparse not yet persisted, phase3c).
-    pub(crate) fn live_points(&self) -> Vec<crate::persist::seal::LivePoint> {
-        let data = self.inner.data.read();
-        let dim = self.inner.config.dimension;
-        let mut out = Vec::with_capacity(data.id_to_slot.len());
-        for slot in 0..data.ids.len() {
-            if data.id_to_slot.get(&data.ids[slot]) == Some(&slot) {
-                out.push((
-                    data.ids[slot].clone(),
-                    data.copy_vector(slot, dim),
-                    data.payloads[slot].clone(),
-                    data.sparses[slot].clone(),
-                ));
-            }
-        }
-        out
     }
 
     /// Declare a payload index at runtime (SPEC-006 FLT-020): journal
@@ -1671,18 +1689,6 @@ impl Collection {
                 }
             }
         }
-        self.apply_prepared(prepared);
-        Ok(())
-    }
-
-    /// Install checkpoint-loaded points (open path): validate + apply with NO
-    /// vocabulary updates — the sealed VOCAB already reflects these documents,
-    /// so folding them in again would double-count (EMB-030).
-    pub(crate) fn install_points(&self, points: Vec<Point>) -> Result<()> {
-        let prepared: Vec<PreparedPoint> = points
-            .into_iter()
-            .map(|p| self.prepare_inner(p, true))
-            .collect::<Result<_>>()?;
         self.apply_prepared(prepared);
         Ok(())
     }

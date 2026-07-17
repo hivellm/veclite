@@ -16,7 +16,7 @@ use crate::persist::config;
 use crate::point::SparseVector;
 use crate::storage::body::{PayloadBlock, PayloadIndex, SparsePostings, StoredConfig};
 use crate::storage::iddir::IdDir;
-use crate::storage::pager::CheckpointColl;
+use crate::storage::image::CheckpointColl;
 use crate::storage::segment::{Segment, SegmentType};
 use crate::storage::vectors::{Encoding, VectorsBody};
 
@@ -75,6 +75,9 @@ pub(crate) fn postings_to_sparse(
 pub(crate) struct LoadedCollection {
     pub(crate) options: CollectionOptions,
     pub(crate) points: Vec<LivePoint>,
+    /// The mmap read tier is native-only (ADR-0004); a wasm image always
+    /// materializes every vector into `points`.
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) base: Option<LoadedBase>,
     /// Checkpointed embedder state (VOCAB segment, SPEC-005 EMB-030): imported
     /// on open so text search needs no rebuild. `None` for BYO collections and
@@ -85,7 +88,8 @@ pub(crate) struct LoadedCollection {
 /// The mmap tier's load product (ADR-0004): slot metadata in RAM, vector bytes
 /// left in the file map. `seg_refs` keeps the collection's committed segment
 /// references so an unmutated collection can be carried forward by reference at
-/// the next checkpoint instead of resealed.
+/// the next checkpoint instead of resealed. Native-only (memmap2).
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) struct LoadedBase {
     /// Mapped VECTORS windows, covering slots `0..slot_count` contiguously.
     pub(crate) regions: Vec<crate::storage::mmap::VectorsRegion>,
@@ -347,13 +351,15 @@ pub(crate) fn load(segments: &[Segment]) -> Result<LoadedCollection> {
     Ok(LoadedCollection {
         options,
         points,
+        #[cfg(not(target_arch = "wasm32"))]
         base: None,
         vocab,
     })
 }
 
 /// `load_based`'s product: collection options plus slot → id / payload /
-/// sparse tables (vectors stay in the file map).
+/// sparse tables (vectors stay in the file map). Native-only (mmap tier).
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) type BasedMeta = (
     CollectionOptions,
     Vec<Option<String>>,
@@ -366,7 +372,9 @@ pub(crate) type BasedMeta = (
 /// except VECTORS (those stay in the file map); `slot_count` is the total slot
 /// range covered by the mapped regions. Slots absent from the IDDIR are dead
 /// (`ids[slot] = None`) — with carry-forward a checkpoint may commit an
-/// uncompacted base, so a sparse IDDIR is data, not corruption.
+/// uncompacted base, so a sparse IDDIR is data, not corruption. Native-only
+/// (the mmap tier that this metadata pairs with is memmap2-backed).
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn load_based(segments: &[Segment], slot_count: usize) -> Result<BasedMeta> {
     let mut stored: Option<StoredConfig> = None;
     let mut iddir: Option<IdDir> = None;

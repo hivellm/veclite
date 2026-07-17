@@ -1,0 +1,38 @@
+[package]
+name = "veclite-wasm"
+description = "WebAssembly binding for VecLite (SPEC-012) — client-side vector search."
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.87"
+license = "Apache-2.0"
+repository = "https://github.com/hivellm/veclite"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# The engine, wasm profile: hnsw_rs/rayon/storage/mmap are target-gated off
+# wasm32 in the core (ADR-0002, CORE-004), so this pulls only the pure-Rust
+# in-memory engine (collection registry, CRUD, brute-force search, quantization,
+# scalar-oracle SIMD kernels autovectorized to simd128) plus the portable
+# `.veclite` v1 image codec (WASM-010). No file storage, no ONNX (WASM-001).
+veclite = { path = "../veclite" }
+wasm-bindgen = "0.2.100"
+# Float32Array / Uint8Array views for zero-ish-copy vector and image interop.
+js-sys = "0.3"
+# serde_json::Value payloads/filters cross to/from JS objects (WASM-021).
+# The async storage (OPFS) surface lives in the JS wrapper (it calls the
+# synchronous `serialize()`/`fromBytes()` below), so no `web-sys` is linked
+# into the wasm binary — keeping the bundle within the WASM-030 budget.
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde-wasm-bindgen = "0.6"
+
+[profile.release]
+# WASM-030: ≤ 3 MB gzipped. Size-first optimization, one codegen unit, fat LTO,
+# abort-on-panic (no unwinding tables), symbols stripped.
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

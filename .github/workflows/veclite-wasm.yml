@@ -1,0 +1,87 @@
+name: VecLite WASM Package
+
+# Builds the two wasm binaries (simd128 + fallback), enforces the ≤ 3 MB gzip
+# bundle budget (WASM-030), and runs the package test suite + the shared
+# conformance corpus (SPEC-015 §3, gate G5) on both variants (WASM-002). The
+# binding wraps the crate's wasm32 profile; it has no filesystem, mmap, locks,
+# or threads (WASM-001).
+#
+# NOTE: GitHub Actions is currently disabled for this repo (CI budget); these run
+# locally — see crates/veclite-wasm/README.md.
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'crates/veclite-wasm/**'
+      - 'crates/veclite/**'
+      - 'tests/conformance/**'
+      - '.github/workflows/veclite-wasm.yml'
+  pull_request:
+    branches: [ '**' ]
+    paths:
+      - 'crates/veclite-wasm/**'
+      - 'crates/veclite/**'
+      - 'tests/conformance/**'
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  # Keep in sync with the `wasm-bindgen` crate version in Cargo.toml.
+  WASM_BINDGEN_VERSION: '0.2.126'
+
+jobs:
+  wasm:
+    name: wasm build + budget + tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: crates/veclite-wasm
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+
+      - name: Install wasm-bindgen-cli (version-matched) and binaryen
+        run: |
+          cargo install wasm-bindgen-cli --version "$WASM_BINDGEN_VERSION"
+          sudo apt-get update && sudo apt-get install -y binaryen
+
+      - name: Build pkg/ and enforce the 3 MB gzip budget (WASM-030)
+        working-directory: crates/veclite-wasm
+        run: ./build-pkg.sh --check
+
+      - name: Package tests — simd128
+        working-directory: crates/veclite-wasm
+        run: VECLITE_WASM_VARIANT=simd128 node --test __test__/veclite.test.mjs
+
+      - name: Package tests — fallback
+        working-directory: crates/veclite-wasm
+        run: VECLITE_WASM_VARIANT=fallback node --test __test__/veclite.test.mjs
+
+      - name: Conformance corpus (gate G5) — both variants
+        working-directory: tests/conformance/runners/wasm
+        run: |
+          npm install
+          VECLITE_WASM_VARIANT=simd128 node run.mjs ../../corpus
+          VECLITE_WASM_VARIANT=fallback node run.mjs ../../corpus
+
+  interchange:
+    name: image interchange (WASM-010)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # The interchange contract is proven natively: the same serialize/
+      # deserialize code the wasm binding compiles is exercised against the file
+      # pager (a zero-uuid image opens; a native file's bytes deserialize).
+      - name: Native image-codec tests
+        run: cargo test -p veclite --test image_interchange storage::image

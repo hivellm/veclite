@@ -30,22 +30,24 @@ dashmap.workspace = true
 parking_lot.workspace = true
 serde = { workspace = true }
 serde_json.workspace = true
-
-# Native-only: hnsw_rs (and its rayon/mmap/cpu-time deps) cannot build on
-# wasm32; the index module is cfg-gated off wasm32 to keep CORE-004 green
-# (ADR-0002).
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-hnsw_rs = { workspace = true }
-rayon = { workspace = true }
-# Storage layer (SPEC-002). zstd links a C library and none of these are
-# needed on wasm32 (no file storage there — CORE-004), so the whole set is
-# native-only alongside the storage module gate in lib.rs.
+# Portable segment codec (SPEC-002 §3): the pure-Rust encoders shared by the
+# native pager and the wasm in-memory image codec (WASM-010) — MessagePack
+# bodies, LZ4 compression, CRC framing, roaring slot bitmaps (PIDX/tombstones),
+# and xxhash id-directory bucketing. All build cleanly on wasm32.
 rmp-serde = { workspace = true }
 lz4_flex = { workspace = true }
-zstd = { workspace = true }
 crc32fast = { workspace = true }
 roaring = { workspace = true }
 xxhash-rust = { workspace = true }
+
+# Native-only: hnsw_rs (and its rayon/mmap/cpu-time deps) cannot build on
+# wasm32; the index module is cfg-gated off wasm32 to keep CORE-004 green
+# (ADR-0002). zstd links a C library; memmap2/fs4 are the file read/lock path;
+# uuid pulls getrandom — none are needed by the wasm image path.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+hnsw_rs = { workspace = true }
+rayon = { workspace = true }
+zstd = { workspace = true }
 uuid = { workspace = true }
 fs4 = { workspace = true }
 memmap2 = { workspace = true }

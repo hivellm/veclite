@@ -8,7 +8,12 @@
 //! index acceleration lives in [`index`], and the search integration is in
 //! `collection`.
 
-#[cfg(not(target_arch = "wasm32"))]
+// Portable (roaring is pure Rust): the query-time accelerator is native-only
+// (wired in `collection`), but the seal path builds PIDX bitmaps and load
+// harvests declarations on every target, so the module itself is all-targets.
+// On wasm only the build/harvest entry points are reached — the lookup methods
+// (candidates/answer/…) are dead there, so silence dead-code on that target.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 pub(crate) mod index;
 
 use serde_json::Value;

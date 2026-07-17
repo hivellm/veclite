@@ -206,7 +206,8 @@ impl VectorsRegion {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::pager::{CheckpointColl, Pager};
+    use crate::storage::image::CheckpointColl;
+    use crate::storage::pager::Pager;
     use crate::storage::segment::Segment;
     use crate::storage::vectors::{Encoding, VectorsBody};
 

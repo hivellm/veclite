@@ -12,25 +12,11 @@ use std::path::{Path, PathBuf};
 use crate::error::{Result, VecLiteError};
 use crate::storage::compression::Codec;
 use crate::storage::header::{FLAG_CLEAN_CLOSE, HEADER_SIZE, Header};
+// `CheckpointColl` lives in the portable `image` module (it is also the input to
+// the wasm in-memory image writer); the pager consumes it here.
+use crate::storage::image::CheckpointColl;
 use crate::storage::segment::{Segment, codec_for};
 use crate::storage::toc::{CollEntry, SegRef, Toc};
-
-/// One collection's contribution to a checkpoint: its metadata plus the new
-/// segments to append. The pager assigns offsets and builds the TOC entry.
-pub(crate) struct CheckpointColl {
-    pub(crate) coll_id: u32,
-    pub(crate) name: String,
-    pub(crate) aliases: Vec<String>,
-    pub(crate) vector_count: u64,
-    pub(crate) tombstone_count: u64,
-    pub(crate) segments: Vec<Segment>,
-    /// Carry-forward (ADR-0004): when set, the collection is unchanged since
-    /// its segments were committed — the new TOC references them in place and
-    /// nothing is rewritten. Valid only within the same file (segments are
-    /// immutable, STG-002); never set for snapshot/vacuum targets, whose fresh
-    /// files invalidate every offset. `segments` must be empty when set.
-    pub(crate) reused: Option<Vec<SegRef>>,
-}
 
 /// Owns the open `.veclite` file and tracks the next append offset. The handle
 /// is `None` only during the brief close→rename→reopen window of `replace_with`

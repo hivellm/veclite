@@ -1,0 +1,43 @@
+{
+  "name": "@veclite/wasm",
+  "version": "0.1.0",
+  "description": "WebAssembly build of VecLite — an embedded, single-file vector database for browsers, Deno, Bun, and edge runtimes. Client-side semantic search, offline, no server.",
+  "type": "module",
+  "main": "js/index.js",
+  "module": "js/index.js",
+  "types": "js/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./js/index.d.ts",
+      "import": "./js/index.js"
+    }
+  },
+  "files": [
+    "js/",
+    "pkg/veclite_core.js",
+    "pkg/veclite_core.d.ts",
+    "pkg/veclite_core_bg.wasm.d.ts",
+    "pkg/veclite_fallback.wasm",
+    "pkg/veclite_simd.wasm"
+  ],
+  "sideEffects": false,
+  "keywords": [
+    "vector-database",
+    "embeddings",
+    "semantic-search",
+    "wasm",
+    "webassembly",
+    "hnsw",
+    "opfs",
+    "offline"
+  ],
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/hivellm/veclite.git",
+    "directory": "crates/veclite-wasm"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

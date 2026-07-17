@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Draft — OQ-3 (OPFS buffering strategy) must be resolved at task start |
+| **Status** | Implemented (phase5b): `crates/veclite-wasm` (wasm-bindgen over the crate's wasm32 profile) + `@veclite/wasm` (JS async facade). Two binaries — simd128 + fallback — with a feature-detection loader (WASM-002); the portable `.veclite` v1 image codec (`serialize`/`deserialize`) is byte-interchangeable with native VecLite (WASM-010, proven by native `image_interchange` tests incl. a zero-uuid image opening with the file pager); OPFS backend with atomic save + autosave (WASM-011, OQ-3 resolved as full-image buffering). Conformance corpus green on both variants (memory subset, file-mode skipped); gzipped bundles ≈ 185 KB, well under the 3 MB budget (WASM-030). No fs/mmap/locks/threads/ONNX (WASM-001). |
 | **Phase / tasks** | Phase 5 · T5.3 ([DAG](../DAG.md)) |
 | **PRD requirements** | FR-64, FR-65 |
 | **Planning source** | [06-sdk-bindings.md §WASM](../vectorizer-lite/06-sdk-bindings.md) |
