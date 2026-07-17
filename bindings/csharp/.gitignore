@@ -1,0 +1,7 @@
+# Build output
+**/bin/
+**/obj/
+# Bundled native libraries are release artifacts populated by CI, not committed.
+VecLite/runtimes/*/native/*.dll
+VecLite/runtimes/*/native/*.so
+VecLite/runtimes/*/native/*.dylib

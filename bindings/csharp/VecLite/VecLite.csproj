@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>12</LangVersion>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>VecLite</RootNamespace>
+    <AssemblyName>VecLite</AssemblyName>
+
+    <!-- NuGet packaging (CS-001): ship native assets under runtimes/<rid>/native. -->
+    <PackageId>VecLite</PackageId>
+    <Version>0.1.0</Version>
+    <Description>Embedded, single-file, in-process vector database (.NET binding over the C ABI).</Description>
+    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+    <IncludeBuildOutput>true</IncludeBuildOutput>
+  </PropertyGroup>
+
+  <!-- Bundle every prebuilt native library into the package's runtimes tree and,
+       for the local build, copy the current platform's library next to the
+       output so tests find it without a NuGet restore. -->
+  <ItemGroup>
+    <None Include="runtimes/**/*" Pack="true" PackagePath="runtimes/" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

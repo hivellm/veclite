@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>veclite-conformance-csharp</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="YamlDotNet" Version="16.2.1" />
+    <ProjectReference Include="../../../../bindings/csharp/VecLite/VecLite.csproj" />
+  </ItemGroup>
+
+  <!-- Make the bundled native library discoverable from the runner's output. -->
+  <ItemGroup>
+    <None Include="../../../../bindings/csharp/VecLite/runtimes/**/*" CopyToOutputDirectory="PreserveNewest" LinkBase="runtimes" />
+  </ItemGroup>
+
+</Project>
