@@ -2,7 +2,7 @@
 //! behavior (CLI-002), stdout/stderr separation (CLI-003), and committed
 //! `--help` snapshots so the docs cannot drift from the binary (§2.4).
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 use veclite::{CollectionOptions, Metric, Point, VecLite};
@@ -34,19 +34,19 @@ fn temp_path(name: &str) -> PathBuf {
     std::env::temp_dir().join(format!("veclite-cli-{}-{name}", std::process::id()))
 }
 
-fn wal_sidecar(db: &PathBuf) -> PathBuf {
+fn wal_sidecar(db: &Path) -> PathBuf {
     let mut name = db.file_name().unwrap_or_default().to_os_string();
     name.push("-wal");
     db.with_file_name(name)
 }
 
-fn remove_db(path: &PathBuf) {
+fn remove_db(path: &Path) {
     let _ = std::fs::remove_file(path);
     let _ = std::fs::remove_file(wal_sidecar(path));
 }
 
 /// A small durable database: one auto-embed collection, one BYO collection.
-fn build_db(path: &PathBuf) {
+fn build_db(path: &Path) {
     remove_db(path);
     let db = VecLite::open(path).unwrap_or_else(|e| panic!("{e}"));
     let docs = db
