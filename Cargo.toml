@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/veclite", "crates/veclite-ffi", "xtask"]
+members = ["crates/veclite", "crates/veclite-cli", "crates/veclite-ffi", "xtask"]
 # The Python binding links libpython (PyO3) and is built by maturin, not by the
 # workspace `--workspace` jobs; exclude it so those stay pure-Rust.
 exclude = ["crates/veclite-py", "crates/veclite-node", "crates/veclite-wasm"]
@@ -52,6 +52,9 @@ memmap2 = "0.9"
 zip = { version = "8.0", default-features = false, features = ["deflate"] }
 flate2 = "1.1"
 sha2 = "0.11"
+# CLI only (SPEC-014 OQ-4: separate `veclite-cli` crate keeps the library
+# dependency tree clean).
+clap = { version = "4.5", features = ["derive"] }
 
 [workspace.lints.clippy]
 unwrap_used = "deny"

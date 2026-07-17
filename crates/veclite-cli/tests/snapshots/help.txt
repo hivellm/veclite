@@ -1,0 +1,15 @@
+Inspect, verify, and maintain .veclite databases; exchange data with a Vectorizer server (.vecdb).
+
+Usage: veclite <COMMAND>
+
+Commands:
+  inspect   Show header, format version, sizes, and per-collection configuration and segment breakdown. Opens read-only (shared lock)
+  export    Export collections to a Vectorizer server data directory (vectorizer.vecdb + vectorizer.vecidx, Compact layout)
+  import    Import a Vectorizer server data set (Compact .vecdb or Legacy *_vector_store.bin) into a new .veclite database
+  vacuum    Reclaim dead space in place (library vacuum)
+  snapshot  Write a compacted, standalone point-in-time copy
+  verify    Read-only integrity pass: header, TOC, every segment CRC and body, collection reconstruction, WAL scan. Exit 0 = clean; 1 = corruption found (each finding printed with segment offset and type)
+
+Options:
+  -h, --help     Print help
+  -V, --version  Print version

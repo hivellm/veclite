@@ -1,0 +1,9 @@
+Read-only integrity pass: header, TOC, every segment CRC and body, collection reconstruction, WAL scan. Exit 0 = clean; 1 = corruption found (each finding printed with segment offset and type)
+
+Usage: veclite verify <DB>
+
+Arguments:
+  <DB>  Path to the .veclite database file
+
+Options:
+  -h, --help  Print help

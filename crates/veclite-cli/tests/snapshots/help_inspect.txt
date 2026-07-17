@@ -1,0 +1,10 @@
+Show header, format version, sizes, and per-collection configuration and segment breakdown. Opens read-only (shared lock)
+
+Usage: veclite inspect [OPTIONS] <DB>
+
+Arguments:
+  <DB>  Path to the .veclite database file
+
+Options:
+      --json  Emit the report as JSON (stable schema) instead of text
+  -h, --help  Print help

@@ -1,0 +1,12 @@
+Import a Vectorizer server data set (Compact .vecdb or Legacy *_vector_store.bin) into a new .veclite database
+
+Usage: veclite import [OPTIONS] --out <OUT> <SRC>
+
+Arguments:
+  <SRC>  Source: a .vecdb file, a *_vector_store.bin file, or a directory containing either layout
+
+Options:
+      --out <OUT>                  The .veclite file to create
+      --collections <COLLECTIONS>  Comma-separated collection names; default all
+      --force                      Overwrite an existing output file
+  -h, --help                       Print help

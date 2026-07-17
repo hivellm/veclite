@@ -1,0 +1,12 @@
+Export collections to a Vectorizer server data directory (vectorizer.vecdb + vectorizer.vecidx, Compact layout)
+
+Usage: veclite export [OPTIONS] --format <FORMAT> --out <OUT> <DB>
+
+Arguments:
+  <DB>  Path to the .veclite database file
+
+Options:
+      --format <FORMAT>            Target format; only "vecdb" is defined
+      --out <OUT>                  Output directory for the server data set
+      --collections <COLLECTIONS>  Comma-separated collection names; default all
+  -h, --help                       Print help

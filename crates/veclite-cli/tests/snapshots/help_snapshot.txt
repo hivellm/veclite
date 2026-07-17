@@ -1,0 +1,10 @@
+Write a compacted, standalone point-in-time copy
+
+Usage: veclite snapshot --out <OUT> <DB>
+
+Arguments:
+  <DB>  Path to the .veclite database file
+
+Options:
+      --out <OUT>  Path for the copy (must not exist)
+  -h, --help       Print help

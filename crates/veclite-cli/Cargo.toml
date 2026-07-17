@@ -1,0 +1,25 @@
+[package]
+name = "veclite-cli"
+description = "Command-line tool for .veclite databases: inspect, verify, vacuum, snapshot, and .vecdb interop with the Vectorizer server."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords = ["vector-database", "cli", "veclite"]
+categories = ["command-line-utilities", "database"]
+
+# SPEC-014 (resolves PRD OQ-4): a separate crate installing a binary named
+# `veclite`, enabling the library's `vecdb-interop` feature — the library
+# dependency tree stays clean for embedders.
+[[bin]]
+name = "veclite"
+path = "src/main.rs"
+
+[dependencies]
+veclite = { path = "../veclite", features = ["vecdb-interop"] }
+clap = { workspace = true }
+serde_json = { workspace = true }
+
+[lints]
+workspace = true
