@@ -45,6 +45,10 @@ struct DatabaseInner {
     registry: Mutex<()>,
     /// Next collection id to assign (stamped into WAL entries + CONFIG).
     next_coll_id: AtomicU32,
+    /// Where `fastembed:<model>` ONNX weights download (SPEC-005 EMB-041); from
+    /// `OpenOptions::model_cache_dir`, `None` for `memory()` or when unset (the
+    /// fastembed default cache). Threaded to onnx provider construction.
+    model_cache_dir: Option<std::path::PathBuf>,
     /// The shared journal (pager + WAL) for a file-backed database; `None` for
     /// `memory()`. Never set on wasm32.
     #[cfg(not(target_arch = "wasm32"))]
@@ -102,7 +106,11 @@ fn install_collection(
     let slot = match &loaded.options.embedding_provider {
         None => EmbedderSlot::None,
         Some(provider) => {
-            match crate::embedding::build_provider(provider, loaded.options.dimension) {
+            match crate::embedding::build_provider_with(
+                provider,
+                loaded.options.dimension,
+                inner.model_cache_dir.as_deref(),
+            ) {
                 Ok(built) => EmbedderSlot::Ready(Arc::new(Mutex::new(built))),
                 Err(_) => match inner.registered_embedders.get(provider) {
                     Some(shared) => EmbedderSlot::Ready(Arc::clone(shared.value())),
@@ -409,6 +417,7 @@ impl VecLite {
                 registered_embedders: DashMap::new(),
                 registry: Mutex::new(()),
                 next_coll_id: AtomicU32::new(1),
+                model_cache_dir: None,
                 #[cfg(not(target_arch = "wasm32"))]
                 persistence: None,
             }),
@@ -532,6 +541,7 @@ impl VecLite {
             registered_embedders: DashMap::new(),
             registry: Mutex::new(()),
             next_coll_id: AtomicU32::new(1),
+            model_cache_dir: options.model_cache_dir.clone(),
             persistence: Some(Arc::clone(&persistence)),
         });
 
@@ -616,7 +626,11 @@ impl VecLite {
         // database's registered providers (EMB-011).
         let slot = match &options.embedding_provider {
             None => EmbedderSlot::None,
-            Some(provider) => match crate::embedding::build_provider(provider, options.dimension) {
+            Some(provider) => match crate::embedding::build_provider_with(
+                provider,
+                options.dimension,
+                self.inner.model_cache_dir.as_deref(),
+            ) {
                 Ok(built) => EmbedderSlot::Ready(Arc::new(Mutex::new(built))),
                 Err(e) => match self.inner.registered_embedders.get(provider) {
                     Some(shared) => EmbedderSlot::Ready(Arc::clone(shared.value())),

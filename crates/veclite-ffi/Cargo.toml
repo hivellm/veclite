@@ -13,6 +13,13 @@ name = "veclite_ffi"
 # crate's own tests link and call the extern functions.
 crate-type = ["cdylib", "staticlib", "lib"]
 
+[features]
+# Forwards the core's opt-in dense-embedding tier (SPEC-005 §6). Off by default,
+# so the shipped base C ABI stays lean and network-free (NFR-08); the heavy
+# artifacts that back `@veclite/onnx`, `VecLite.Onnx`, and the Go `veclite_onnx`
+# tag are this crate built `--features onnx` (SPEC-016 REL-021).
+onnx = ["veclite/onnx"]
+
 [dependencies]
 veclite = { path = "../veclite" }
 serde = { workspace = true }

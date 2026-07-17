@@ -12,6 +12,10 @@
 pub mod bm25;
 pub mod bow;
 pub mod char_ngram;
+// Opt-in dense neural embeddings (SPEC-005 §6). Native-only and feature-gated so
+// base/wasm builds never pull ONNX Runtime (EMB-040/042).
+#[cfg(all(feature = "onnx", not(target_arch = "wasm32")))]
+pub mod fastembed;
 #[cfg(feature = "svd")]
 pub mod svd;
 pub mod tfidf;
@@ -70,6 +74,10 @@ pub fn available_providers() -> Vec<String> {
         .collect();
     #[cfg(feature = "svd")]
     out.push("svd".to_owned());
+    // Marker for the opt-in dense tier (EMB-040); the concrete model ids are
+    // listed in the error a bad `fastembed:<model>` id produces.
+    #[cfg(all(feature = "onnx", not(target_arch = "wasm32")))]
+    out.push("fastembed:<model>".to_owned());
     out
 }
 
@@ -84,6 +92,34 @@ pub fn is_onnx_provider(provider: &str) -> bool {
 /// Construct a built-in provider by id, or fail with `UnsupportedProvider`
 /// listing what is available — never a silent fallback (SPEC-005 EMB-021).
 pub fn build_provider(provider: &str, dimension: usize) -> Result<Box<dyn Embedder>> {
+    build_provider_with(provider, dimension, None)
+}
+
+/// [`build_provider`] with the resolved ONNX model cache dir (EMB-041). The
+/// public factory passes `None` (the fastembed default cache); the open/create
+/// paths thread `OpenOptions::model_cache_dir` through here so `fastembed:<model>`
+/// downloads land in the configured location.
+pub(crate) fn build_provider_with(
+    provider: &str,
+    dimension: usize,
+    cache_dir: Option<&std::path::Path>,
+) -> Result<Box<dyn Embedder>> {
+    // `Option<&Path>` is `Copy`; bind it so the base build (feature off) does not
+    // warn about an unused parameter.
+    let _ = cache_dir;
+    // ONNX providers (`fastembed:*`) are handled only behind the `onnx` feature
+    // (native-only). On a base build they fall through to the match below and
+    // return `UnsupportedProvider`, which the load path turns into a deferred
+    // `Missing` embedder — so the collection still opens and serves vector reads
+    // and searches, with only text operations failing typed (EMB-023).
+    #[cfg(all(feature = "onnx", not(target_arch = "wasm32")))]
+    if let Some(spec) = provider.strip_prefix("fastembed:") {
+        let embedder: Box<dyn Embedder> = match spec.strip_prefix("path:") {
+            Some(dir) => Box::new(fastembed::OnnxEmbedder::from_path(dir, dimension)?),
+            None => Box::new(fastembed::OnnxEmbedder::named(spec, dimension, cache_dir)?),
+        };
+        return Ok(embedder);
+    }
     match provider {
         "bm25" => Ok(Box::new(bm25::Bm25::new(dimension))),
         "tfidf" => Ok(Box::new(tfidf::TfIdf::new(dimension))),

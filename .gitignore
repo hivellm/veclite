@@ -40,3 +40,6 @@ CLAUDE.local.md
 target/
 **/*.rs.bk
 *.pdb
+# fastembed downloads pretrained ONNX models into a `.fastembed_cache/` in the
+# working dir when the onnx tests run without an explicit cache dir (SPEC-005 §6).
+.fastembed_cache/

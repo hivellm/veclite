@@ -23,6 +23,12 @@ pq = []
 # projection, vendored from the server with its ndarray Array2 replaced by a
 # plain Vec matrix (same math, zero extra dependencies).
 svd = []
+# Opt-in dense neural embeddings (SPEC-005 §6, EMB-040): pulls `fastembed` →
+# ONNX Runtime. NEVER in the default build — base installs stay lean and
+# network-free (NFR-08); heavy artifacts ship separately (SPEC-016 REL-021).
+# wasm32 excludes it unconditionally (EMB-042): `fastembed` is declared only in
+# the non-wasm target table below, and the provider code is cfg-gated off wasm32.
+onnx = ["dep:fastembed"]
 
 [dependencies]
 thiserror.workspace = true
@@ -51,6 +57,10 @@ zstd = { workspace = true }
 uuid = { workspace = true }
 fs4 = { workspace = true }
 memmap2 = { workspace = true }
+# Opt-in only (the `onnx` feature) and native-only (ONNX Runtime + reqwest do not
+# build on wasm32, EMB-042). Off by default, so the base tree has no ONNX/network
+# crates (NFR-08).
+fastembed = { version = "5", optional = true }
 
 [dev-dependencies]
 proptest.workspace = true

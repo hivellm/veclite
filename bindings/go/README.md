@@ -53,6 +53,16 @@ cd bindings/go
 CC="zig cc" go test ./...    # any cgo C compiler works
 ```
 
+## ONNX embedders (opt-in)
+
+The base build excludes the ONNX/`fastembed:*` provider family to stay lean
+(EMB-040). Build with `-tags veclite_onnx` and link the ONNX-enabled C ABI
+library (`cargo build -p veclite-ffi --release --features onnx`) to enable
+`fastembed:<model>` and `fastembed:path:<dir>` providers; `veclite.OnnxBuild`
+reports which build you have. Without the tag, an ONNX-created file still opens
+and serves vector operations — only text operations fail with
+`ErrUnsupportedProvider` (EMB-023).
+
 ## License
 
 Apache-2.0.

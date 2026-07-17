@@ -1,0 +1,82 @@
+name: VecLite Heavy ONNX Artifacts
+
+# Builds the opt-in dense-embedding distribution artifacts (SPEC-005 §6, SPEC-016
+# §3): each is a base binding built `--features onnx`, pulling fastembed → ONNX
+# Runtime. Base packages NEVER depend on these (REL-021); a heavy package
+# declares a dependency on the exact-version base package. Base installs stay
+# lean and network-free (NFR-08), enforced by veclite-checks.yml.
+#
+# NOTE: GitHub Actions is currently disabled for this repo (CI budget); this is
+# dormant. Shown single-platform (linux-x64) as the template; the release matrix
+# fans it out across the SPEC-016 platforms (minus wasm — EMB-042). Run pieces
+# locally with the commands in each step.
+
+on:
+  workflow_dispatch:
+  release:
+    types: [ published ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # veclite-onnx wheel (PyPI): the Python binding built with the onnx feature.
+  python-onnx-wheel:
+    name: veclite-onnx wheel (linux-x64)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Build the heavy wheel
+        # maturin renames the distribution to `veclite-onnx` (pyproject extra),
+        # depending on `==` the base `veclite` version (REL-021).
+        run: |
+          pip install maturin
+          maturin build --release --features onnx -m crates/veclite-py/Cargo.toml
+
+  # @veclite/onnx (npm): the Node binding built with the onnx feature.
+  node-onnx:
+    name: "@veclite/onnx (linux-x64)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+      - name: Build the heavy napi addon
+        working-directory: crates/veclite-node
+        run: |
+          npm ci
+          npx napi build --release --features onnx
+
+  # VecLite.Onnx (NuGet) + Go veclite_onnx: the ONNX-enabled C ABI library, then
+  # each language packages/links it.
+  native-onnx-lib:
+    name: onnx C ABI lib (linux-x64)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+      - name: Build the ONNX-enabled C ABI library
+        run: cargo build -p veclite-ffi --release --features onnx
+      - name: Package VecLite.Onnx (NuGet)
+        # The .so goes under runtimes/<rid>/native of the VecLite.Onnx package,
+        # which depends on `==` the base VecLite version (REL-021).
+        run: |
+          mkdir -p bindings/csharp/VecLite.Onnx/runtimes/linux-x64/native
+          cp target/release/libveclite_ffi.so bindings/csharp/VecLite.Onnx/runtimes/linux-x64/native/
+      - name: Go veclite_onnx smoke (links the fat lib)
+        run: |
+          mkdir -p bindings/go/lib/linux_amd64
+          cp target/release/libveclite_ffi.a bindings/go/lib/linux_amd64/
+          cd bindings/go && go build -tags veclite_onnx ./...

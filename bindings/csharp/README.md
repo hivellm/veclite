@@ -47,8 +47,13 @@ cp target/release/veclite_ffi.dll bindings/csharp/VecLite/runtimes/win-x64/nativ
 cd bindings/csharp && dotnet test
 ```
 
-The `VecLite.Onnx` package (ONNX/`fastembed:*` providers, EMB-040) awaits the
-`onnx` core feature (phase5c).
+The base package excludes the ONNX/`fastembed:*` provider family to stay lean
+(EMB-040). `VecLite.Onnx` bundles the ONNX-enabled C ABI library
+(`cargo build -p veclite-ffi --release --features onnx`) under
+`runtimes/<rid>/native/` and depends on the exact-version base `VecLite`
+(REL-021); it adds the `fastembed:<model>` / `fastembed:path:<dir>` providers.
+Without it, an ONNX-created file still opens and serves vector operations —
+only text operations throw `UnsupportedProvider` (EMB-023).
 
 ## License
 

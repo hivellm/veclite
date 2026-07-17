@@ -11,6 +11,12 @@ repository = "https://github.com/hivellm/veclite"
 name = "veclite"
 crate-type = ["cdylib"]
 
+[features]
+# Opt-in dense embeddings (SPEC-005 §6). Off by default so the base wheel stays
+# lean and network-free (NFR-08); the `veclite-onnx` wheel is this crate built
+# `maturin build --features onnx` (SPEC-016 REL-021).
+onnx = ["veclite/onnx"]
+
 [dependencies]
 veclite = { path = "../veclite" }
 pyo3 = { version = "0.23", features = ["abi3-py39", "extension-module"] }

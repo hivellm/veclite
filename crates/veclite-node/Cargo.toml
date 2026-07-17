@@ -10,6 +10,12 @@ repository = "https://github.com/hivellm/veclite"
 [lib]
 crate-type = ["cdylib"]
 
+[features]
+# Opt-in dense embeddings (SPEC-005 §6). Off by default so the base npm package
+# stays lean and network-free (NFR-08); `@veclite/onnx` is this crate built
+# `napi build --features onnx` (SPEC-016 REL-021).
+onnx = ["veclite/onnx"]
+
 [dependencies]
 veclite = { path = "../veclite" }
 # napi-rs 2.x LTS: the native N-API bridge. `napi4` enables the threadsafe /

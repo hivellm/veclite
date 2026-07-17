@@ -59,11 +59,12 @@ task) so an immediate same-path reopen works on every host.
 
 ## ONNX embedders
 
-The base addon excludes the ONNX/`fastembed:*` provider family to stay small.
-When the `onnx` core feature lands (tracked in `phase5c_onnx-feature`), those
-providers ship as a separate optional `@veclite/onnx` addon built with
-`--features onnx`; until then `fastembed:*` providers report
-`UNSUPPORTED_PROVIDER` (EMB-040).
+The base addon excludes the ONNX/`fastembed:*` provider family to stay small
+(EMB-040). Those providers ship as a separate optional `@veclite/onnx` addon,
+this binding built `napi build --features onnx` (pulling ONNX Runtime), which
+depends on the exact-version base `veclite` (REL-021). Without it, `fastembed:*`
+providers report `UNSUPPORTED_PROVIDER`; an ONNX-created file still opens and
+serves vector operations — only text operations fail (EMB-023).
 
 ## Building locally
 

@@ -42,7 +42,9 @@ jobs:
       - name: Check default-build dependency tree
         shell: bash
         run: |
-          DENY='tokio|hyper|reqwest|axum|tonic|rustls|native-tls|openssl|ureq|curl'
+          # Network crates AND the opt-in ONNX tier (EMB-040): the base build
+          # must pull neither (NFR-08, REL-021). The `onnx` feature is off here.
+          DENY='tokio|hyper|reqwest|axum|tonic|rustls|native-tls|openssl|ureq|curl|fastembed|ort|ort-sys|onnxruntime|hf-hub'
           TREE=$(cargo tree -p veclite -e normal --prefix none | awk '{print $1}' | sort -u)
           echo "$TREE"
           if echo "$TREE" | grep -Ex "($DENY)" ; then
