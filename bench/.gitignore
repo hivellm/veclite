@@ -1,0 +1,5 @@
+# Benchmark result JSONs are machine-specific; the published numbers live in
+# docs/src/reference/benchmarks.md. Keep one representative result committed for
+# provenance; ignore the rest.
+results/*.json
+!results/reference.json

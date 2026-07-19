@@ -1,0 +1,14 @@
+# Pinned peer stores for the reproducible benchmark (SPEC-015 TST-042).
+# VecLite itself is measured via its installed wheel (hivellm-veclite); these
+# are the embedded peers it is compared against. Pin exact versions so a rerun
+# on equivalent hardware reproduces the recall exactly.
+#
+#   pip install -r bench/requirements.txt
+#
+# A peer that fails to install on a given platform is simply skipped by the
+# harness (reported, never fabricated) — install what your platform supports.
+
+sqlite-vec==0.1.6
+lancedb==0.26.0
+chromadb==1.4.1
+numpy==2.3.4

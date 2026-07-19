@@ -1,0 +1,26 @@
+# VecLite documentation site (SPEC-016 REL-040). Built with mdBook:
+#   mdbook build      # → docs/site/
+#   mdbook serve      # live preview
+# `cargo xtask docs` runs the six quickstarts, checks every relative link, and
+# builds this site. The source pages live in docs/src/; the normative specs and
+# planning docs (docs/specs/, docs/vectorizer-lite/) are linked, not duplicated.
+[book]
+title = "VecLite"
+description = "Embedded, single-file, in-process vector database — user documentation."
+authors = ["HiveLLM"]
+language = "en"
+src = "docs/src"
+
+[build]
+build-dir = "docs/site"
+create-missing = false
+
+[output.html]
+default-theme = "rust"
+preferred-dark-theme = "ayu"
+git-repository-url = "https://github.com/hivellm/veclite"
+edit-url-template = "https://github.com/hivellm/veclite/edit/main/{path}"
+
+[output.html.fold]
+enable = true
+level = 1

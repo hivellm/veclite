@@ -46,8 +46,8 @@ Requirement IDs `REL-xxx`.
 
 ## 5. Documentation deliverables (T6.3)
 
-- **REL-040** Docs site with: quickstarts for all 5 languages + Rust (**each CI-executed** — PRD §9.8), API reference per language, storage-format document (frozen SPEC-002), migration guides both directions (graduation + reverse), benchmark report (TST-042), sizing/limits page, WASM sizing guidance (WASM-012).
-- **REL-041** Every code sample in the docs is extracted and run in CI (doctest or sample-runner) — stale samples fail the build.
+- **REL-040** Docs site with: quickstarts for all 5 languages + Rust (**each CI-executed** — PRD §9.8), API reference per language, storage-format document (frozen SPEC-002), migration guides both directions (graduation + reverse), benchmark report (TST-042), sizing/limits page, WASM sizing guidance (WASM-012). — Implemented (phase6b): mdBook site at `book.toml` + `docs/src/` (quickstarts ×6 including WASM, guides ×3, reference: limits / storage-format / versioning / benchmarks, specs index); the normative specs and planning docs are linked, not duplicated.
+- **REL-041** Every code sample in the docs is extracted and run in CI (doctest or sample-runner) — stale samples fail the build. — Implemented via `cargo xtask docs`: each quickstart page `{{#include}}`s a real runnable file (`crates/veclite/examples/quickstart.rs`, `examples/quickstart.{py,mjs}`, `bindings/go/examples/quickstart/main.go`, `bindings/csharp/Quickstart/Program.cs`, `crates/veclite-wasm/examples/quickstart.mjs`), the runner executes each (probing the toolchain, skipping — never silently passing — when it is absent), plus a relative-link checker over all docs and an `mdbook build`. Local-first (Actions are off): the full six-language matrix runs where the packages are installed; a machine runs what it has.
 
 ## 6. Release checklist (1.0.0 — mirrors PRD §9)
 

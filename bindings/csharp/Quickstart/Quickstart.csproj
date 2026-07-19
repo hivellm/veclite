@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- VecLite C# quickstart (SPEC-011). The executed docs sample: `cargo xtask
+       docs` runs it and docs/src/quickstart/csharp.md includes it verbatim, so
+       it cannot go stale (REL-041). -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../VecLite/VecLite.csproj" />
+  </ItemGroup>
+
+  <!-- Copy the bundled native library next to the example output. -->
+  <ItemGroup>
+    <None Include="../VecLite/runtimes/**/*" CopyToOutputDirectory="PreserveNewest" LinkBase="runtimes" />
+  </ItemGroup>
+
+</Project>

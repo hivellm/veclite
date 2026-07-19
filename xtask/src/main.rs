@@ -12,6 +12,7 @@
 mod api_freeze;
 mod conformance;
 mod coverage;
+mod docs;
 mod fuzz;
 mod graduation;
 mod sanitize;
@@ -85,9 +86,10 @@ fn main() {
         "fuzz" => fuzz::run_fuzz(&args[2..]),
         "soak" => soak::run(&args[2..]),
         "sanitize" => sanitize::run(&args[2..]),
+        "docs" => docs::run(&args[2..]),
         _ => {
             eprintln!(
-                "usage: cargo xtask <crash [in_process_iters] [kill_iters] | conformance [--bless] [corpus_dir] | coverage | api-freeze [--bless] | graduation [--bless] [--skip-server] [--vectorizer <path>] | fuzz-seed | fuzz [--seconds N] [--target <name>] | soak [--minutes N] [--mmap-pressure] [--budget-mb M] [--live-cap N] [--maintain-secs S] | sanitize <asan|tsan> [--filter <substr>] [--native]>"
+                "usage: cargo xtask <crash [in_process_iters] [kill_iters] | conformance [--bless] [corpus_dir] | coverage | api-freeze [--bless] | graduation [--bless] [--skip-server] [--vectorizer <path>] | fuzz-seed | fuzz [--seconds N] [--target <name>] | soak [--minutes N] [--mmap-pressure] [--budget-mb M] [--live-cap N] [--maintain-secs S] | sanitize <asan|tsan> [--filter <substr>] [--native] | docs [--quickstarts] [--links] [--build]>"
             );
             2
         }

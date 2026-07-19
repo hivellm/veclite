@@ -1,0 +1,51 @@
+{
+  "config": {
+    "vectors": 20000,
+    "queries": 200,
+    "dim": 256,
+    "k": 10,
+    "metric": "cosine",
+    "clusters": 64
+  },
+  "hardware": {
+    "cpu": "AMD64 Family 25 Model 97 Stepping 2, AuthenticAMD",
+    "python": "3.13.9",
+    "os": "Windows 10",
+    "machine": "AMD64"
+  },
+  "results": [
+    {
+      "store": "veclite",
+      "build_s": 16.9175,
+      "query_p50_ms": 0.5513,
+      "query_p95_ms": 0.8009,
+      "recall_at_k": 0.9875,
+      "queries_per_s": 1737.1
+    },
+    {
+      "store": "sqlite-vec",
+      "build_s": 0.1627,
+      "query_p50_ms": 6.7225,
+      "query_p95_ms": 7.997,
+      "recall_at_k": 1.0,
+      "queries_per_s": 147.0
+    },
+    {
+      "store": "lancedb",
+      "build_s": 0.5004,
+      "query_p50_ms": 35.7562,
+      "query_p95_ms": 42.5824,
+      "recall_at_k": 1.0,
+      "queries_per_s": 27.6
+    },
+    {
+      "store": "chroma",
+      "build_s": 2.3849,
+      "query_p50_ms": 0.7393,
+      "query_p95_ms": 1.0316,
+      "recall_at_k": 1.0,
+      "queries_per_s": 1129.1
+    }
+  ],
+  "skipped": []
+}
