@@ -290,6 +290,9 @@ jobs:
     needs: [ gate ]
     runs-on: ubuntu-latest
     environment: release
+    permissions:
+      id-token: write
+      contents: read
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -300,16 +303,14 @@ jobs:
         with:
           name: sdist
           path: dist
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.x'
-      - run: pip install twine
+      # Trusted publishing (no PYPI_TOKEN): the action reads the runner's OIDC
+      # identity and exchanges it for a short-lived upload token. `hivellm-veclite`
+      # has this repo + workflow + the `release` environment registered as its
+      # Trusted Publisher on PyPI; TestPyPI needs its own registration.
       - name: Upload to PyPI / TestPyPI
-        env:
-          TWINE_USERNAME: __token__
-          TWINE_PASSWORD: ${{ env.TARGET == 'prod' && secrets.PYPI_TOKEN || secrets.TEST_PYPI_TOKEN }}
-          TWINE_REPOSITORY_URL: ${{ env.TARGET == 'prod' && 'https://upload.pypi.org/legacy/' || 'https://test.pypi.org/legacy/' }}
-        run: twine upload --non-interactive dist/*
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: ${{ env.TARGET == 'prod' && 'https://upload.pypi.org/legacy/' || 'https://test.pypi.org/legacy/' }}
 
   # ── Publish: npm (dist-tag `next` on a dry run, `latest` on a tag) ─────────
   publish-npm:
@@ -357,12 +358,23 @@ jobs:
     if: github.event_name == 'push'
     needs: [ gate ]
     runs-on: ubuntu-latest
+    environment: release
+    # Trusted publishing (no CRATES_TOKEN): the auth action trades the runner's
+    # OIDC identity for a 30-minute crates.io token and revokes it in its post
+    # step. Each of the three crates must list this repo + workflow as a Trusted
+    # Publisher under its crates.io settings.
+    permissions:
+      id-token: write
+      contents: read
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
+      - name: Exchange OIDC for a short-lived crates.io token
+        id: auth
+        uses: rust-lang/crates-io-auth-action@v1
       - name: Publish hivellm-veclite, -ffi, -cli
         env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
         # Dependency order: both siblings depend on the core crate, and
         # crates.io must have indexed it before they can resolve. `--wait` (the
         # default since 1.73) blocks until the index is live, so no manual sleep.
@@ -370,6 +382,84 @@ jobs:
           cargo publish -p hivellm-veclite
           cargo publish -p hivellm-veclite-ffi
           cargo publish -p hivellm-veclite-cli
+
+  # ── Publish: NuGet (the .NET binding over the C ABI, SPEC-011) ─────────────
+  publish-nuget:
+    name: Publish NuGet (${{ needs.gate.result }})
+    needs: [ gate ]
+    runs-on: ubuntu-latest
+    environment: release
+    # Trusted publishing (no NUGET_API_KEY): NuGet/login exchanges the runner's
+    # OIDC identity for a short-lived, single-use API key. `VecLite` must have
+    # this repo + workflow registered as a trusted publishing policy on
+    # nuget.org.
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: 'ffi-libs-*'
+          path: ffi
+          merge-multiple: true
+      # The package is a managed assembly plus one native library per RID; the
+      # csproj packs whatever is under runtimes/, so the Rust target triples
+      # have to be remapped to .NET RIDs first.
+      - name: Lay the native libraries out under runtimes/<rid>/native
+        shell: bash
+        run: |
+          set -euo pipefail
+          declare -A RIDS=(
+            [x86_64-unknown-linux-gnu]=linux-x64
+            [aarch64-unknown-linux-gnu]=linux-arm64
+            [x86_64-unknown-linux-musl]=linux-musl-x64
+            [aarch64-unknown-linux-musl]=linux-musl-arm64
+            [x86_64-apple-darwin]=osx-x64
+            [aarch64-apple-darwin]=osx-arm64
+            [x86_64-pc-windows-msvc]=win-x64
+            [aarch64-pc-windows-msvc]=win-arm64
+          )
+          root=bindings/csharp/VecLite/runtimes
+          tmp=$(mktemp -d)
+          for tgz in ffi/veclite-ffi-*.tar.gz; do
+            target=$(basename "$tgz" .tar.gz); target=${target#veclite-ffi-}
+            rid=${RIDS[$target]:-}
+            if [[ -z "$rid" ]]; then echo "::error::no RID mapped for $target"; exit 1; fi
+
+            # The bundles carry the raw C ABI names (veclite.dll / libveclite.*)
+            # used by the Go and C consumers, but Native.cs resolves
+            # `veclite_ffi` — copy under the name the .NET resolver looks for,
+            # or every P/Invoke fails to bind at runtime.
+            case "$rid" in
+              win-*)   src=veclite.dll;        dst=veclite_ffi.dll ;;
+              osx-*)   src=libveclite.dylib;   dst=libveclite_ffi.dylib ;;
+              *)       src=libveclite.so;      dst=libveclite_ffi.so ;;
+            esac
+
+            work="$tmp/$target"; mkdir -p "$work"
+            tar -xzf "$tgz" -C "$work" --strip-components=1
+            if [[ ! -f "$work/$src" ]]; then
+              echo "::error::$tgz has no $src (contents: $(ls "$work"))"; exit 1
+            fi
+            dest="$root/$rid/native"; mkdir -p "$dest"
+            cp "$work/$src" "$dest/$dst"
+            echo "$rid <- $target: $src -> $dst"
+          done
+      - name: Pack
+        run: dotnet pack bindings/csharp/VecLite/VecLite.csproj -c Release -o nupkg
+      - name: Exchange OIDC for a short-lived NuGet key
+        uses: NuGet/login@v1
+        id: login
+        with:
+          user: ${{ vars.NUGET_USER }}
+      # `--skip-duplicate` keeps a re-run from failing on an already-pushed
+      # version; nuget.org rejects overwrites regardless.
+      - name: Push
+        run: dotnet nuget push nupkg/*.nupkg --api-key ${{ steps.login.outputs.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json --skip-duplicate
 
   # ── Publish: raw C ABI libraries → GitHub release (SPEC-008 FFI-030) ────────
   publish-ffi-release:

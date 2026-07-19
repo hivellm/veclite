@@ -11,11 +11,20 @@
 
     <!-- NuGet packaging (CS-001): ship native assets under runtimes/<rid>/native. -->
     <PackageId>VecLite</PackageId>
-    <Version>0.1.0</Version>
+    <Version>0.1.1</Version>
     <Description>Embedded, single-file, in-process vector database (.NET binding over the C ABI).</Description>
     <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
     <IncludeBuildOutput>true</IncludeBuildOutput>
+    <PackageTags>vector-database;embeddings;search;embedded;hnsw</PackageTags>
+    <PackageProjectUrl>https://github.com/hivellm/veclite</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/hivellm/veclite</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="../README.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
 
   <!-- Bundle every prebuilt native library into the package's runtimes tree and,
        for the local build, copy the current platform's library next to the
