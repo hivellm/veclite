@@ -73,15 +73,25 @@ explicit `vacuum`, which an operator has no reason to suspect is needed.
 
 ## What Changes
 
-1. A collection that has not been mutated since it was last sealed reuses its
-   committed segments on checkpoint, regardless of tier — not only when an mmap
-   `base` is present. That means tracking "clean since last seal" independently
-   of the mmap base, and clearing it when a checkpoint installs the sealed state.
-2. Loading a collection's points into memory must not by itself mark it dirty:
-   the state on disk and the state in memory are identical at that moment.
-3. A regression test that asserts the file size is unchanged across repeated
-   no-op checkpoints and open/close cycles — the property that was never
-   asserted, which is why this went unnoticed.
+Full trace and the specified mechanism live in
+[`docs/analysis/checkpoint-segment-reuse/`](../../../docs/analysis/checkpoint-segment-reuse/)
+— 01 is the root-cause walk, 02 the proposed fix and its failure modes. In short:
+
+Both moments where a collection is provably in sync with the file already know
+its committed segment refs, and neither records them. On load, the TOC entry's
+`live_segments` **are** those refs. On commit, `pager.checkpoint` already builds
+them while writing, to construct the TOC entry. The fix records them at both
+points as a `sealed: Option<SealedRefs>` on the collection, clears `dirty` there,
+and lets `clean_reuse` fall back to `sealed` when no mmap `base` is present.
+
+`apply_upsert` deliberately keeps setting `dirty = true` — a write does dirty the
+collection. The defect is that a load claims to be a write and that a commit
+never un-dirties.
+
+The sharp edge is that reused refs are only valid within the same file, so
+`sealed` must be dropped wherever `base` is dropped today (vacuum's rebase).
+Missing that points a new TOC at pre-vacuum offsets: silent corruption, and the
+worst outcome this change can produce.
 
 ## Impact
 
