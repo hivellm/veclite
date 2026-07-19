@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Draft — resolves PRD OQ-4: the CLI is a **separate `veclite-cli` crate** in the workspace, installing a binary named `veclite` (keeps the library dependency tree clean; the CLI enables `vecdb-interop`) |
+| **Status** | Implemented (phase5d) — resolves PRD OQ-4: the CLI is a **separate `veclite-cli` crate** in the workspace, installing a binary named `veclite` (keeps the library dependency tree clean; the CLI enables `vecdb-interop`). `--help` output is snapshot-tested (`crates/veclite-cli/tests/snapshots/`) |
 | **Phase / tasks** | Phase 5 · T5.5 ([DAG](../DAG.md)) |
 | **PRD requirements** | FR-71 |
 | **Planning source** | [07-vectorizer-compatibility.md §graduation](../vectorizer-lite/07-vectorizer-compatibility.md) |

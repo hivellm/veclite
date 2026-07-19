@@ -51,6 +51,10 @@ No server. No ports. No configuration. One file.
 - **Operational surface** — cursor-based `scroll`, parallel `search_batch`, `stats()`.
 - **Portable image codec** — a `.veclite` v1 file assembled in / parsed from bytes with no filesystem: the WASM persistence path, byte-compatible with native files by construction.
 
+### Interop & Tooling
+- **`.vecdb` interop** (`vecdb-interop` feature) — the graduation path ([SPEC-013](docs/specs/SPEC-013-vecdb-interop.md)): export to the Vectorizer server's Compact layout (accepted by the server's own reader, vocabulary and scoring intact), and import both server layouts (Compact + Legacy) with an explicit degradation matrix — warnings, never silent; encrypted payloads refused; server-only providers fall back to BYO-vector with the origin recorded. Gate: top-10 overlap ≥ 0.99 and BM25 parity within 1e-5, automated by `cargo xtask graduation` against the pinned server's code (shared conformance corpus in both repos).
+- **`veclite` CLI** (`veclite-cli` crate) — `inspect` / `export` / `import` / `vacuum` / `snapshot` / `verify` with stable exit codes (0 success · 1 integrity · 2 usage · 3 environment), `--json` on inspect, no network ([SPEC-014](docs/specs/SPEC-014-cli.md)). `verify` runs a full read-only integrity pass naming each damaged segment by offset and type.
+
 ### Bindings
 - **C ABI** (`veclite-ffi`) — panic-safe, cbindgen-generated header with a committed golden-file drift test ([SPEC-008](docs/specs/SPEC-008-ffi-c-abi.md)).
 - **Python** (`veclite-py`) — PyO3 with NumPy zero-copy and GIL release, `pip install`-able abi3 wheels ([SPEC-009](docs/specs/SPEC-009-binding-python.md)).
@@ -71,7 +75,7 @@ Pre-1.0, built phase by phase against a normative spec set. Format v1 is **froze
 | 5a | Go & C# bindings over the C ABI | ✅ Complete |
 | 5b | WASM package + portable `.veclite` image codec | ✅ Complete |
 | 5c | Opt-in ONNX dense embeddings (fastembed) | ✅ Complete |
-| 5d | `.vecdb` interop + `veclite` CLI | 🚧 In progress |
+| 5d | `.vecdb` interop + `veclite` CLI | ✅ Complete |
 | 6 | Fuzz/soak hardening · docs & benchmark report · release 1.0 | Planned |
 
 Scoped forward per the [DAG](docs/DAG.md): SIMD ISA backends (scalar oracle ships now) and `DotProduct` HNSW (served by exact brute force — blocked by the pinned `anndists` dot-bound).
@@ -131,6 +135,7 @@ Same math, same defaults, same concepts — start embedded, graduate to the serv
 ```
 crates/
 ├── veclite/          # Engine: HNSW, .veclite format v1, WAL, filters, embeddings, hybrid
+├── veclite-cli/      # `veclite` binary: inspect/export/import/vacuum/snapshot/verify
 ├── veclite-ffi/      # Panic-safe C ABI (cbindgen header + golden-file drift test)
 ├── veclite-py/       # Python binding (PyO3, abi3 wheels, NumPy zero-copy) — maturin-built
 ├── veclite-node/     # Node.js binding (native addon + prebuilds)

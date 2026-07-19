@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Draft |
+| **Status** | Implemented (phase5d) — `veclite::interop` behind the `vecdb-interop` feature; graduation gate automated by `cargo xtask graduation` (shared corpus `tests/compat/vecdb/`, mirrored as `crates/vectorizer/tests/compat/veclite/` in the server repo) |
 | **Phase / tasks** | Phase 5 · T5.5, T5.6 ([DAG](../DAG.md)) |
 | **PRD requirements** | FR-70, FR-72, FR-73; NFR-04 |
 | **Planning source** | [07-vectorizer-compatibility.md](../vectorizer-lite/07-vectorizer-compatibility.md) |
