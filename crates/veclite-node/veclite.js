@@ -116,16 +116,31 @@ native.Database.prototype.close = function close(...args) {
 const openWrapped = wrap(native.open);
 const openSyncWrapped = wrap(native.openSync);
 
+async function open(path, ...rest) {
+  return track(await openWrapped(path, ...rest), path);
+}
+function openSync(path, ...rest) {
+  return track(openSyncWrapped(path, ...rest), path);
+}
+
+// Destructured into local bindings before the export literal, rather than
+// exported as `native.x`: Node's cjs-module-lexer only recognizes shorthand
+// identifiers as named ESM exports, so member expressions off a dynamically
+// required object would make `import { memory } from '@hivehub/veclite'` throw
+// "Named export not found" for everything but `open`/`openSync`.
+const {
+  memory, // infallible; in-memory, no external resource to leak
+  chunk, // infallible, pure (SPEC-005 §7)
+  Database,
+  Collection,
+} = native;
+
 module.exports = {
-  open: async function open(path, ...rest) {
-    return track(await openWrapped(path, ...rest), path);
-  },
-  openSync: function openSync(path, ...rest) {
-    return track(openSyncWrapped(path, ...rest), path);
-  },
-  memory: native.memory, // infallible; in-memory, no external resource to leak
-  chunk: native.chunk, // infallible, pure (SPEC-005 §7)
-  Database: native.Database,
-  Collection: native.Collection,
+  open,
+  openSync,
+  memory,
+  chunk,
+  Database,
+  Collection,
   VecLiteError,
 };
