@@ -3,7 +3,10 @@ requires = ["maturin>=1.7,<2.0"]
 build-backend = "maturin"
 
 [project]
-name = "veclite"
+# Distribution name is org-prefixed (plain `veclite` on PyPI is an unrelated
+# SQLite ORM). The import name stays `veclite` via `python-source` below, so
+# user code is unaffected: `pip install hivellm-veclite` → `import veclite`.
+name = "hivellm-veclite"
 description = "Embedded, single-file, in-process vector database."
 readme = "README.md"
 requires-python = ">=3.9"

@@ -11,8 +11,8 @@ use serde_json::Value;
 /// For the FFI crate the `veclite` dependency source is compiled in, so the
 /// gate checks the crate's *own* `lib.rs` rather than the mixed total.
 const GATES: &[(&str, Option<&str>, f64)] = &[
-    ("veclite", None, 93.0),
-    ("veclite-ffi", Some("veclite-ffi/src/lib.rs"), 95.0),
+    ("hivellm-veclite", None, 93.0),
+    ("hivellm-veclite-ffi", Some("veclite-ffi/src/lib.rs"), 95.0),
 ];
 
 pub fn run(_args: &[String]) -> i32 {

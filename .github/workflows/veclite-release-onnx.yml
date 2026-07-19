@@ -68,7 +68,7 @@ jobs:
         with:
           go-version: '1.23'
       - name: Build the ONNX-enabled C ABI library
-        run: cargo build -p veclite-ffi --release --features onnx
+        run: cargo build -p hivellm-veclite-ffi --release --features onnx
       - name: Package VecLite.Onnx (NuGet)
         # The .so goes under runtimes/<rid>/native of the VecLite.Onnx package,
         # which depends on `==` the base VecLite version (REL-021).

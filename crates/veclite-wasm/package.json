@@ -1,6 +1,9 @@
 {
-  "name": "@veclite/wasm",
+  "name": "@hivehub/veclite-wasm",
   "version": "0.1.0",
+  "publishConfig": {
+    "access": "public"
+  },
   "description": "WebAssembly build of VecLite — an embedded, single-file vector database for browsers, Deno, Bun, and edge runtimes. Client-side semantic search, offline, no server.",
   "type": "module",
   "main": "js/index.js",

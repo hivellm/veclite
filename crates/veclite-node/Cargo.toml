@@ -17,7 +17,7 @@ crate-type = ["cdylib"]
 onnx = ["veclite/onnx"]
 
 [dependencies]
-veclite = { path = "../veclite" }
+veclite = { package = "hivellm-veclite", path = "../veclite" }
 # napi-rs 2.x LTS: the native N-API bridge. `napi4` enables the threadsafe /
 # AsyncTask features used for the non-blocking async surface (NODE-011).
 napi = { version = "2", default-features = false, features = [

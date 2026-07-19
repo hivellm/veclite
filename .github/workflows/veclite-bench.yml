@@ -26,7 +26,7 @@ jobs:
           key: bench
 
       - name: Run benches (bencher format)
-        run: cargo bench -p veclite -- --output-format bencher | tee bench-output.txt
+        run: cargo bench -p hivellm-veclite -- --output-format bencher | tee bench-output.txt
 
       # Persist the previous run's numbers across CI runs so the fence has a
       # baseline to compare against.
@@ -59,4 +59,4 @@ jobs:
         with:
           key: bench-full
       - name: Run full benches
-        run: cargo bench -p veclite
+        run: cargo bench -p hivellm-veclite

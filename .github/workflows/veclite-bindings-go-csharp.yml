@@ -39,7 +39,7 @@ jobs:
           go-version: '1.23'
       - name: Build the static C ABI library and bundle it
         run: |
-          cargo build -p veclite-ffi --release
+          cargo build -p hivellm-veclite-ffi --release
           mkdir -p bindings/go/lib/linux_amd64
           cp target/release/libveclite_ffi.a bindings/go/lib/linux_amd64/
           cp crates/veclite-ffi/veclite.h bindings/go/internal/csrc/veclite.h
@@ -61,7 +61,7 @@ jobs:
           dotnet-version: '8.0.x'
       - name: Build the shared C ABI library and bundle it
         run: |
-          cargo build -p veclite-ffi --release
+          cargo build -p hivellm-veclite-ffi --release
           mkdir -p bindings/csharp/VecLite/runtimes/linux-x64/native
           cp target/release/libveclite_ffi.so bindings/csharp/VecLite/runtimes/linux-x64/native/
       - name: .NET tests

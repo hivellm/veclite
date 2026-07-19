@@ -1,5 +1,5 @@
 {
-  "name": "veclite-linux-x64-musl",
+  "name": "@hivehub/veclite-linux-x64-musl",
   "version": "0.1.0",
   "os": [
     "linux"

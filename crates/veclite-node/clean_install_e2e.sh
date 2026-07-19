@@ -42,7 +42,7 @@ npm init -y >/dev/null 2>&1
 npm install --no-audit --no-fund --silent "$out/$plat_tgz" "$out/$main_tgz"
 
 cat > quickstart.mjs <<'JS'
-import pkg from 'veclite';
+import pkg from '@hivehub/veclite';
 const { memory } = pkg;
 const db = memory();
 const c = await db.createCollection('docs', { dimension: 3, metric: 'euclidean', quantizationBits: 0 });

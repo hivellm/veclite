@@ -1,6 +1,9 @@
 {
-  "name": "veclite",
+  "name": "@hivehub/veclite",
   "version": "0.1.0",
+  "publishConfig": {
+    "access": "public"
+  },
   "description": "Embedded, single-file, in-process vector database (Node.js binding).",
   "keywords": ["vector-database", "embeddings", "search", "embedded", "hnsw"],
   "license": "Apache-2.0",
@@ -9,6 +12,9 @@
   "types": "veclite.d.ts",
   "napi": {
     "name": "veclite",
+    "package": {
+      "name": "@hivehub/veclite"
+    },
     "triples": {
       "defaults": true,
       "additional": [
@@ -20,12 +26,12 @@
   },
   "files": ["veclite.js", "veclite.d.ts", "index.js", "index.d.ts"],
   "optionalDependencies": {
-    "veclite-darwin-arm64": "0.1.0",
-    "veclite-darwin-x64": "0.1.0",
-    "veclite-linux-arm64-gnu": "0.1.0",
-    "veclite-linux-x64-gnu": "0.1.0",
-    "veclite-linux-x64-musl": "0.1.0",
-    "veclite-win32-x64-msvc": "0.1.0"
+    "@hivehub/veclite-darwin-arm64": "0.1.0",
+    "@hivehub/veclite-darwin-x64": "0.1.0",
+    "@hivehub/veclite-linux-arm64-gnu": "0.1.0",
+    "@hivehub/veclite-linux-x64-gnu": "0.1.0",
+    "@hivehub/veclite-linux-x64-musl": "0.1.0",
+    "@hivehub/veclite-win32-x64-msvc": "0.1.0"
   },
   "engines": {
     "node": ">= 18"

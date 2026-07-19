@@ -26,9 +26,9 @@ jobs:
           key: wasm32
 
       - name: Build for wasm32
-        # `-p veclite`, not `--workspace`: xtask is a native dev tool and does
+        # `-p hivellm-veclite`, not `--workspace`: xtask is a native dev tool and does
         # not build for wasm32 (SPEC-002/CORE-004 apply to the library only).
-        run: cargo build -p veclite --target wasm32-unknown-unknown
+        run: cargo build -p hivellm-veclite --target wasm32-unknown-unknown
 
   dependency-deny-list:
     name: No network crates in default build (NFR-08)
@@ -45,7 +45,7 @@ jobs:
           # Network crates AND the opt-in ONNX tier (EMB-040): the base build
           # must pull neither (NFR-08, REL-021). The `onnx` feature is off here.
           DENY='tokio|hyper|reqwest|axum|tonic|rustls|native-tls|openssl|ureq|curl|fastembed|ort|ort-sys|onnxruntime|hf-hub'
-          TREE=$(cargo tree -p veclite -e normal --prefix none | awk '{print $1}' | sort -u)
+          TREE=$(cargo tree -p hivellm-veclite -e normal --prefix none | awk '{print $1}' | sort -u)
           echo "$TREE"
           if echo "$TREE" | grep -Ex "($DENY)" ; then
             echo "::error::Network crate found in the default build (NFR-08)"

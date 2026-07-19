@@ -84,4 +84,4 @@ jobs:
       # deserialize code the wasm binding compiles is exercised against the file
       # pager (a zero-uuid image opens; a native file's bytes deserialize).
       - name: Native image-codec tests
-        run: cargo test -p veclite --test image_interchange storage::image
+        run: cargo test -p hivellm-veclite --test image_interchange storage::image

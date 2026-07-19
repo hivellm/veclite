@@ -1,5 +1,5 @@
 [package]
-name = "veclite-ffi"
+name = "hivellm-veclite-ffi"
 description = "C ABI for VecLite (SPEC-008)."
 version.workspace = true
 edition.workspace = true
@@ -21,7 +21,7 @@ crate-type = ["cdylib", "staticlib", "lib"]
 onnx = ["veclite/onnx"]
 
 [dependencies]
-veclite = { path = "../veclite" }
+veclite = { workspace = true }
 serde = { workspace = true }
 serde_json.workspace = true
 rmp-serde.workspace = true

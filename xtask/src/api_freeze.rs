@@ -84,7 +84,7 @@ use GenErr::{Fail, Skip};
 
 fn generate() -> Result<String, GenErr> {
     let output = Command::new("cargo")
-        .args(["public-api", "-p", "veclite", "--simplified"])
+        .args(["public-api", "-p", "hivellm-veclite", "--simplified"])
         .output()
         .map_err(|e| Skip(format!("could not launch cargo public-api: {e}")))?;
 

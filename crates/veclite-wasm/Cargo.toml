@@ -16,7 +16,7 @@ crate-type = ["cdylib"]
 # in-memory engine (collection registry, CRUD, brute-force search, quantization,
 # scalar-oracle SIMD kernels autovectorized to simd128) plus the portable
 # `.veclite` v1 image codec (WASM-010). No file storage, no ONNX (WASM-001).
-veclite = { path = "../veclite" }
+veclite = { package = "hivellm-veclite", path = "../veclite" }
 wasm-bindgen = "0.2.100"
 # Float32Array / Uint8Array views for zero-ish-copy vector and image interop.
 js-sys = "0.3"

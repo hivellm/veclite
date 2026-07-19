@@ -71,4 +71,4 @@ jobs:
         with:
           key: golden
       - name: Golden files still open and return recorded results
-        run: cargo test -p veclite --test golden golden_v1_opens_and_returns_recorded_results
+        run: cargo test -p hivellm-veclite --test golden golden_v1_opens_and_returns_recorded_results

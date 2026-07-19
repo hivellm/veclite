@@ -432,6 +432,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc0fef456e4baa96da950455cd02c081ca953b141298e41db3fc7e36b1da849c"
 
 [[package]]
+name = "hivellm-veclite"
+version = "0.1.0"
+dependencies = [
+ "crc32fast",
+ "dashmap",
+ "fs4",
+ "hnsw_rs",
+ "lz4_flex",
+ "memmap2",
+ "parking_lot",
+ "rayon",
+ "rmp-serde",
+ "roaring",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "uuid",
+ "xxhash-rust",
+ "zstd",
+]
+
+[[package]]
 name = "hnsw_rs"
 version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1056,36 +1078,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "veclite"
-version = "0.1.0"
-dependencies = [
- "crc32fast",
- "dashmap",
- "fs4",
- "hnsw_rs",
- "lz4_flex",
- "memmap2",
- "parking_lot",
- "rayon",
- "rmp-serde",
- "roaring",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "uuid",
- "xxhash-rust",
- "zstd",
-]
-
-[[package]]
 name = "veclite-wasm"
 version = "0.1.0"
 dependencies = [
+ "hivellm-veclite",
  "js-sys",
  "serde",
  "serde-wasm-bindgen",
  "serde_json",
- "veclite",
  "wasm-bindgen",
 ]
 
