@@ -32,7 +32,11 @@ jobs:
     name: Go binding (linux-x64)
     runs-on: ubuntu-latest
     steps:
+      # `bindings/go` is a submodule (github.com/hivellm/veclite-go); without
+      # this the directory checks out empty and every step below no-ops or fails.
       - uses: actions/checkout@v5
+        with:
+          submodules: true
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-go@v5
         with:

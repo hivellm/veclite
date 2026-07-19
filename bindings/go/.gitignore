@@ -1,6 +1,0 @@
-# Bundled native libraries are release artifacts populated by CI, not committed.
-lib/*/*.a
-lib/*/*.so
-lib/*/*.dylib
-lib/*/*.dll
-lib/*/*.lib

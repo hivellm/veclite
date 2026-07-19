@@ -59,7 +59,10 @@ jobs:
     name: onnx C ABI lib (linux-x64)
     runs-on: ubuntu-latest
     steps:
+      # `bindings/go` is a submodule (github.com/hivellm/veclite-go).
       - uses: actions/checkout@v5
+        with:
+          submodules: true
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-dotnet@v4
         with:
