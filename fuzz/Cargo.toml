@@ -1,0 +1,73 @@
+# cargo-fuzz targets (SPEC-015 TST-050): every untrusted-input parser —
+# header, TOC, segment framing, WAL replay, filter documents, MessagePack
+# options decoding, and the whole-image open path. Self-contained workspace:
+# libFuzzer profiles must not leak into the main build.
+#
+# Run (nightly): cargo +nightly fuzz run <target> -- -max_total_time=<secs>
+# Orchestrated:  cargo xtask fuzz [--seconds N] (all targets, accumulation log)
+
+[package]
+name = "veclite-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+# Dependency key stays `veclite` (the lib name every target imports); the
+# registry package is org-prefixed.
+veclite = { package = "hivellm-veclite", path = "../crates/veclite", features = ["fuzzing"] }
+
+[[bin]]
+name = "header"
+path = "fuzz_targets/header.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "toc"
+path = "fuzz_targets/toc.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "segment"
+path = "fuzz_targets/segment.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "config"
+path = "fuzz_targets/config.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "filter"
+path = "fuzz_targets/filter.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "wal"
+path = "fuzz_targets/wal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "image"
+path = "fuzz_targets/image.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]

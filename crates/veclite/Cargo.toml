@@ -1,5 +1,9 @@
 [package]
-name = "veclite"
+# Registry name is org-prefixed: plain `veclite` is taken on crates.io (an
+# unrelated Vec<T> wrapper), and `veclite-db`/`veclite-core` belong to a
+# different, actively-published vector DB. The `[lib]` name below stays
+# `veclite`, so the brand and every `use veclite::...` are unaffected.
+name = "hivellm-veclite"
 description = "Embedded, single-file, in-process vector database."
 version.workspace = true
 edition.workspace = true
@@ -8,6 +12,11 @@ license.workspace = true
 repository.workspace = true
 keywords = ["vector-database", "embeddings", "search", "embedded", "hnsw"]
 categories = ["database", "data-structures"]
+
+[lib]
+# Decoupled from the org-prefixed package name: consumers keep writing
+# `use veclite::...` and the wasm/FFI artifact names stay stable.
+name = "veclite"
 
 [features]
 default = ["simd"]
@@ -33,6 +42,11 @@ onnx = ["dep:fastembed"]
 # CLI (SPEC-014). Native-only (the archive is filesystem I/O); off by default so
 # the library dependency tree stays lean — the CLI crate turns it on.
 vecdb-interop = ["dep:zip", "dep:flate2", "dep:sha2"]
+# Fuzzing surface (SPEC-015 TST-050): exposes `fuzz_api` — thin, doc-hidden
+# wrappers over the untrusted-input parsers (header/TOC/segment/WAL/filter/
+# options/image) shared by the cargo-fuzz targets in `fuzz/` and the stable
+# corpus-regression test. Never enabled in normal builds.
+fuzzing = []
 
 [dependencies]
 thiserror.workspace = true
@@ -74,6 +88,18 @@ sha2 = { workspace = true, optional = true }
 [dev-dependencies]
 proptest.workspace = true
 criterion = { workspace = true }
+# Targeted concurrency models for the checkpoint/reader TOC-swap protocol
+# (SPEC-001 CORE-054 / SPEC-015 TST-052). Test-only; the models run under
+# `cargo test --test loom_toc_swap` with RUSTFLAGS="--cfg loom" untouched —
+# loom's permutation runner needs no special build flags for these models.
+loom = "0.7"
+
+# The committed fuzz corpus replayed on stable in the normal gate (TST-050):
+# every corpus + regression input runs through the same wrappers the
+# cargo-fuzz targets use.
+[[test]]
+name = "fuzz_regression"
+required-features = ["fuzzing"]
 
 [[bench]]
 name = "veclite_bench"

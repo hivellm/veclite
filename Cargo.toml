@@ -2,8 +2,10 @@
 resolver = "2"
 members = ["crates/veclite", "crates/veclite-cli", "crates/veclite-ffi", "xtask"]
 # The Python binding links libpython (PyO3) and is built by maturin, not by the
-# workspace `--workspace` jobs; exclude it so those stay pure-Rust.
-exclude = ["crates/veclite-py", "crates/veclite-node", "crates/veclite-wasm"]
+# workspace `--workspace` jobs; exclude it so those stay pure-Rust. The fuzz
+# crate is its own workspace (cargo-fuzz profiles must not leak into the main
+# build; it needs nightly + libFuzzer).
+exclude = ["crates/veclite-py", "crates/veclite-node", "crates/veclite-wasm", "fuzz"]
 # Default commands (build/test/clippy without -p) target the library only; xtask
 # is a native dev tool (it uses std::process and cannot build for wasm32), so it
 # is opted out of the default set and the wasm CI job builds `-p veclite`.
@@ -20,6 +22,11 @@ license = "Apache-2.0"
 repository = "https://github.com/hivellm/veclite"
 
 [workspace.dependencies]
+# Internal: crates.io refuses a path dependency with no version requirement, so
+# the sibling crates (`veclite-cli`, `veclite-ffi`) must carry one to be
+# publishable. Declared once here and kept in lockstep with
+# `workspace.package.version` on every release bump.
+veclite = { package = "hivellm-veclite", path = "crates/veclite", version = "0.1.0" }
 thiserror = "2.0"
 dashmap = "6.1"
 parking_lot = "0.12"

@@ -1,0 +1,11 @@
+target/
+artifacts/
+coverage/
+repro.sh
+Cargo.lock
+
+# Coverage corpus grows unboundedly during fuzzing and is regenerable by
+# re-running (`cargo xtask fuzz`). Only the deterministic seeds (seed-*, from
+# `cargo xtask fuzz-seed`) and the regression reproducers are committed.
+corpus/*/*
+!corpus/*/seed-*

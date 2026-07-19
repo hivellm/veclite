@@ -1,0 +1,1 @@
+{"should":[{"key":"n","range":{"gte":1,"lt":10}}],"must_not":[{"key":"tag","match":{"any":["a","b"]}}]}

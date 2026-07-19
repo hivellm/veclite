@@ -78,6 +78,12 @@ pub(crate) mod storage;
 // they drive the HNSW index via the crate-internal `search_internal`.
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod recall;
+// Fuzzing surface (SPEC-015 TST-050): thin wrappers over every untrusted-input
+// parser, shared by the cargo-fuzz targets (`fuzz/`) and the stable
+// corpus-regression test. Opt-in feature, doc-hidden — not API.
+#[cfg(feature = "fuzzing")]
+#[doc(hidden)]
+pub mod fuzz_api;
 
 pub use collection::{Collection, CollectionStats, ScrollPage};
 pub use database::VecLite;

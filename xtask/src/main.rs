@@ -12,7 +12,10 @@
 mod api_freeze;
 mod conformance;
 mod coverage;
+mod fuzz;
 mod graduation;
+mod sanitize;
+mod soak;
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -78,9 +81,13 @@ fn main() {
         "coverage" => coverage::run(&args[2..]),
         "api-freeze" => api_freeze::run(&args[2..]),
         "graduation" => graduation::run(&args[2..]),
+        "fuzz-seed" => fuzz::run_seed(&args[2..]),
+        "fuzz" => fuzz::run_fuzz(&args[2..]),
+        "soak" => soak::run(&args[2..]),
+        "sanitize" => sanitize::run(&args[2..]),
         _ => {
             eprintln!(
-                "usage: cargo xtask <crash [in_process_iters] [kill_iters] | conformance [--bless] [corpus_dir] | coverage | api-freeze [--bless] | graduation [--bless] [--skip-server] [--vectorizer <path>]>"
+                "usage: cargo xtask <crash [in_process_iters] [kill_iters] | conformance [--bless] [corpus_dir] | coverage | api-freeze [--bless] | graduation [--bless] [--skip-server] [--vectorizer <path>] | fuzz-seed | fuzz [--seconds N] [--target <name>] | soak [--minutes N] [--mmap-pressure] [--budget-mb M] [--live-cap N] [--maintain-secs S] | sanitize <asan|tsan> [--filter <substr>] [--native]>"
             );
             2
         }
@@ -99,7 +106,7 @@ fn cmd_crash(args: &[String]) -> i32 {
         .args([
             "test",
             "-p",
-            "veclite",
+            "hivellm-veclite",
             "--release",
             "--test",
             "crash_safety",
