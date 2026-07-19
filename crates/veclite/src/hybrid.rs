@@ -124,6 +124,16 @@ impl<'a> HybridQuery<'a> {
         // dense/sparse live for this call and are passed by reference.
         if let Some(query) = self.text {
             let (dense, sparse) = self.collection.embed_for_hybrid(query)?;
+            // No term of the query is in the vocabulary, so both lanes are
+            // empty: "nothing matched", not a caller error. Returning here
+            // keeps the text entry points consistent with `search_text` and
+            // avoids surfacing the dense lane's cosine zero-vector guard, which
+            // exists for callers who chose the vector and the metric.
+            // Guarded on `limit > 0` so an invalid limit still reaches the
+            // argument checks instead of being masked by an empty result.
+            if self.limit > 0 && dense.iter().all(|v| *v == 0.0) && sparse.is_none() {
+                return Ok(Vec::new());
+            }
             return self.collection.execute_hybrid(
                 Some(&dense),
                 sparse.as_ref(),

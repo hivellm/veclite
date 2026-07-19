@@ -102,6 +102,7 @@ export interface JsStats {
   len: number
   tombstones: number
   autoEmbed: boolean
+  metric: string
 }
 /**
  * A VecLite database handle (SPEC-004 §1). `VecLite` is internally `Arc`, so

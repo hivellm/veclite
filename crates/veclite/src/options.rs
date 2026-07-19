@@ -165,6 +165,18 @@ impl CollectionOptions {
         opts
     }
 
+    /// Override the distance metric.
+    ///
+    /// Needed alongside [`CollectionOptions::auto_embed`], which picks
+    /// [`Metric::default`] because it takes no metric argument: without this,
+    /// an auto-embed collection could not be given a non-default metric at all,
+    /// and every binding silently dropped the caller's choice.
+    #[must_use]
+    pub fn metric(mut self, metric: Metric) -> Self {
+        self.metric = metric;
+        self
+    }
+
     /// Tune the HNSW parameters (`m`, `ef_construction`, default `ef_search`).
     pub fn hnsw(mut self, m: usize, ef_construction: usize, ef_search: usize) -> Self {
         self.hnsw = HnswOptions {

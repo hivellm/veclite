@@ -149,3 +149,36 @@ def test_chunk():
 def test_metadata():
     assert isinstance(veclite.__version__, str)
     assert veclite.format_version == 1
+
+
+def test_metric_survives_an_embedding_provider():
+    """An explicit metric used to be discarded whenever embedding_provider was
+    also given: the binding reached for CollectionOptions::auto_embed, which
+    takes no metric and falls back to the default, and the wrong metric was then
+    persisted silently."""
+    db = veclite.Database.memory()
+    plain = db.create_collection("plain", dimension=4, metric="euclidean")
+    auto = db.create_collection(
+        "auto", dimension=4, metric="euclidean", embedding_provider="bm25"
+    )
+    default = db.create_collection("default", dimension=4)
+
+    assert plain.stats()["metric"] == "euclidean"
+    assert auto.stats()["metric"] == "euclidean"
+    assert default.stats()["metric"] == "cosine"
+
+
+def test_search_text_with_unknown_terms_returns_no_hits():
+    """A query with no term in the vocabulary embeds to the zero vector. That is
+    an ordinary "nothing matched", not a caller error — it used to raise
+    InvalidArgument naming a metric and a vector the caller never supplied."""
+    db = veclite.Database.memory()
+    docs = db.create_collection("docs", dimension=64, embedding_provider="bm25")
+    docs.upsert_text("a", "the quick brown fox")
+
+    assert docs.search_text("zzzz qqqq nonexistentterm", limit=3) == []
+    # An in-vocabulary query still matches.
+    assert [h["id"] for h in docs.search_text("quick fox", limit=3)] == ["a"]
+    # An invalid limit is still rejected rather than masked by the empty result.
+    with pytest.raises(veclite.InvalidArgument):
+        docs.search_text("zzzz qqqq", limit=0)

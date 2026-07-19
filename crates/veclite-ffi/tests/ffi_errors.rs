@@ -794,3 +794,59 @@ fn search_batch_runs_every_query_and_rejects_null_vectors() {
         vl_db_close(db);
     }
 }
+
+/// An explicit metric used to be discarded whenever an embedding provider was
+/// also given, because the binding reached for `CollectionOptions::auto_embed`,
+/// which takes no metric and falls back to the default. The collection was then
+/// persisted with the wrong metric, silently.
+#[test]
+fn create_honours_the_metric_alongside_an_embedding_provider() {
+    unsafe {
+        let mut db: *mut vl_db = ptr::null_mut();
+        assert_eq!(vl_open_memory(&mut db), VL_OK);
+
+        for (name, opts, expected) in [
+            (
+                "plain",
+                br#"{"dimension":4,"metric":"euclidean"}"#.as_slice(),
+                "euclidean",
+            ),
+            (
+                "auto",
+                br#"{"dimension":4,"metric":"euclidean","embedding_provider":"bm25"}"#.as_slice(),
+                "euclidean",
+            ),
+            ("default", br#"{"dimension":4}"#.as_slice(), "cosine"),
+        ] {
+            let cname = cs(name);
+            let mut coll: *mut vl_collection = ptr::null_mut();
+            assert_eq!(
+                vl_collection_create(
+                    db,
+                    cname.as_ptr(),
+                    opts.as_ptr(),
+                    opts.len(),
+                    VL_CODEC_JSON,
+                    &mut coll
+                ),
+                VL_OK,
+                "last error: {}",
+                last_error()
+            );
+
+            let mut buf = empty_buf();
+            assert_eq!(vl_collection_stats(coll, VL_CODEC_JSON, &mut buf), VL_OK);
+            let json: serde_json::Value =
+                serde_json::from_slice(std::slice::from_raw_parts(buf.data, buf.len))
+                    .unwrap_or_else(|e| panic!("stats json: {e}"));
+            assert_eq!(
+                json["metric"], expected,
+                "collection {name} reported {:?}",
+                json["metric"]
+            );
+            vl_buf_free(&mut buf);
+            vl_collection_free(coll);
+        }
+        vl_db_close(db);
+    }
+}

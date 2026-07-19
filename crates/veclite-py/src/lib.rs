@@ -81,6 +81,16 @@ fn to_pyerr(e: veclite::VecLiteError) -> PyErr {
     err
 }
 
+/// Inverse of [`metric_from_str`], so `stats()` reports the metric using the
+/// same spelling `create_collection` accepts.
+fn metric_to_str(m: Metric) -> &'static str {
+    match m {
+        Metric::Cosine => "cosine",
+        Metric::Euclidean => "euclidean",
+        Metric::DotProduct => "dot",
+    }
+}
+
 fn metric_from_str(s: &str) -> PyResult<Metric> {
     match s {
         "cosine" => Ok(Metric::Cosine),
@@ -518,7 +528,7 @@ impl Collection {
         py.allow_threads(|| self.inner.refit()).map_err(to_pyerr)
     }
 
-    /// `{name, dimension, len, tombstones, auto_embed}`.
+    /// `{name, dimension, len, tombstones, auto_embed, metric}`.
     fn stats(&self, py: Python<'_>) -> PyResult<PyObject> {
         let s = self.inner.stats();
         let d = PyDict::new(py);
@@ -527,6 +537,7 @@ impl Collection {
         d.set_item("len", s.len)?;
         d.set_item("tombstones", s.tombstones)?;
         d.set_item("auto_embed", s.auto_embed)?;
+        d.set_item("metric", metric_to_str(s.metric))?;
         Ok(d.into())
     }
 }
@@ -592,9 +603,13 @@ impl Database {
         quantization_bits: Option<u8>,
         embedding_provider: Option<&str>,
     ) -> PyResult<Collection> {
+        // `auto_embed` takes no metric and falls back to `Metric::default()`,
+        // so it used to swallow an explicit `metric=` whenever a provider was
+        // also given. `.metric()` puts the caller's choice back.
+        let requested = metric_from_str(metric)?;
         let mut options = match embedding_provider {
-            Some(p) => CollectionOptions::auto_embed(p, dimension),
-            None => CollectionOptions::new(dimension, metric_from_str(metric)?),
+            Some(p) => CollectionOptions::auto_embed(p, dimension).metric(requested),
+            None => CollectionOptions::new(dimension, requested),
         };
         if let Some(bits) = quantization_bits {
             options = options.quantization(if bits == 0 {

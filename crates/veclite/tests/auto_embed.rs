@@ -166,3 +166,68 @@ fn refit_is_explicit_and_keeps_search_working() {
         .unwrap_or_else(|e| panic!("{e}"));
     assert_eq!(hits[0].id, "dogs");
 }
+
+/// A query whose terms are all absent from the vocabulary embeds to the zero
+/// vector. That is an ordinary search outcome — "nothing matched" — not a
+/// caller error, so the text path must report it as an empty result set rather
+/// than surfacing the cosine guard meant for explicit vector queries.
+#[test]
+fn search_text_with_no_known_terms_returns_no_hits() {
+    let db = VecLite::memory();
+    let c = db
+        .create_collection("docs", CollectionOptions::auto_embed("bm25", 512))
+        .unwrap_or_else(|e| panic!("{e}"));
+    seed(&c);
+
+    let hits = c
+        .search_text("zzzz qqqq nonexistentterm", 5)
+        .unwrap_or_else(|e| panic!("out-of-vocabulary query should not error: {e}"));
+    assert!(
+        hits.is_empty(),
+        "expected no hits for an out-of-vocabulary query, got {:?}",
+        ids(&hits)
+    );
+
+    // A query that does share a term still ranks normally.
+    let hits = c
+        .search_text("furry animals", 5)
+        .unwrap_or_else(|e| panic!("{e}"));
+    assert!(!hits.is_empty(), "in-vocabulary query should still match");
+}
+
+/// The zero-vector guard stays in force on the explicit vector path: there the
+/// caller chose both the vector and the metric, and cosine similarity is
+/// undefined for a zero vector.
+#[test]
+fn search_still_rejects_an_explicit_zero_vector_under_cosine() {
+    let db = VecLite::memory();
+    let c = db
+        .create_collection("v", CollectionOptions::new(3, Metric::Cosine))
+        .unwrap_or_else(|e| panic!("{e}"));
+    c.upsert(Point::new("a", vec![1.0, 0.0, 0.0]))
+        .unwrap_or_else(|e| panic!("{e}"));
+
+    match c.search(&[0.0, 0.0, 0.0], 1) {
+        Err(VecLiteError::InvalidArgument(_)) => {}
+        other => panic!("expected InvalidArgument for a zero vector, got {other:?}"),
+    }
+}
+
+/// The hybrid text lane embeds through the same provider, so an
+/// out-of-vocabulary query must degrade the same way rather than erroring.
+#[test]
+fn hybrid_text_with_no_known_terms_returns_no_hits() {
+    let db = VecLite::memory();
+    let c = db
+        .create_collection("docs", CollectionOptions::auto_embed("bm25", 512))
+        .unwrap_or_else(|e| panic!("{e}"));
+    seed(&c);
+
+    let hits = c
+        .hybrid_query()
+        .text("zzzz qqqq nonexistentterm")
+        .limit(5)
+        .run()
+        .unwrap_or_else(|e| panic!("out-of-vocabulary hybrid query should not error: {e}"));
+    assert!(hits.is_empty(), "expected no hits, got {:?}", ids(&hits));
+}

@@ -219,6 +219,16 @@ unsafe fn coll_ref<'a>(p: *const vl_collection) -> Result<&'a Collection> {
         .ok_or_else(|| invalid("null collection handle"))
 }
 
+/// Inverse of [`metric_from_str`], so the stats payloads report the metric with
+/// the same spelling the create options accept.
+fn metric_to_str(m: Metric) -> &'static str {
+    match m {
+        Metric::Cosine => "cosine",
+        Metric::Euclidean => "euclidean",
+        Metric::DotProduct => "dot",
+    }
+}
+
 fn metric_from_str(s: &str) -> Result<Metric> {
     match s {
         "" | "cosine" => Ok(Metric::Cosine),
@@ -354,8 +364,11 @@ pub unsafe extern "C" fn vl_collection_create(
         let co: CreateOpts =
             serde_json::from_value(value).map_err(|e| invalid(&format!("options: {e}")))?;
         let metric = metric_from_str(&co.metric)?;
+        // `auto_embed` takes no metric and falls back to `Metric::default()`,
+        // so it used to swallow an explicit `"metric"` in the create options
+        // whenever a provider was also given. `.metric()` puts it back.
         let mut options = match &co.embedding_provider {
-            Some(p) => CollectionOptions::auto_embed(p, co.dimension),
+            Some(p) => CollectionOptions::auto_embed(p, co.dimension).metric(metric),
             None => CollectionOptions::new(co.dimension, metric),
         };
         if let Some(bits) = co.quantization_bits {
@@ -489,6 +502,7 @@ pub unsafe extern "C" fn vl_collection_stats(
             "len": s.len,
             "tombstones": s.tombstones,
             "auto_embed": s.auto_embed,
+            "metric": metric_to_str(s.metric),
         });
         unsafe { *out = buf_from_vec(encode(&value, codec)?) };
         Ok(())
@@ -1400,6 +1414,7 @@ pub unsafe extern "C" fn vl_db_info(db: *mut vl_db, codec: u8, out: *mut vl_buf)
                 "len": s.len,
                 "tombstones": s.tombstones,
                 "auto_embed": s.auto_embed,
+                "metric": metric_to_str(s.metric),
                 "payload_indexes": indexes,
             }));
         }

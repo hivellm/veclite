@@ -257,3 +257,36 @@ test('chunk: pure UTF-8-safe splitting', () => {
   assert.ok(many.length >= 2);
   assert.ok(many.every((c) => c.start < c.end));
 });
+
+// An explicit metric used to be discarded whenever `autoEmbed` was also given:
+// the binding reached for CollectionOptions::auto_embed, which takes no metric
+// and falls back to the default, persisting the wrong metric silently.
+test('metric survives an autoEmbed collection', () => {
+  const db = memory();
+  const plain = db.createCollectionSync('plain', { dimension: 4, metric: 'euclidean' });
+  const auto = db.createCollectionSync('auto', {
+    dimension: 4,
+    metric: 'euclidean',
+    autoEmbed: 'bm25',
+  });
+  const dflt = db.createCollectionSync('default', { dimension: 4 });
+
+  assert.equal(plain.stats().metric, 'euclidean');
+  assert.equal(auto.stats().metric, 'euclidean');
+  assert.equal(dflt.stats().metric, 'cosine');
+});
+
+// A query with no term in the vocabulary embeds to the zero vector — an
+// ordinary "nothing matched", which used to surface as an error naming a metric
+// and a vector the caller never supplied.
+test('searchText with unknown terms returns no hits', () => {
+  const db = memory();
+  const docs = db.createCollectionSync('docs', { dimension: 64, autoEmbed: 'bm25' });
+  docs.upsertTextSync('a', 'the quick brown fox');
+
+  assert.deepEqual(docs.searchTextSync('zzzz qqqq nonexistentterm', { limit: 3 }), []);
+  assert.deepEqual(
+    docs.searchTextSync('quick fox', { limit: 3 }).map((h) => h.id),
+    ['a'],
+  );
+});

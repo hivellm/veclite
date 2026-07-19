@@ -432,6 +432,10 @@ pub struct CollectionStats {
     pub tombstones: usize,
     /// Whether this is an auto-embed (text) collection.
     pub auto_embed: bool,
+    /// Distance metric the collection was created with. Reported so callers can
+    /// confirm what they actually got — until now the metric was only visible
+    /// by reading the file with the CLI.
+    pub metric: Metric,
     /// Declared payload indexes `(key, kind)`, sorted by key (SPEC-006 §3) —
     /// creation-time declarations plus runtime `create_payload_index` calls.
     /// Always empty on wasm32 (indexes are native-only; filters scan there).
@@ -754,6 +758,16 @@ impl Collection {
         let embedder = self.text_embedder()?;
         self.refit_if_dirty()?;
         let vector = embedder.lock().embed(query)?;
+        // A query with no term in the vocabulary embeds to the zero vector.
+        // That is an ordinary "nothing matched", not a caller error: the caller
+        // supplied text, never a vector or a metric, so surfacing `search`'s
+        // cosine zero-vector guard here would be both wrong and unexplainable.
+        //
+        // Guarded on `limit > 0` so an invalid limit still reaches the argument
+        // checks in `execute_query` instead of being masked by an empty result.
+        if limit > 0 && vector.iter().all(|v| *v == 0.0) {
+            return Ok(Vec::new());
+        }
         self.search(&vector, limit)
     }
 
@@ -1093,6 +1107,7 @@ impl Collection {
             len,
             tombstones,
             auto_embed: self.inner.config.embedding_provider.is_some(),
+            metric: self.inner.config.metric,
             payload_indexes,
         }
     }

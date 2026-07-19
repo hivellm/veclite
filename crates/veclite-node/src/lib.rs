@@ -132,6 +132,16 @@ fn metric_of(s: &Option<String>) -> Result<Metric> {
     })
 }
 
+/// Inverse of [`metric_of`], so `stats()` reports the metric with the same
+/// spelling `createCollection` accepts.
+fn metric_str(m: Metric) -> &'static str {
+    match m {
+        Metric::Cosine => "cosine",
+        Metric::Euclidean => "euclidean",
+        Metric::DotProduct => "dotproduct",
+    }
+}
+
 fn payload_index_kind(s: &str) -> Result<PayloadIndexKind> {
     Ok(match s {
         "keyword" => PayloadIndexKind::Keyword,
@@ -142,9 +152,15 @@ fn payload_index_kind(s: &str) -> Result<PayloadIndexKind> {
 }
 
 fn build_collection_options(o: &CollectionOpts) -> Result<CollectionOptions> {
+    // `auto_embed` takes no metric and falls back to `Metric::default()`, so it
+    // used to swallow an explicit `metric` whenever `autoEmbed` was also set.
+    // `.metric()` puts the caller's choice back.
+    let metric = metric_of(&o.metric)?;
     let mut opts = match &o.auto_embed {
-        Some(provider) => CollectionOptions::auto_embed(provider, o.dimension as usize),
-        None => CollectionOptions::new(o.dimension as usize, metric_of(&o.metric)?),
+        Some(provider) => {
+            CollectionOptions::auto_embed(provider, o.dimension as usize).metric(metric)
+        }
+        None => CollectionOptions::new(o.dimension as usize, metric),
     };
     if let Some(bits) = o.quantization_bits {
         opts = opts.quantization(if bits == 0 {
@@ -680,6 +696,7 @@ impl Collection {
             len: s.len as u32,
             tombstones: s.tombstones as u32,
             auto_embed: s.auto_embed,
+            metric: metric_str(s.metric).to_owned(),
         }
     }
 }
@@ -719,6 +736,7 @@ pub struct JsStats {
     pub len: u32,
     pub tombstones: u32,
     pub auto_embed: bool,
+    pub metric: String,
 }
 
 /// Build a BYO `Point` from JS parts, with an optional `{indices, values}`

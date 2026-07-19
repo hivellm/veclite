@@ -89,6 +89,7 @@ pub struct veclite::collection::CollectionStats
 pub veclite::collection::CollectionStats::auto_embed: bool
 pub veclite::collection::CollectionStats::dimension: usize
 pub veclite::collection::CollectionStats::len: usize
+pub veclite::collection::CollectionStats::metric: veclite::options::Metric
 pub veclite::collection::CollectionStats::name: alloc::string::String
 pub veclite::collection::CollectionStats::payload_indexes: alloc::vec::Vec<(alloc::string::String, veclite::options::PayloadIndexKind)>
 pub veclite::collection::CollectionStats::tombstones: usize
@@ -598,6 +599,7 @@ pub struct veclite::options::CollectionOptions
 impl veclite::options::CollectionOptions
 pub fn veclite::options::CollectionOptions::auto_embed(&str, usize) -> Self
 pub fn veclite::options::CollectionOptions::hnsw(self, usize, usize, usize) -> Self
+pub fn veclite::options::CollectionOptions::metric(self, veclite::options::Metric) -> Self
 pub fn veclite::options::CollectionOptions::new(usize, veclite::options::Metric) -> Self
 pub fn veclite::options::CollectionOptions::payload_index(self, &str, veclite::options::PayloadIndexKind) -> Self
 pub fn veclite::options::CollectionOptions::quantization(self, veclite::options::Quantization) -> Self
@@ -990,6 +992,7 @@ pub struct veclite::CollectionOptions
 impl veclite::options::CollectionOptions
 pub fn veclite::options::CollectionOptions::auto_embed(&str, usize) -> Self
 pub fn veclite::options::CollectionOptions::hnsw(self, usize, usize, usize) -> Self
+pub fn veclite::options::CollectionOptions::metric(self, veclite::options::Metric) -> Self
 pub fn veclite::options::CollectionOptions::new(usize, veclite::options::Metric) -> Self
 pub fn veclite::options::CollectionOptions::payload_index(self, &str, veclite::options::PayloadIndexKind) -> Self
 pub fn veclite::options::CollectionOptions::quantization(self, veclite::options::Quantization) -> Self
@@ -1008,6 +1011,7 @@ pub struct veclite::CollectionStats
 pub veclite::CollectionStats::auto_embed: bool
 pub veclite::CollectionStats::dimension: usize
 pub veclite::CollectionStats::len: usize
+pub veclite::CollectionStats::metric: veclite::options::Metric
 pub veclite::CollectionStats::name: alloc::string::String
 pub veclite::CollectionStats::payload_indexes: alloc::vec::Vec<(alloc::string::String, veclite::options::PayloadIndexKind)>
 pub veclite::CollectionStats::tombstones: usize
