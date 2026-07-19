@@ -29,6 +29,9 @@ env:
   CARGO_TERM_COLOR: always
   # Keep in sync with the `wasm-bindgen` crate version in Cargo.toml.
   WASM_BINDGEN_VERSION: '0.2.126'
+  # Pinned rather than taken from apt: the distro package lags years behind and
+  # its validator rejects the feature set current rustc emits.
+  BINARYEN_VERSION: '131'
 
 jobs:
   wasm:
@@ -51,8 +54,15 @@ jobs:
 
       - name: Install wasm-bindgen-cli (version-matched) and binaryen
         run: |
+          set -euo pipefail
           cargo install wasm-bindgen-cli --version "$WASM_BINDGEN_VERSION"
-          sudo apt-get update && sudo apt-get install -y binaryen
+          # Not `apt-get install binaryen`: Ubuntu ships 108 (2022), which
+          # rejects the wasm current rustc emits with "all used features should
+          # be allowed" — the feature set in the binary is simply newer than
+          # that validator knows. Pin a modern release instead.
+          curl -fsSL "https://github.com/WebAssembly/binaryen/releases/download/version_${BINARYEN_VERSION}/binaryen-version_${BINARYEN_VERSION}-x86_64-linux.tar.gz" \
+            | tar -xz -C /tmp
+          echo "/tmp/binaryen-version_${BINARYEN_VERSION}/bin" >> "$GITHUB_PATH"
 
       - name: Build pkg/ and enforce the 3 MB gzip budget (WASM-030)
         working-directory: crates/veclite-wasm

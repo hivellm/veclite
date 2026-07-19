@@ -31,7 +31,7 @@ WHICH="${1:-all}"
 # Ensure the committed header is in sync before we trust it.
 run_asan() {
     echo "[sanitize] ASan + LSan: full_smoke"
-    cargo build -p veclite-ffi --release --target "$TARGET" >/dev/null
+    cargo build -p hivellm-veclite-ffi --release --target "$TARGET" >/dev/null
     local lib="$ROOT/target/$TARGET/release/libveclite_ffi.a"
     local bin
     bin="$(mktemp -d)/full_smoke"
@@ -44,7 +44,7 @@ run_asan() {
 run_tsan() {
     echo "[sanitize] TSan: concurrency (instrumented Rust lib)"
     RUSTFLAGS="-Zsanitizer=thread" cargo +nightly build -Zbuild-std \
-        --release --target "$TARGET" -p veclite-ffi >/dev/null
+        --release --target "$TARGET" -p hivellm-veclite-ffi >/dev/null
     local lib="$ROOT/target/$TARGET/release/libveclite_ffi.a"
     local bin
     bin="$(mktemp -d)/concurrency"
@@ -60,7 +60,7 @@ run_valgrind() {
         return 0
     }
     echo "[sanitize] Valgrind memcheck: full_smoke (uninstrumented)"
-    cargo build -p veclite-ffi --release --target "$TARGET" >/dev/null
+    cargo build -p hivellm-veclite-ffi --release --target "$TARGET" >/dev/null
     local lib="$ROOT/target/$TARGET/release/libveclite_ffi.a"
     local bin
     bin="$(mktemp -d)/full_smoke_plain"

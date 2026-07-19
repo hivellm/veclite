@@ -3,11 +3,11 @@
 //! (the sole permitted network access, EMB-041), the air-gapped test then loads
 //! them from a local path with no network.
 //!
-//!   cargo test -p veclite --features onnx
+//!   cargo test -p hivellm-veclite --features onnx
 //!
 //! The `#[ignore]` fixture generator writes the file the base-build degradation
 //! test (`onnx_degradation.rs`) reads:
-//!   cargo test -p veclite --features onnx -- --ignored write_degradation_fixture
+//!   cargo test -p hivellm-veclite --features onnx -- --ignored write_degradation_fixture
 #![cfg(feature = "onnx")]
 
 use std::path::{Path, PathBuf};

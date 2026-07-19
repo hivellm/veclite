@@ -4,7 +4,7 @@
 //! measured on the reference runner and recorded in docs/benchmarks.md.
 //!
 //! Cosine + `Quantization::None` matches the parity reference. Run with
-//! `cargo bench -p veclite`.
+//! `cargo bench -p hivellm-veclite`.
 
 use criterion::{BatchSize, Criterion, black_box, criterion_group, criterion_main};
 use veclite::{Collection, CollectionOptions, Metric, Point, Quantization, VecLite};

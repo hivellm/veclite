@@ -24,7 +24,7 @@ fn onnx_file_opens_and_serves_vectors_without_the_model() {
         // Without it there is nothing to assert; fail loudly so it is not a
         // silent skip in the onnx CI that regenerates it.
         panic!(
-            "missing fixture {} — regenerate with: cargo test -p veclite --features onnx -- \
+            "missing fixture {} — regenerate with: cargo test -p hivellm-veclite --features onnx -- \
              --ignored write_degradation_fixture",
             path.display()
         );
