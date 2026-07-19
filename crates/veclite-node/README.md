@@ -1,11 +1,15 @@
-# veclite (Node.js)
+# @hivehub/veclite (Node.js)
 
 Node.js binding for [VecLite](https://github.com/hivellm/veclite) — an embedded,
 single-file, in-process vector database. Binds the Rust crate directly via
 [napi-rs](https://napi.rs) (SPEC-010).
 
+```sh
+npm install @hivehub/veclite
+```
+
 ```ts
-import { open, memory } from "veclite";
+import { open, memory } from "@hivehub/veclite";
 
 const db = await open("app.veclite", { durability: "normal" });
 const docs = await db.createCollection("docs", { dimension: 384, metric: "cosine" });
@@ -44,11 +48,11 @@ await db.close();
 
 ## Install (prebuilt — no toolchain)
 
-`npm install veclite` pulls a prebuilt native addon: the main package ships the
-loader + types, and npm resolves the matching `veclite-<platform>` package
-(`veclite-linux-x64-gnu`, `veclite-darwin-arm64`, `veclite-win32-x64-msvc`, …)
-by `os`/`cpu` via `optionalDependencies` (NODE-001). Installing never compiles
-Rust. Prebuilds cover the FR-66 platform set; runs on **Node 18/20/22** and
+`npm install @hivehub/veclite` pulls a prebuilt native addon: the main package
+ships the loader + types, and npm resolves the matching
+`@hivehub/veclite-<platform>` package (`@hivehub/veclite-linux-x64-gnu`,
+`@hivehub/veclite-win32-x64-msvc`, …) by `os`/`cpu` via `optionalDependencies`
+(NODE-001). Installing never compiles Rust. Runs on **Node 18/20/22** and
 **Bun**.
 
 ## Runtimes
@@ -60,9 +64,9 @@ task) so an immediate same-path reopen works on every host.
 ## ONNX embedders
 
 The base addon excludes the ONNX/`fastembed:*` provider family to stay small
-(EMB-040). Those providers ship as a separate optional `@veclite/onnx` addon,
-this binding built `napi build --features onnx` (pulling ONNX Runtime), which
-depends on the exact-version base `veclite` (REL-021). Without it, `fastembed:*`
+(EMB-040). Those providers ship as a separate optional `@hivehub/veclite-onnx`
+addon, this binding built `napi build --features onnx` (pulling ONNX Runtime),
+which depends on the exact-version base `@hivehub/veclite` (REL-021). Without it, `fastembed:*`
 providers report `UNSUPPORTED_PROVIDER`; an ONNX-created file still opens and
 serves vector operations — only text operations fail (EMB-023).
 

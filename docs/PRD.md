@@ -199,7 +199,7 @@ The 1.0 benchmark report (DAG task T6.4) publishes honest, reproducible comparis
 All of the following, verified by CI or a documented manual protocol:
 
 1. ✅ `cargo add veclite` → open/insert/search with zero config; NFR-06 footprint targets met.
-2. ✅ `pip install veclite` and `npm install veclite` on clean machines (no Rust toolchain) across the FR-66 matrix run the quickstart.
+2. ✅ `pip install hivellm-veclite` and `npm install @hivehub/veclite` on clean machines (no Rust toolchain) across the FR-66 matrix run the quickstart.
 3. ✅ NFR-01/02/03 performance targets green on the reference hardware profile.
 4. ✅ NFR-05 crash suite: 10 000 iterations, zero corruption.
 5. ✅ Graduation round-trip: `veclite export --vecdb` → server import → top-10 overlap ≥ 0.99 (NFR-04 corpus).

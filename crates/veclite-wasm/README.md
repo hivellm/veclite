@@ -1,4 +1,4 @@
-# @veclite/wasm
+# @hivehub/veclite-wasm
 
 WebAssembly build of [VecLite](https://github.com/hivellm/veclite) — an embedded,
 single-file vector database — for **browsers, Deno, Bun, and edge runtimes**
@@ -6,8 +6,12 @@ single-file vector database — for **browsers, Deno, Bun, and edge runtimes**
 (guideline ≤ ~500k vectors), offline apps, and extensions — no server, no native
 addon (SPEC-012).
 
+```sh
+npm install @hivehub/veclite-wasm
+```
+
 ```js
-import { open, memory, deserialize } from '@veclite/wasm';
+import { open, memory, deserialize } from '@hivehub/veclite-wasm';
 
 // In-memory, or OPFS-persistent in a browser:
 const db = await open({ opfs: 'app.veclite', autosave: { afterWrites: 100 } });

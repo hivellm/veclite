@@ -9,17 +9,17 @@
 [![Specs](https://img.shields.io/badge/specs-16%20documents-blue.svg)](docs/specs/README.md)
 [![Format](https://img.shields.io/badge/.veclite-v1%20(frozen)-success.svg)](docs/specs/SPEC-002-storage-format.md)
 [![Status](https://img.shields.io/badge/status-pre--release-yellow.svg)](#-status--roadmap)
-[![Version](https://img.shields.io/badge/version-0.1.0-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.1.1-blue.svg)](CHANGELOG.md)
 
 VecLite is the in-process distribution of the [Vectorizer](https://github.com/hivellm/vectorizer) engine, written in Rust: HNSW search, quantization, hybrid dense+sparse retrieval, and payload filtering — as a library you link, not a server you run. It follows the embedded-database philosophy popularized by SQLite: one linked library, one file, zero configuration. Ships as a Cargo workspace (6 crates) with a `veclite` CLI and native bindings for Rust, Python, Node.js, Go, C#, and WASM.
 
-> **🚧 Project Status**: **Pre-1.0** (phases 0–5d complete). The `.veclite` v1 format is **frozen at gate G2** — files written today stay readable. Packages are not on public registries yet; build from source. See [Status & Roadmap](#-status--roadmap).
+> **🚧 Project Status**: **Pre-1.0**. The `.veclite` v1 format is **frozen at gate G2** — files written today stay readable. Published on [crates.io](https://crates.io/crates/hivellm-veclite), [PyPI](https://pypi.org/project/hivellm-veclite/), and [npm](https://www.npmjs.com/package/@hivehub/veclite). See [Status & Roadmap](#-status--roadmap).
 
 ```python
-import veclite
+import veclite                            # pip install hivellm-veclite
 
-db = veclite.open("app.veclite")
-docs = db.create_collection("docs", auto_embed="bm25", dimension=512)
+db = veclite.Database.open("app.veclite")
+docs = db.create_collection("docs", dimension=512, embedding_provider="bm25")
 docs.upsert_text("readme", open("README.md").read(), {"lang": "en"})
 hits = docs.search_text("how do I configure logging", limit=5)
 ```
@@ -67,7 +67,7 @@ No server. No ports. No configuration. One file.
 - **Python** (`veclite-py`) — PyO3 with NumPy zero-copy and GIL release, `pip install`-able abi3 wheels ([SPEC-009](docs/specs/SPEC-009-binding-python.md)).
 - **Node.js** (`veclite-node`) — native addon with prebuilds and a conformance suite ([SPEC-010](docs/specs/SPEC-010-binding-node.md)).
 - **Go & C#** — bindings over the C ABI, each with a conformance runner ([SPEC-011](docs/specs/SPEC-011-bindings-go-csharp.md)).
-- **WASM** (`@veclite/wasm`) — client-side vector search: the pure-Rust in-memory engine plus the portable image codec; an image written in the browser opens with native VecLite ([SPEC-012](docs/specs/SPEC-012-binding-wasm.md)).
+- **WASM** (`@hivehub/veclite-wasm`) — client-side vector search: the pure-Rust in-memory engine plus the portable image codec; an image written in the browser opens with native VecLite ([SPEC-012](docs/specs/SPEC-012-binding-wasm.md)).
 
 ## 🏗️ Architecture
 
@@ -112,7 +112,7 @@ crates/
 ├── veclite-ffi/      # Panic-safe C ABI (cbindgen header + golden-file drift test)
 ├── veclite-py/       # Python binding (PyO3, abi3 wheels, NumPy zero-copy) — maturin-built
 ├── veclite-node/     # Node.js binding (native addon + prebuilds)
-└── veclite-wasm/     # WASM binding (@veclite/wasm) — wasm-bindgen, portable image codec
+└── veclite-wasm/     # WASM binding (@hivehub/veclite-wasm) — wasm-bindgen, portable image codec
 bindings/
 ├── go/               # Go binding over the C ABI + conformance runner
 └── csharp/           # C# binding over the C ABI + conformance runner
@@ -128,24 +128,33 @@ Full design: [`docs/vectorizer-lite/02-architecture.md`](docs/vectorizer-lite/02
 
 ### Installation
 
-VecLite is pre-1.0 and **not yet published to crates.io, PyPI, or npm** — registry publishing lands with 1.0 ([SPEC-016](docs/specs/SPEC-016-packaging-release.md)). Until then, build from source:
+VecLite is published to crates.io, PyPI, and npm. The registry names carry an
+org prefix — plain `veclite` was already taken on all three by unrelated
+projects — but the **import names are unchanged**: `use veclite::…`,
+`import veclite`, `require('@hivehub/veclite')`.
+
+| Surface | Install |
+|---|---|
+| 🦀 Rust | `cargo add hivellm-veclite` → `use veclite::…` |
+| 🖥️ CLI | `cargo install hivellm-veclite-cli` → `veclite inspect app.veclite` |
+| 🐍 Python | `pip install hivellm-veclite` → `import veclite` |
+| 📘 Node.js | `npm install @hivehub/veclite` |
+| 🌐 WASM | `npm install @hivehub/veclite-wasm` |
+| ⚙️ C / C++ | `hivellm-veclite-ffi` + the cbindgen header — see [`docs/c-abi.md`](docs/c-abi.md) |
+| 🐹 Go | `go get` the module in `bindings/go/` (links `hivellm-veclite-ffi`) |
+| 💜 C# | Reference the project in `bindings/csharp/` (links `hivellm-veclite-ffi`) |
+
+Python ships prebuilt **abi3** wheels (CPython 3.9+, Windows + Linux x86_64/aarch64)
+and an sdist for everything else; Node ships prebuilt native addons per platform.
+Neither needs a Rust toolchain.
+
+To build from source instead:
 
 ```bash
 git clone https://github.com/hivellm/veclite.git
 cd veclite
 cargo build --release
 ```
-
-| Surface | How to depend on it today |
-|---|---|
-| 🦀 Rust | `veclite = { git = "https://github.com/hivellm/veclite" }` |
-| 🖥️ CLI | `cargo install --path crates/veclite-cli` → `veclite inspect app.veclite` |
-| 🐍 Python | `maturin build --release -m crates/veclite-py/Cargo.toml` → `pip install <wheel>` |
-| 📘 Node.js | `npm install && npm run build` in `crates/veclite-node/` |
-| 🌐 WASM | `wasm-pack build crates/veclite-wasm --target web` |
-| 🐹 Go | `go get` the module in `bindings/go/` (links `veclite-ffi`) |
-| 💜 C# | Reference the project in `bindings/csharp/` (links `veclite-ffi`) |
-| ⚙️ C / C++ | Link `veclite-ffi` with the cbindgen header — see [`docs/c-abi.md`](docs/c-abi.md) |
 
 ### Rust
 

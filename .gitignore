@@ -44,3 +44,6 @@ target/
 # working dir when the onnx tests run without an explicit cache dir (SPEC-005 §6).
 .fastembed_cache/
 docs/site/
+
+# Python packaging build output (maturin/pip).
+crates/veclite-py/dist/

@@ -1,14 +1,21 @@
-# veclite
+# hivellm-veclite
 
 Embedded, single-file, in-process vector database — Python binding (SPEC-009).
 
-`pip install veclite` installs a prebuilt **abi3** wheel (CPython 3.9+); no Rust
-toolchain is needed. NumPy is optional but recommended for zero-copy vectors.
+The distribution is `hivellm-veclite` (plain `veclite` on PyPI is an unrelated
+project); the import name is just `veclite`.
+
+`pip install hivellm-veclite` installs a prebuilt **abi3** wheel (CPython 3.9+);
+no Rust toolchain is needed. NumPy is optional — plain Python sequences work
+everywhere — but recommended, since `float32` arrays are borrowed zero-copy.
 
 ```bash
-pip install veclite          # core
-pip install "veclite[numpy]" # + numpy extra
+pip install hivellm-veclite            # core
+pip install "hivellm-veclite[numpy]"   # + numpy extra
 ```
+
+Prebuilt wheels cover Windows x86_64 and Linux x86_64/aarch64. Other platforms
+fall back to the sdist, which compiles from source and needs a Rust toolchain.
 
 ## Quickstart
 
