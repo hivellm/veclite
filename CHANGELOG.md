@@ -8,7 +8,33 @@ Versions 0.x are pre-release: the public API may change between minors until 1.0
 
 ## [Unreleased]
 
+### Fixed
+- **The requested metric is no longer discarded when an embedding provider is
+  set** (task `phase6d`). Creating a collection with both a `metric` and an
+  embedding provider silently forced the default (cosine) and persisted it, so
+  the collection differed from what was asked for and could not be corrected
+  without recreating it. The root cause was an API gap rather than a slip in the
+  bindings: `embedding_provider` is a private field, so
+  `CollectionOptions::auto_embed` — which takes no metric — was the only way to
+  build an auto-embed collection, and "auto-embed with a non-default metric" was
+  not expressible at all. Affected the Python, Node and C ABI bindings, and
+  through the C ABI the Go and C# ones; the Rust API was unaffected.
+- **`search_text` no longer errors on a query with no matching terms.** A query
+  whose terms are absent from the vocabulary embeds to the zero vector, which
+  tripped the cosine guard in `search` and surfaced as `InvalidArgument: zero
+  query vector is not allowed with the cosine metric` — an error naming a vector
+  and a metric the caller never supplied, for what is an ordinary "nothing
+  matched". `search_text` and the hybrid text lane now return an empty result
+  set. **Behavioural change**: callers that relied on the exception must check
+  for an empty result instead. The guard is unchanged on `search`, where an
+  explicitly all-zero query with cosine remains an error.
+
 ### Added
+- `CollectionOptions::metric()` — set the distance metric on options built by any
+  constructor, including `auto_embed` (task `phase6d`).
+- `CollectionStats::metric`, surfaced by the Python, Node and C ABI stats
+  payloads. The metric was previously observable only by reading the file with
+  the CLI, which is part of why the drop above went unnoticed (task `phase6d`).
 - Prebuilt C ABI shared/static libraries (task `phase4e`, SPEC-008 FFI-030): the
   raw C ABI now ships as downloadable, checksummed release artifacts —
   `libveclite.{so,dylib}` / `veclite.dll` + static libs + the cbindgen

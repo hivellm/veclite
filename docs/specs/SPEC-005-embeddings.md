@@ -49,7 +49,8 @@ pub trait Embedder: Send + Sync {
 
 ## 4. Auto-embed collections
 
-- **EMB-020** `CollectionOptions::auto_embed(provider, dimension)` records `embedding_provider` in the CONFIG segment. Reopening re-instantiates the provider and imports VOCAB state: a `.veclite` file MUST search identically on any machine with no network (FR-42).
+- **EMB-020** `CollectionOptions::auto_embed(provider, dimension)` records `embedding_provider` in the CONFIG segment. Reopening re-instantiates the provider and imports VOCAB state: a `.veclite` file MUST search identically on any machine with no network (FR-42). `auto_embed` selects the default metric; a caller wanting another one chains `CollectionOptions::metric(m)`. An auto-embed collection MUST be created with the metric the caller asked for — silently substituting the default persists a collection that differs from the request (the defect fixed in `phase6d`).
+- **EMB-024** A query sharing no term with the vocabulary embeds to the zero vector. The text entry points MUST report that as an empty result set, not an error: it is an ordinary "nothing matched", and the caller supplied neither a vector nor a metric (API-023).
 - **EMB-021** Fail-fast rules (no silent coercion — server issue #306 lesson):
   - unknown provider at creation → `UnsupportedProvider { requested, available }`; MUST NOT fall back to bm25;
   - provider native dimension ≠ requested dimension → `DimensionMismatch` at creation;

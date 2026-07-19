@@ -123,6 +123,8 @@ impl Collection {
 - **API-020** `upsert` = insert-or-replace; there is deliberately no separate insert/update (matches planning; simplifies bindings and the WAL model).
 - **API-021** `delete`/`get` on missing IDs are not errors (`false`/`None`); errors are reserved for misuse and environment failures.
 - **API-022** `scroll` is cursor-based: `ScrollOptions::new().limit(n).offset_id(id)`; ordering is stable by slot (insertion order after last vacuum). `Page { points, next_offset_id: Option<String> }`.
+- **API-023** The text entry points (`search_text`, and `hybrid_query().text(q)`) MUST return an empty result set when the query embeds to the zero vector — the outcome for a query sharing no term with the vocabulary. "Nothing matched" is an ordinary search result, and the caller supplied neither a vector nor a metric, so the zero-vector guard on `search` MUST NOT surface there. Argument validation still applies first: `limit == 0` is an error on every path. `search` itself keeps rejecting an explicitly all-zero query under cosine, where the similarity is undefined and the caller chose both.
+- **API-024** `CollectionStats` reports the collection's `metric`, so a caller can confirm what was created rather than inferring it (see SPEC-005 §4 for the auto-embed interaction).
 
 ## 5. Query builder
 

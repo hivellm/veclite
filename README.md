@@ -21,10 +21,14 @@ import veclite                            # pip install hivellm-veclite
 db = veclite.Database.open("app.veclite")
 docs = db.create_collection("docs", dimension=512, embedding_provider="bm25")
 docs.upsert_text("readme", open("README.md").read(), {"lang": "en"})
-hits = docs.search_text("how do I configure logging", limit=5)
+hits = docs.search_text("logging configuration", limit=5)
 ```
 
 No server. No ports. No configuration. One file.
+
+`bm25` ranks on term overlap, so it fits keyword queries like the one above.
+Natural-language questions ("how do I configure logging") are a different
+workload — enable the [`onnx`](#-key-features) feature for a dense model there.
 
 ## ✨ Key Features
 
@@ -45,7 +49,7 @@ No server. No ports. No configuration. One file.
 - **Quantization** — SQ-8 / scalar / binary, vendored byte-identical from the server; scalar SIMD distance kernels.
 
 ### Embeddings & Text
-- **Auto-embed collections** — `upsert_text`/`search_text` turn text into vectors offline with pure-Rust sparse providers: `bm25` (default), `tfidf`, `bow`, `char_ngram`, plus `svd` behind the `svd` feature ([SPEC-005](docs/specs/SPEC-005-embeddings.md)).
+- **Auto-embed collections** — `upsert_text`/`search_text` turn text into vectors offline with pure-Rust sparse providers: `bm25` (default), `tfidf`, `bow`, `char_ngram`, plus `svd` behind the `svd` feature ([SPEC-005](docs/specs/SPEC-005-embeddings.md)). These are **lexical** scorers: they rank on term overlap, so they shine on keyword queries and product/code search, and are weaker on natural-language questions phrased differently from the source text. For question-style retrieval, use the dense `onnx` tier below.
 - **Persistent vocabulary** — updates incrementally and persists in the file; reopen searches identically with no rebuild.
 - **ONNX dense embeddings** — opt-in `onnx` feature runs local sentence-transformer models via fastembed for dense auto-embed collections; the default build stays pure-Rust.
 - **Custom providers** — plug in per database via `register_embedder`.

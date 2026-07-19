@@ -13,16 +13,16 @@ proven, and 1.6 is the only item that changes the core rather than a binding.
 
 ## 2. Documentation
 
-- [ ] 2.1 README: note that `bm25` is lexical and that natural-language questions want the dense `onnx` tier — the flagship example pairs a natural-language question with the lexical default. Measured on 48 files of `docs/`: 3/10 at rank 1 for questions, 4/10 (8/10 within the top three files) for keyword phrasing
-- [ ] 2.2 CHANGELOG entries for both fixes, flagging that `search_text` stops raising on an out-of-vocabulary query
-- [ ] 2.3 SPEC-004/SPEC-005: state the zero-vector outcome for the text path explicitly, so the next reader does not have to infer it from an error message
+- [x] 2.1 README: the auto-embed bullet now says the sparse providers are lexical and points question-style retrieval at the dense `onnx` tier; the headline example's query changed to a keyword phrasing that actually suits `bm25`, with a note explaining the choice. Example re-run to confirm it works as printed
+- [x] 2.2 CHANGELOG: Fixed entries for both defects (flagging that `search_text` no longer raises) plus Added entries for `CollectionOptions::metric()` and `CollectionStats::metric`
+- [x] 2.3 SPEC-004 API-023/API-024 and SPEC-005 EMB-020/EMB-024 state the zero-vector outcome and the metric-with-provider rule outright
 
 ## 3. Open question (decide before 1.6)
 
-- [ ] 3.1 The dogfooding run produced a `.veclite` of 4.3 MB for 279 KB of text. The vectors segment is 993,333 bytes and 485 chunks x 512 dims x 4 bytes = 993,280 — i.e. f32 on disk, while `veclite inspect` reports `quantization sq-8`. Determine whether sq-8 applies only to the index or whether the report is misleading; open a separate task if it is a real inconsistency
+- [x] 3.1 Resolved — not a defect. Verified empirically: f32 vectors are the source of truth (`reindex`/`refit` need them) and sq-8 is a separate code block built only by `reindex`; `inspect` reports the *configured* quantization, which is accurate. The 57KB->111KB growth after reindex is the append-only segment design, reclaimed by `vacuum`. Possible follow-up, not opened: `inspect` could say whether the code block is actually present
 
 ## 4. Tail (docs + tests — check or waive with tailWaiver)
 
-- [ ] 4.1 Update or create documentation covering the implementation
-- [ ] 4.2 Write tests covering the new behavior
-- [ ] 4.3 Run tests and confirm they pass
+- [x] 4.1 Update or create documentation covering the implementation — README, CHANGELOG, SPEC-004, SPEC-005
+- [x] 4.2 Write tests covering the new behavior — Rust (auto_embed: OOV text, OOV hybrid, explicit-zero guard retained), FFI (metric across three create shapes), Python (metric + OOV + limit=0), Node (metric + OOV)
+- [x] 4.3 Run tests and confirm they pass — fmt/clippy -D warnings clean, 40 suites green, api-freeze PASS (additive only), node + python conformance 34/34 against rebuilt artefacts
