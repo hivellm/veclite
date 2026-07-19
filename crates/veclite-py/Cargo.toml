@@ -18,7 +18,9 @@ crate-type = ["cdylib"]
 onnx = ["veclite/onnx"]
 
 [dependencies]
-veclite = { package = "hivellm-veclite", path = "../veclite" }
+# The version is what makes an sdist buildable off-repo: outside the source
+# tree the `path` is gone and cargo resolves `hivellm-veclite` from crates.io.
+veclite = { package = "hivellm-veclite", path = "../veclite", version = "0.1.1" }
 pyo3 = { version = "0.23", features = ["abi3-py39", "extension-module"] }
 numpy = "0.23"
 pythonize = "0.23"

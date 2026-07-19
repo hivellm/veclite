@@ -5,6 +5,7 @@
 //! exception subclass carrying the identical Rust message (PY-040).
 
 use std::cell::RefCell;
+use std::sync::OnceLock;
 
 use numpy::{PyArray1, PyArray2, PyArrayMethods};
 use pyo3::create_exception;
@@ -91,11 +92,26 @@ fn metric_from_str(s: &str) -> PyResult<Metric> {
     }
 }
 
+/// Whether NumPy is importable in this interpreter, resolved once.
+///
+/// NumPy is an optional extra (`pip install hivellm-veclite[numpy]`), but
+/// `downcast::<PyArray1<_>>` initializes the NumPy array API capsule and
+/// *panics* when NumPy is absent — it never returns `Err`, so a plain
+/// `if let Ok(..)` fallback is unreachable. Every downcast site is therefore
+/// gated on this probe, keeping the pure-Python-sequence path working on a
+/// bare install.
+fn numpy_available(py: Python<'_>) -> bool {
+    static AVAILABLE: OnceLock<bool> = OnceLock::new();
+    *AVAILABLE.get_or_init(|| py.import("numpy").is_ok())
+}
+
 /// Extract a query/upsert vector: a NumPy `float32` array (borrowed) or any
 /// Python sequence of floats (copied).
 fn extract_vector(obj: &Bound<'_, PyAny>) -> PyResult<Vec<f32>> {
-    if let Ok(arr) = obj.downcast::<PyArray1<f32>>() {
-        return Ok(arr.readonly().as_slice()?.to_vec());
+    if numpy_available(obj.py()) {
+        if let Ok(arr) = obj.downcast::<PyArray1<f32>>() {
+            return Ok(arr.readonly().as_slice()?.to_vec());
+        }
     }
     obj.extract::<Vec<f32>>()
 }
@@ -149,8 +165,10 @@ struct PyEmbedder {
 /// Convert an embedder's return value — a `float32`/`float64` NumPy array or any
 /// sequence of floats — into a `Vec<f32>`.
 fn extract_embedding(obj: &Bound<'_, PyAny>) -> PyResult<Vec<f32>> {
-    if let Ok(arr) = obj.downcast::<PyArray1<f32>>() {
-        return Ok(arr.readonly().as_slice()?.to_vec());
+    if numpy_available(obj.py()) {
+        if let Ok(arr) = obj.downcast::<PyArray1<f32>>() {
+            return Ok(arr.readonly().as_slice()?.to_vec());
+        }
     }
     obj.extract::<Vec<f32>>()
 }
@@ -279,7 +297,10 @@ impl Collection {
         vectors: &Bound<'_, PyAny>,
         payloads: Option<Vec<Bound<'_, PyAny>>>,
     ) -> PyResult<()> {
-        let rows: Vec<Vec<f32>> = if let Ok(arr) = vectors.downcast::<PyArray2<f32>>() {
+        let np = numpy_available(vectors.py());
+        let rows: Vec<Vec<f32>> = if let Some(arr) =
+            np.then(|| vectors.downcast::<PyArray2<f32>>().ok()).flatten()
+        {
             let ro = arr.readonly();
             let view = ro.as_array();
             if view.nrows() != ids.len() {
@@ -382,7 +403,10 @@ impl Collection {
             _ => None,
         };
         // Zero-copy borrow for a float32 NumPy array; copy for a list.
-        let hits = if let Ok(arr) = vector.downcast::<PyArray1<f32>>() {
+        let np = numpy_available(vector.py());
+        let hits = if let Some(arr) =
+            np.then(|| vector.downcast::<PyArray1<f32>>().ok()).flatten()
+        {
             let ro = arr.readonly();
             let slice = ro.as_slice()?;
             py.allow_threads(|| {
