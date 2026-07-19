@@ -235,7 +235,7 @@ Tracked here until resolved; resolution updates the relevant SPEC.
 | # | Question | Owner decision needed by |
 |---|---|---|
 | OQ-1 | ~~Exact reference hardware profile for NFR-01/02/03 benchmarks~~ — resolved (T1.6): pinned in [benchmarks.md](benchmarks.md) — desktop AMD Ryzen 9 7950X3D / 128 GB / Win10, cloud AWS `c7a.4xlarge`. | Resolved (phase1d) |
-| OQ-2 | ~~MSRV policy~~ — resolved: VecLite pins its own MSRV (1.87 — edition-2024 floors at 1.85, raised to 1.87 by the pinned `hnsw_rs =0.3.4`) since ADR-0001 removed the `vectorizer-core` dependency | Resolved (phase0a; MSRV raised phase2e) |
+| OQ-2 | ~~MSRV policy~~ — resolved: VecLite pins its own MSRV (1.88 — edition-2024 floors at 1.85, raised to 1.87 by the pinned `hnsw_rs =0.3.4`, then to 1.88 by `zip` via `vecdb-interop`) since ADR-0001 removed the `vectorizer-core` dependency | Resolved (phase0a; MSRV raised phase2e) |
 | OQ-3 | WASM OPFS shim design: sync-core-over-async-storage needs a buffering strategy — full-file buffer vs block cache. | Phase 5 start (T5.3) |
 | OQ-4 | CLI distribution: separate `veclite-cli` crate/binary or feature of the core crate? | Phase 5 start (T5.5) |
 | OQ-5 | Whether `bincode 2` or MessagePack is used for CONFIG segments (planning says bincode 2; conformance with FFI payload codec favors one codec everywhere). | Phase 2 start (T2.2) |

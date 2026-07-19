@@ -294,13 +294,13 @@ fn compare(
     for (i, (want, got)) in reference.iter().zip(observed).enumerate() {
         total += overlap(want, got);
         for hit in got {
-            if let Some(expected) = want.iter().find(|w| w.id == hit.id) {
-                if (expected.score - hit.score).abs() > score_tol {
-                    return Err(format!(
-                        "{label}: query {i}, id {:?}: score {} vs {} (tol {score_tol})",
-                        hit.id, hit.score, expected.score
-                    ));
-                }
+            if let Some(expected) = want.iter().find(|w| w.id == hit.id)
+                && (expected.score - hit.score).abs() > score_tol
+            {
+                return Err(format!(
+                    "{label}: query {i}, id {:?}: score {} vs {} (tol {score_tol})",
+                    hit.id, hit.score, expected.score
+                ));
             }
         }
     }

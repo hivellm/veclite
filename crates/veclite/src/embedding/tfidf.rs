@@ -62,10 +62,10 @@ impl TfIdf {
         // terms from legacy imports (no df table) keep their fitted weight.
         let n = self.total_docs as f32;
         for (word, &idx) in &self.vocabulary {
-            if let Some(&df) = self.doc_frequencies.get(word) {
-                if let Some(w) = self.idf_weights.get_mut(idx) {
-                    *w = (n / df as f32).ln().max(0.0);
-                }
+            if let Some(&df) = self.doc_frequencies.get(word)
+                && let Some(w) = self.idf_weights.get_mut(idx)
+            {
+                *w = (n / df as f32).ln().max(0.0);
             }
         }
     }
@@ -142,11 +142,11 @@ impl Embedder for TfIdf {
     fn embed(&self, text: &str) -> Result<Vec<f32>> {
         let mut embedding = vec![0.0f32; self.dimension];
         for (word, tf) in Self::compute_tf(text) {
-            if let Some(&idx) = self.vocabulary.get(&word) {
-                if idx < self.dimension {
-                    let idf = self.idf_weights.get(idx).copied().unwrap_or(1.0);
-                    embedding[idx] = tf * idf;
-                }
+            if let Some(&idx) = self.vocabulary.get(&word)
+                && idx < self.dimension
+            {
+                let idf = self.idf_weights.get(idx).copied().unwrap_or(1.0);
+                embedding[idx] = tf * idf;
             }
         }
         let norm = embedding.iter().map(|x| x * x).sum::<f32>().sqrt();

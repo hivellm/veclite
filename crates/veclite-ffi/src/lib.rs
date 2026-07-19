@@ -770,10 +770,10 @@ fn apply_hit_projection(coll: &Collection, hits: &mut [Hit], opts: &QueryOpts) -
     }
     if opts.with_vector == Some(true) {
         for h in hits.iter_mut() {
-            if h.vector.is_none() {
-                if let Some(p) = coll.get(&h.id)? {
-                    h.vector = Some(p.vector);
-                }
+            if h.vector.is_none()
+                && let Some(p) = coll.get(&h.id)?
+            {
+                h.vector = Some(p.vector);
             }
         }
     }

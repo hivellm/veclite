@@ -290,10 +290,8 @@ impl Persistence {
             let mut j = self.journal.lock();
             j.wal.size()? >= self.wal_size_limit
         };
-        if over {
-            if let Some(f) = self.checkpoint.get() {
-                f()?;
-            }
+        if over && let Some(f) = self.checkpoint.get() {
+            f()?;
         }
         Ok(())
     }

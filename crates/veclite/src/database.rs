@@ -204,10 +204,10 @@ fn apply_wal_entry(
                 .iter()
                 .find(|e| e.value().coll_id == entry.coll_id)
                 .map(|e| e.key().clone());
-            if let Some(name) = name {
-                if let Some((_, ci)) = inner.collections.remove(&name) {
-                    ci.deleted.store(true, Ordering::Release);
-                }
+            if let Some(name) = name
+                && let Some((_, ci)) = inner.collections.remove(&name)
+            {
+                ci.deleted.store(true, Ordering::Release);
             }
         }
         WalOp::Rename => {
@@ -217,11 +217,11 @@ fn apply_wal_entry(
                 .iter()
                 .find(|e| e.value().coll_id == entry.coll_id)
                 .map(|e| e.key().clone());
-            if let Some(name) = name {
-                if let Some((_, ci)) = inner.collections.remove(&name) {
-                    *ci.name.write() = body.new_name.clone();
-                    inner.collections.insert(body.new_name, ci);
-                }
+            if let Some(name) = name
+                && let Some((_, ci)) = inner.collections.remove(&name)
+            {
+                *ci.name.write() = body.new_name.clone();
+                inner.collections.insert(body.new_name, ci);
             }
         }
         WalOp::UpsertBatch => {
@@ -294,19 +294,17 @@ fn sealed_live_collections(
         };
         let name = ci.name.read().clone();
         let aliases = ci.aliases.read().clone();
-        if allow_reuse {
-            if let Some((refs, vector_count, tombstone_count)) = handle.clean_reuse() {
-                colls.push(CheckpointColl {
-                    coll_id: ci.coll_id,
-                    name,
-                    aliases,
-                    vector_count,
-                    tombstone_count,
-                    segments: Vec::new(),
-                    reused: Some(refs),
-                });
-                continue;
-            }
+        if allow_reuse && let Some((refs, vector_count, tombstone_count)) = handle.clean_reuse() {
+            colls.push(CheckpointColl {
+                coll_id: ci.coll_id,
+                name,
+                aliases,
+                vector_count,
+                tombstone_count,
+                segments: Vec::new(),
+                reused: Some(refs),
+            });
+            continue;
         }
         let live = handle.live_points();
         let vocab = handle.export_vocab_state()?;
@@ -766,12 +764,12 @@ impl VecLite {
                 inner: Arc::clone(entry.value()),
             });
         }
-        if let Some(alias) = self.inner.aliases.get(name) {
-            if let Some(entry) = self.inner.collections.get(alias.value()) {
-                return Ok(Collection {
-                    inner: Arc::clone(entry.value()),
-                });
-            }
+        if let Some(alias) = self.inner.aliases.get(name)
+            && let Some(entry) = self.inner.collections.get(alias.value())
+        {
+            return Ok(Collection {
+                inner: Arc::clone(entry.value()),
+            });
         }
         Err(VecLiteError::CollectionNotFound(name.to_owned()))
     }
@@ -821,14 +819,14 @@ impl VecLite {
             .map(|e| e.value().clone())
             .ok_or_else(|| VecLiteError::CollectionNotFound(alias.to_owned()))?;
         #[cfg(not(target_arch = "wasm32"))]
-        if let Some(p) = &self.inner.persistence {
-            if let Some(coll_id) = self.inner.collections.get(&target).map(|e| e.coll_id) {
-                let body = wal_body::encode(&wal_body::Alias {
-                    create: false,
-                    alias: alias.to_owned(),
-                })?;
-                p.append(coll_id, WalOp::Alias, body)?;
-            }
+        if let Some(p) = &self.inner.persistence
+            && let Some(coll_id) = self.inner.collections.get(&target).map(|e| e.coll_id)
+        {
+            let body = wal_body::encode(&wal_body::Alias {
+                create: false,
+                alias: alias.to_owned(),
+            })?;
+            p.append(coll_id, WalOp::Alias, body)?;
         }
         self.inner.aliases.remove(alias);
         if let Some(ci) = self.inner.collections.get(&target) {
@@ -937,12 +935,11 @@ impl VecLite {
 #[cfg(not(target_arch = "wasm32"))]
 impl Drop for VecLite {
     fn drop(&mut self) {
-        if Arc::strong_count(&self.inner) == 1 {
-            if let Some(p) = &self.inner.persistence {
-                if !p.is_crashed() {
-                    let _ = checkpoint_inner(&self.inner);
-                }
-            }
+        if Arc::strong_count(&self.inner) == 1
+            && let Some(p) = &self.inner.persistence
+            && !p.is_crashed()
+        {
+            let _ = checkpoint_inner(&self.inner);
         }
     }
 }

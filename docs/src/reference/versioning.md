@@ -11,7 +11,7 @@ The library and every binding release in lockstep under one SemVer number
 - **Public Rust API** is additive-only within a major version, enforced by a
   committed `cargo public-api` snapshot (`cargo xtask api-freeze`).
 - **C ABI** is additive-only within a major; `vl_abi_version()` gates loaders.
-- **MSRV** (minimum supported Rust version, currently **1.87**) is tested in CI;
+- **MSRV** (minimum supported Rust version, currently **1.88**) is tested in CI;
   a bump is a minor-version event announced in the changelog.
 
 ## File-format version

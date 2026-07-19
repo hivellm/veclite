@@ -3,7 +3,7 @@ name = "veclite-wasm"
 description = "WebAssembly binding for VecLite (SPEC-012) — client-side vector search."
 version = "0.1.1"
 edition = "2021"
-rust-version = "1.87"
+rust-version = "1.88"
 license = "Apache-2.0"
 repository = "https://github.com/hivellm/veclite"
 

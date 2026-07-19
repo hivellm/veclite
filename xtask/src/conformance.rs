@@ -302,16 +302,14 @@ fn run_case_in_mode(
         };
 
         // Machine golden: pins scores and lossy round-trips across languages.
-        if !bless {
-            if let Some(g) = golden {
-                let want = g.get(observations.len()).ok_or_else(|| {
-                    format!("{where_}: golden has no entry for this step (re-bless the corpus)")
-                })?;
-                if !json_eq_tol(want, &obs, SCORE_TOL) {
-                    return Err(format!(
-                        "{where_}: golden mismatch: expected {want}, got {obs}"
-                    ));
-                }
+        if !bless && let Some(g) = golden {
+            let want = g.get(observations.len()).ok_or_else(|| {
+                format!("{where_}: golden has no entry for this step (re-bless the corpus)")
+            })?;
+            if !json_eq_tol(want, &obs, SCORE_TOL) {
+                return Err(format!(
+                    "{where_}: golden mismatch: expected {want}, got {obs}"
+                ));
             }
         }
         observations.push(obs);

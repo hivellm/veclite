@@ -74,24 +74,24 @@ impl KeyIndex {
     fn remove(&mut self, value: &Value, slot: u64) {
         match self {
             KeyIndex::Keyword(m) => {
-                if let Some(s) = value.as_str() {
-                    if let Some(b) = m.get_mut(s) {
-                        b.remove(slot);
-                    }
+                if let Some(s) = value.as_str()
+                    && let Some(b) = m.get_mut(s)
+                {
+                    b.remove(slot);
                 }
             }
             KeyIndex::Integer(m) => {
-                if let Some(i) = value.as_i64() {
-                    if let Some(b) = m.get_mut(&i) {
-                        b.remove(slot);
-                    }
+                if let Some(i) = value.as_i64()
+                    && let Some(b) = m.get_mut(&i)
+                {
+                    b.remove(slot);
                 }
             }
             KeyIndex::Float(m) => {
-                if let Some(f) = value.as_f64() {
-                    if let Some(b) = m.get_mut(&OrdF64(f)) {
-                        b.remove(slot);
-                    }
+                if let Some(f) = value.as_f64()
+                    && let Some(b) = m.get_mut(&OrdF64(f))
+                {
+                    b.remove(slot);
                 }
             }
         }

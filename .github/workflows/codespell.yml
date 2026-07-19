@@ -23,9 +23,18 @@ jobs:
 
       - name: Run Codespell
         run: |
+          # Skips are bare directory names, not paths: codespell matches them
+          # against each path component, so `site` works on Windows and Linux
+          # alike while `docs/site` silently matches neither.
+          #   site/obj/bin      generated — the mdBook output's vendored
+          #                     highlight.js and elasticlunr bundles, and the
+          #                     .NET AssemblyInfo files
+          #   corpus/regressions  fuzz inputs, binary by design
+          # The ignored words are real code: `te` is a TextEmbedding binding in
+          # fastembed.rs, `hel` a deliberate n-gram in a char_ngram typo test.
           codespell \
-            --skip="*.lock,*.json,*.map,*.yaml,*.yml,*.csv,*.bib,target,node_modules,.git,dist,venv,build,benchmarks,coverage" \
-            --ignore-words-list="crate,ser,deser,upToDate,optIn,shouldBe,Bloc"
+            --skip="*.lock,*.json,*.map,*.yaml,*.yml,*.csv,*.bib,target,node_modules,.git,dist,venv,build,benchmarks,coverage,site,obj,bin,corpus,regressions" \
+            --ignore-words-list="crate,ser,deser,upToDate,optIn,shouldBe,Bloc,te,hel"
           # MONOREPO NOTE: Add multilingual stopwords to ignore-words-list if needed
           # Example: --ignore-words-list="crate,ser,deser,meu,oder,ist,alle" (Portuguese,German,etc)
 

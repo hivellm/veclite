@@ -53,15 +53,15 @@ pub(crate) fn postings_to_sparse(
     let mut acc: Vec<Option<SparseVector>> = vec![None; count];
     for (term_id, plist) in &postings.terms {
         for &(slot, weight) in plist {
-            if let Ok(s) = usize::try_from(slot) {
-                if s < count {
-                    let entry = acc[s].get_or_insert_with(|| SparseVector {
-                        indices: Vec::new(),
-                        values: Vec::new(),
-                    });
-                    entry.indices.push(*term_id);
-                    entry.values.push(weight);
-                }
+            if let Ok(s) = usize::try_from(slot)
+                && s < count
+            {
+                let entry = acc[s].get_or_insert_with(|| SparseVector {
+                    indices: Vec::new(),
+                    values: Vec::new(),
+                });
+                entry.indices.push(*term_id);
+                entry.values.push(weight);
             }
         }
     }
@@ -247,15 +247,15 @@ pub(crate) fn seal(
 
     // VOCAB segment (SPEC-005 EMB-030): the embedder's exported state, so a
     // reopened auto-embed collection searches identically with no rebuild.
-    if let Some(state) = vocab {
-        if !state.is_empty() {
-            segments.push(Segment {
-                seg_type: SegmentType::Vocab,
-                seg_flags: 0,
-                coll_id,
-                body: crate::storage::body::encode_vocab(state),
-            });
-        }
+    if let Some(state) = vocab
+        && !state.is_empty()
+    {
+        segments.push(Segment {
+            seg_type: SegmentType::Vocab,
+            seg_flags: 0,
+            coll_id,
+            body: crate::storage::body::encode_vocab(state),
+        });
     }
 
     Ok(CheckpointColl {
@@ -321,10 +321,10 @@ pub(crate) fn load(segments: &[Segment]) -> Result<LoadedCollection> {
     }
     let mut payloads: Vec<Option<Value>> = vec![None; count];
     for (slot, value) in payload.entries {
-        if let Ok(s) = usize::try_from(slot) {
-            if s < count {
-                payloads[s] = Some(value);
-            }
+        if let Ok(s) = usize::try_from(slot)
+            && s < count
+        {
+            payloads[s] = Some(value);
         }
     }
 
@@ -411,10 +411,10 @@ pub(crate) fn load_based(segments: &[Segment], slot_count: usize) -> Result<Base
     }
     let mut payloads: Vec<Option<Value>> = vec![None; slot_count];
     for (slot, value) in payload.entries {
-        if let Ok(s) = usize::try_from(slot) {
-            if s < slot_count {
-                payloads[s] = Some(value);
-            }
+        if let Ok(s) = usize::try_from(slot)
+            && s < slot_count
+        {
+            payloads[s] = Some(value);
         }
     }
     let sparses = sparse_postings

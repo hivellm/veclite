@@ -3,7 +3,7 @@ name = "veclite-py"
 description = "Python binding for VecLite (SPEC-009)."
 version = "0.1.1"
 edition = "2024"
-rust-version = "1.87"
+rust-version = "1.88"
 license = "Apache-2.0"
 repository = "https://github.com/hivellm/veclite"
 

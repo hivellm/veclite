@@ -14,10 +14,12 @@ default-members = ["crates/veclite"]
 [workspace.package]
 version = "0.1.1"
 edition = "2024"
-# Own MSRV (REL-002, ADR-0001). Edition 2024 floors at 1.85, but the pinned
-# `hnsw_rs =0.3.4` (CORE-030) uses `is_multiple_of` (stable in 1.87), so 1.87 is
-# the true minimum. Raise this only when a dependency or feature forces it.
-rust-version = "1.87"
+# Own MSRV (REL-002, ADR-0001), set by the dependency graph rather than the
+# edition: edition 2024 floors at 1.85; the pinned `hnsw_rs =0.3.4` (CORE-030)
+# needs 1.87 for `is_multiple_of`; and `zip` (the `vecdb-interop` archive
+# reader, which `veclite-cli` turns on) declares 1.88 across the whole 8.x
+# line. Raise this only when a dependency or feature forces it.
+rust-version = "1.88"
 license = "Apache-2.0"
 repository = "https://github.com/hivellm/veclite"
 

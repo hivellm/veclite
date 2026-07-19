@@ -131,12 +131,14 @@ pub fn veclite::database::VecLite::create_alias(&self, &str, &str) -> veclite::e
 pub fn veclite::database::VecLite::create_collection(&self, &str, veclite::options::CollectionOptions) -> veclite::error::Result<veclite::collection::Collection>
 pub fn veclite::database::VecLite::delete_alias(&self, &str) -> veclite::error::Result<()>
 pub fn veclite::database::VecLite::delete_collection(&self, &str) -> veclite::error::Result<()>
+pub fn veclite::database::VecLite::deserialize(&[u8]) -> veclite::error::Result<Self>
 pub fn veclite::database::VecLite::list_collections(&self) -> alloc::vec::Vec<alloc::string::String>
 pub fn veclite::database::VecLite::memory() -> Self
 pub fn veclite::database::VecLite::open(impl core::convert::AsRef<std::path::Path>) -> veclite::error::Result<Self>
 pub fn veclite::database::VecLite::open_with(impl core::convert::AsRef<std::path::Path>, veclite::options::OpenOptions) -> veclite::error::Result<Self>
 pub fn veclite::database::VecLite::register_embedder(&self, &str, alloc::boxed::Box<dyn veclite::embedding::Embedder>) -> veclite::error::Result<()>
 pub fn veclite::database::VecLite::rename_collection(&self, &str, &str) -> veclite::error::Result<()>
+pub fn veclite::database::VecLite::serialize(&self) -> veclite::error::Result<alloc::vec::Vec<u8>>
 pub fn veclite::database::VecLite::snapshot(&self, impl core::convert::AsRef<std::path::Path>) -> veclite::error::Result<()>
 pub fn veclite::database::VecLite::vacuum(&self) -> veclite::error::Result<()>
 impl core::clone::Clone for veclite::database::VecLite
@@ -1249,12 +1251,14 @@ pub fn veclite::database::VecLite::create_alias(&self, &str, &str) -> veclite::e
 pub fn veclite::database::VecLite::create_collection(&self, &str, veclite::options::CollectionOptions) -> veclite::error::Result<veclite::collection::Collection>
 pub fn veclite::database::VecLite::delete_alias(&self, &str) -> veclite::error::Result<()>
 pub fn veclite::database::VecLite::delete_collection(&self, &str) -> veclite::error::Result<()>
+pub fn veclite::database::VecLite::deserialize(&[u8]) -> veclite::error::Result<Self>
 pub fn veclite::database::VecLite::list_collections(&self) -> alloc::vec::Vec<alloc::string::String>
 pub fn veclite::database::VecLite::memory() -> Self
 pub fn veclite::database::VecLite::open(impl core::convert::AsRef<std::path::Path>) -> veclite::error::Result<Self>
 pub fn veclite::database::VecLite::open_with(impl core::convert::AsRef<std::path::Path>, veclite::options::OpenOptions) -> veclite::error::Result<Self>
 pub fn veclite::database::VecLite::register_embedder(&self, &str, alloc::boxed::Box<dyn veclite::embedding::Embedder>) -> veclite::error::Result<()>
 pub fn veclite::database::VecLite::rename_collection(&self, &str, &str) -> veclite::error::Result<()>
+pub fn veclite::database::VecLite::serialize(&self) -> veclite::error::Result<alloc::vec::Vec<u8>>
 pub fn veclite::database::VecLite::snapshot(&self, impl core::convert::AsRef<std::path::Path>) -> veclite::error::Result<()>
 pub fn veclite::database::VecLite::vacuum(&self) -> veclite::error::Result<()>
 impl core::clone::Clone for veclite::database::VecLite

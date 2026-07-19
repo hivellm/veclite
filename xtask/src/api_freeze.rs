@@ -32,6 +32,10 @@ pub fn run(args: &[String]) -> i32 {
         }
     };
 
+    // Canonicalize before writing so the committed snapshot is the same bytes
+    // no matter which host blessed it.
+    let generated = canonicalize(&generated);
+
     let path = repo_root().join(SNAPSHOT);
     if bless {
         if let Err(e) = std::fs::write(&path, &generated) {
@@ -54,8 +58,8 @@ pub fn run(args: &[String]) -> i32 {
         }
     };
 
-    let gen_lines: Vec<&str> = generated.lines().collect();
-    let com_lines: Vec<&str> = normalize(&committed);
+    let gen_lines: Vec<String> = generated.lines().map(str::to_owned).collect();
+    let com_lines: Vec<String> = normalize(&committed);
     if gen_lines == com_lines {
         eprintln!(
             "[api-freeze] PASS — public API matches the frozen snapshot ({} items)",
@@ -109,19 +113,33 @@ fn generate() -> Result<String, GenErr> {
     String::from_utf8(output.stdout).map_err(|e| Fail(format!("non-UTF-8 output: {e}")))
 }
 
-/// Split into lines, tolerating a CRLF checkout of the committed snapshot.
-fn normalize(s: &str) -> Vec<&str> {
-    s.lines()
-        .map(|l| l.strip_suffix('\r').unwrap_or(l))
+/// Rewrite renderings that vary by host without the API itself changing.
+///
+/// `std::io::Error` is re-exported from `core`, and rustdoc resolves it to
+/// `core::io::error::Error` on some hosts and `std::io::error::Error` on
+/// others — the CI runner and a Windows checkout disagree. Left alone, the
+/// snapshot can only ever match the host it was blessed on, so a developer
+/// re-blessing locally breaks CI and vice versa. Canonicalizing both sides on
+/// the way in makes the snapshot host-independent.
+fn canonicalize(s: &str) -> String {
+    s.replace("core::io::", "std::io::")
+}
+
+/// Split into lines, tolerating a CRLF checkout of the committed snapshot and
+/// host-dependent path rendering.
+fn normalize(s: &str) -> Vec<String> {
+    canonicalize(s)
+        .lines()
+        .map(|l| l.strip_suffix('\r').unwrap_or(l).to_owned())
         .collect()
 }
 
 /// Print the added (+) and removed (−) items so a reviewer sees the surface delta
 /// without leaving the log. Order-independent set difference — the snapshot is
 /// already sorted by `cargo public-api`.
-fn report_diff(committed: &[&str], generated: &[&str]) {
-    let old: std::collections::BTreeSet<&str> = committed.iter().copied().collect();
-    let new: std::collections::BTreeSet<&str> = generated.iter().copied().collect();
+fn report_diff(committed: &[String], generated: &[String]) {
+    let old: std::collections::BTreeSet<&str> = committed.iter().map(String::as_str).collect();
+    let new: std::collections::BTreeSet<&str> = generated.iter().map(String::as_str).collect();
     for removed in old.difference(&new) {
         eprintln!("  - {removed}");
     }

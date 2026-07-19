@@ -81,22 +81,21 @@ fn project_payload(
     warnings: &mut Vec<String>,
 ) -> Option<Value> {
     let mut payload = payload?;
-    if auto_embed {
-        if let Some(object) = payload.as_object_mut() {
-            if let Some(text) = object.remove("_text") {
-                match object.entry("content".to_string()) {
-                    serde_json::map::Entry::Vacant(slot) => {
-                        slot.insert(text);
-                    }
-                    serde_json::map::Entry::Occupied(_) => {
-                        object.insert("_text".to_string(), text);
-                        warnings.push(format!(
-                            "collection {collection:?}, id {id:?}: payload already has a \
+    if auto_embed
+        && let Some(object) = payload.as_object_mut()
+        && let Some(text) = object.remove("_text")
+    {
+        match object.entry("content".to_string()) {
+            serde_json::map::Entry::Vacant(slot) => {
+                slot.insert(text);
+            }
+            serde_json::map::Entry::Occupied(_) => {
+                object.insert("_text".to_string(), text);
+                warnings.push(format!(
+                    "collection {collection:?}, id {id:?}: payload already has a \
                              \"content\" key; kept \"_text\" as-is instead of the server \
                              stored-text convention"
-                        ));
-                    }
-                }
+                ));
             }
         }
     }
@@ -262,17 +261,17 @@ pub fn export_vecdb(db: &VecLite, out_dir: &Path, options: &ExportOptions) -> Re
             sink.add(model::metadata_entry(name), "metadata", &metadata_json)?;
         }
 
-        if let Some(provider) = &config.embedding_provider {
-            if let Some(state) = handle.export_vocab_state()? {
-                match super::vocab::to_server_tokenizer(provider, &state)? {
-                    Some(tokenizer) => {
-                        sink.add(model::tokenizer_entry(name), "tokenizer", &tokenizer)?;
-                    }
-                    None => warnings.push(format!(
-                        "collection {name:?}: provider {provider:?} has no server tokenizer \
-                         form; the server re-fits its vocabulary from stored text"
-                    )),
+        if let Some(provider) = &config.embedding_provider
+            && let Some(state) = handle.export_vocab_state()?
+        {
+            match super::vocab::to_server_tokenizer(provider, &state)? {
+                Some(tokenizer) => {
+                    sink.add(model::tokenizer_entry(name), "tokenizer", &tokenizer)?;
                 }
+                None => warnings.push(format!(
+                    "collection {name:?}: provider {provider:?} has no server tokenizer \
+                         form; the server re-fits its vocabulary from stored text"
+                )),
             }
         }
 

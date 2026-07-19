@@ -39,7 +39,7 @@ Traceability chain: **PRD** requirement IDs (`FR-xx`, `NFR-xx`) → **DAG** task
 - RFC 2119 keywords (**MUST**, **MUST NOT**, **SHOULD**, **MAY**) are normative.
 - Requirement IDs are stable and referenced from commits, PRs, and tests. Removing or changing the meaning of an ID requires the same review bar as the behavior change itself.
 - Two hard freezes exist: the **storage format** freezes at gate G2 (after that, changes bump the format version) and the **public API** freezes at task T4.1 (after that, additive-only within 1.x).
-- Resolved [PRD open questions](../PRD.md#12-open-questions) so far: **OQ-2** → SPEC-016 REL-002 (own MSRV 1.87 — edition floor 1.85 raised by `hnsw_rs =0.3.4`; ADR-0001 removed the vectorizer-core dependency) · **OQ-3** → SPEC-012 WASM-011 (full-image OPFS buffering) · **OQ-4** → SPEC-014 header (separate `veclite-cli` crate) · **OQ-5** → SPEC-002 §3.1 (MessagePack everywhere). **OQ-1** (reference benchmark hardware) remains open until T1.6.
+- Resolved [PRD open questions](../PRD.md#12-open-questions) so far: **OQ-2** → SPEC-016 REL-002 (own MSRV 1.88 — edition floor 1.85 raised by `hnsw_rs =0.3.4` then `zip`; ADR-0001 removed the vectorizer-core dependency) · **OQ-3** → SPEC-012 WASM-011 (full-image OPFS buffering) · **OQ-4** → SPEC-014 header (separate `veclite-cli` crate) · **OQ-5** → SPEC-002 §3.1 (MessagePack everywhere). **OQ-1** (reference benchmark hardware) remains open until T1.6.
 - **ADR-0001** (`.rulebook/decisions/`): VecLite has **zero dependency on Vectorizer crates** — needed code is vendored copy-on-need with provenance headers; parity is enforced by the conformance corpus, not a shared crate.
 
 ## Change control

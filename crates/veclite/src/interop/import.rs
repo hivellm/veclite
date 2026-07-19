@@ -182,12 +182,13 @@ fn assemble_source(
                     ));
                 }
             }
-            if config.is_none() {
-                if let Some(config_value) = object.get("config") {
-                    config = Some(serde_json::from_value(config_value.clone()).map_err(|e| {
+            if config.is_none()
+                && let Some(config_value) = object.get("config")
+            {
+                config =
+                    Some(serde_json::from_value(config_value.clone()).map_err(|e| {
                         corrupt(format!("{name_from_file}: unreadable config: {e}"))
                     })?);
-                }
             }
         }
     }
@@ -485,16 +486,15 @@ pub fn import_vecdb(src: &Path, db: &VecLite, options: &ImportOptions) -> Result
         // Vocabulary before points, so nothing double-counts (EMB-030).
         if let (Some(provider), Some(tokenizer)) =
             (&plan.auto_embed_provider, &plan.source.tokenizer)
+            && plan.deferred_provider.is_none()
         {
-            if plan.deferred_provider.is_none() {
-                match super::vocab::from_server_tokenizer(provider, tokenizer)? {
-                    Some(state) => handle.replay_import_vocab(&state)?,
-                    None => warnings.push(format!(
-                        "collection {name:?}: tokenizer document does not match provider \
+            match super::vocab::from_server_tokenizer(provider, tokenizer)? {
+                Some(state) => handle.replay_import_vocab(&state)?,
+                None => warnings.push(format!(
+                    "collection {name:?}: tokenizer document does not match provider \
                          {provider:?}; vocabulary not restored — the provider re-fits from \
                          stored text on demand"
-                    )),
-                }
+                )),
             }
         }
 

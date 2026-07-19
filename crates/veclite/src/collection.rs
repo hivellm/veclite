@@ -212,10 +212,10 @@ impl CollectionData {
             return &self.vectors[o * dim..(o + 1) * dim];
         }
         #[cfg(not(target_arch = "wasm32"))]
-        if let Some(base) = &self.base {
-            if base.read_into(slot as u64, scratch) {
-                return &scratch[..];
-            }
+        if let Some(base) = &self.base
+            && base.read_into(slot as u64, scratch)
+        {
+            return &scratch[..];
         }
         // Unreachable by construction: slot < base_count implies a mapped
         // region covers it. Empty rather than a panic on a broken invariant.
@@ -573,14 +573,13 @@ impl Collection {
         if let Some(payload) = point.payload.as_ref() {
             // Top-level payload keys beginning with `_` are reserved (SPEC-006
             // FLT-002, e.g. `_text`); reject rather than silently store them.
-            if !allow_reserved {
-                if let Some(obj) = payload.as_object() {
-                    if let Some(reserved) = obj.keys().find(|k| k.starts_with('_')) {
-                        return Err(VecLiteError::InvalidArgument(format!(
-                            "payload key {reserved:?} is reserved (keys starting with '_')"
-                        )));
-                    }
-                }
+            if !allow_reserved
+                && let Some(obj) = payload.as_object()
+                && let Some(reserved) = obj.keys().find(|k| k.starts_with('_'))
+            {
+                return Err(VecLiteError::InvalidArgument(format!(
+                    "payload key {reserved:?} is reserved (keys starting with '_')"
+                )));
             }
             // Payload size limit (SPEC-002 §8 / FLT-001): 16 MiB. Checked on the
             // serialized (uncompressed) form — a conservative bound, since the
@@ -701,12 +700,12 @@ impl Collection {
             let mut emb = embedder.lock();
             for (id, text, user_payload) in items {
                 // The user payload may not carry reserved keys.
-                if let Some(obj) = user_payload.as_ref().and_then(|v| v.as_object()) {
-                    if let Some(reserved) = obj.keys().find(|k| k.starts_with('_')) {
-                        return Err(VecLiteError::InvalidArgument(format!(
-                            "payload key {reserved:?} is reserved (keys starting with '_')"
-                        )));
-                    }
+                if let Some(obj) = user_payload.as_ref().and_then(|v| v.as_object())
+                    && let Some(reserved) = obj.keys().find(|k| k.starts_with('_'))
+                {
+                    return Err(VecLiteError::InvalidArgument(format!(
+                        "payload key {reserved:?} is reserved (keys starting with '_')"
+                    )));
                 }
                 emb.add_document(&text);
                 let vector = embed_nonzero(&**emb, &text, self.inner.config.dimension)?;
@@ -790,12 +789,11 @@ impl Collection {
             let data = self.inner.data.read();
             let mut out = Vec::new();
             for slot in 0..data.ids.len() {
-                if data.id_to_slot.get(&data.ids[slot]) == Some(&slot) {
-                    if let Some(payload) = data.payloads[slot].as_ref() {
-                        if let Some(text) = payload.get("_text").and_then(|t| t.as_str()) {
-                            out.push((data.ids[slot].clone(), text.to_owned(), payload.clone()));
-                        }
-                    }
+                if data.id_to_slot.get(&data.ids[slot]) == Some(&slot)
+                    && let Some(payload) = data.payloads[slot].as_ref()
+                    && let Some(text) = payload.get("_text").and_then(|t| t.as_str())
+                {
+                    out.push((data.ids[slot].clone(), text.to_owned(), payload.clone()));
                 }
             }
             out
@@ -1040,10 +1038,10 @@ impl Collection {
             if data.id_to_slot.get(&data.ids[slot]) != Some(&slot) {
                 continue; // tombstoned or replaced
             }
-            if let Some(f) = filter {
-                if !f.matches(data.payloads[slot].as_ref()) {
-                    continue;
-                }
+            if let Some(f) = filter
+                && !f.matches(data.payloads[slot].as_ref())
+            {
+                continue;
             }
             if points.len() == limit {
                 // There is at least one more live match → hand back a cursor.
@@ -1114,10 +1112,10 @@ impl Collection {
             if data.id_to_slot.get(&data.ids[slot]) != Some(&slot) {
                 continue;
             }
-            if let Some(f) = filter {
-                if !f.matches(data.payloads[slot].as_ref()) {
-                    continue;
-                }
+            if let Some(f) = filter
+                && !f.matches(data.payloads[slot].as_ref())
+            {
+                continue;
             }
             if let Some(sp) = &data.sparses[slot] {
                 let score = sp.dot(query);
@@ -1961,42 +1959,42 @@ fn filtered_planner(
             return;
         }
     }
-    if live >= POSTFILTER_MIN_LIVE {
-        if let Some(index) = &data.index {
-            let total = data.ids.len();
-            let mut fetch = limit.saturating_mul(4).max(64).min(total);
-            loop {
-                out.clear();
-                let ef = fetch.clamp(ef_search, *EF_SEARCH_BOUNDS.end());
-                let Ok(found) = index.search(query, fetch, ef) else {
-                    break; // bounds are clamped; defensively fall back to scan
-                };
-                // `found` is distance-ordered, so the matching prefix is the
-                // filtered top-`limit` under the same ordering as unfiltered
-                // search.
-                for (slot, distance) in found {
-                    if data.id_to_slot.get(&data.ids[slot]) == Some(&slot)
-                        && filter.matches(data.payloads[slot].as_ref())
-                    {
-                        out.push((slot, distance_to_score(metric, distance)));
-                        if out.len() == limit {
-                            break;
-                        }
+    if live >= POSTFILTER_MIN_LIVE
+        && let Some(index) = &data.index
+    {
+        let total = data.ids.len();
+        let mut fetch = limit.saturating_mul(4).max(64).min(total);
+        loop {
+            out.clear();
+            let ef = fetch.clamp(ef_search, *EF_SEARCH_BOUNDS.end());
+            let Ok(found) = index.search(query, fetch, ef) else {
+                break; // bounds are clamped; defensively fall back to scan
+            };
+            // `found` is distance-ordered, so the matching prefix is the
+            // filtered top-`limit` under the same ordering as unfiltered
+            // search.
+            for (slot, distance) in found {
+                if data.id_to_slot.get(&data.ids[slot]) == Some(&slot)
+                    && filter.matches(data.payloads[slot].as_ref())
+                {
+                    out.push((slot, distance_to_score(metric, distance)));
+                    if out.len() == limit {
+                        break;
                     }
                 }
-                if out.len() >= limit {
-                    return;
-                }
-                if fetch >= total {
-                    break;
-                }
-                fetch = fetch.saturating_mul(4).min(total);
             }
-            // Growth exhausted below `limit` matches: only an exact pass can
-            // tell whether the graph under-returned or the matches genuinely
-            // run out — take the exact answer (FLT-031).
-            out.clear();
+            if out.len() >= limit {
+                return;
+            }
+            if fetch >= total {
+                break;
+            }
+            fetch = fetch.saturating_mul(4).min(total);
         }
+        // Growth exhausted below `limit` matches: only an exact pass can
+        // tell whether the graph under-returned or the matches genuinely
+        // run out — take the exact answer (FLT-031).
+        out.clear();
     }
     filtered_scan(data, query, metric, dim, filter, out);
 }

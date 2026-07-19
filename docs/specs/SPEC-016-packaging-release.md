@@ -12,7 +12,7 @@ Requirement IDs `REL-xxx`.
 ## 1. Workspace & repository
 
 - **REL-001** Repo `hivellm/veclite`, layout per [02-architecture §repository layout](../vectorizer-lite/02-architecture.md): `crates/{veclite, veclite-ffi, veclite-py, veclite-node, veclite-wasm, veclite-cli}`, `bindings/{go, csharp}`, `docs/`, `tests/`.
-- **REL-002** MSRV (resolves OQ-2): VecLite pins its **own** MSRV in `Cargo.toml` (`rust-version`, currently **1.87** — edition 2024 floors at 1.85, but the pinned `hnsw_rs =0.3.4` uses `is_multiple_of`, stable in 1.87), tested in CI; bumping MSRV is a minor-version event, announced in the changelog. (Originally "track vectorizer-core"; superseded by ADR-0001.)
+- **REL-002** MSRV (resolves OQ-2): VecLite pins its **own** MSRV in `Cargo.toml` (`rust-version`, currently **1.88**), tested in CI; bumping MSRV is a minor-version event, announced in the changelog. The floor is set by the dependency graph, not the edition: edition 2024 floors at 1.85, the pinned `hnsw_rs =0.3.4` raises it to 1.87 (`is_multiple_of`), and `zip` — pulled in by `vecdb-interop`, which `veclite-cli` enables — declares 1.88 across its whole 8.x line. (Originally "track vectorizer-core"; superseded by ADR-0001.)
 - **REL-003** Conventional Commits (`feat`/`fix`/`perf`/…); changelog generated per release. No git submodules; **no dependency on any Vectorizer crate via crates.io, git, or path** — needed code is vendored (ADR-0001, CORE-001).
 
 ## 2. CI matrix

@@ -286,10 +286,10 @@ impl Filter {
             match c {
                 Condition::Nested(inner) => inner.validate()?,
                 other => {
-                    if let Some(k) = other.key() {
-                        if k.contains('.') {
-                            return Err(unsupported(&format!("nested-path key '{k}'")));
-                        }
+                    if let Some(k) = other.key()
+                        && k.contains('.')
+                    {
+                        return Err(unsupported(&format!("nested-path key '{k}'")));
                     }
                 }
             }

@@ -212,18 +212,16 @@ pub fn verify_file(path: &Path) -> Result<VerifyReport> {
             // Deep pass only over intact frames — a frame finding already
             // condemns the collection, and decoding a partial set would
             // produce misleading follow-on findings.
-            if !collection_damaged {
-                if let Err(e) = crate::persist::seal::load(&segments) {
-                    findings.push(Finding {
-                        offset: entry
-                            .live_segments
-                            .first()
-                            .map_or(HEADER_SIZE as u64, |s| s.offset),
-                        segment_type: None,
-                        collection: Some(entry.name.clone()),
-                        detail: format!("collection state does not reconstruct: {e}"),
-                    });
-                }
+            if !collection_damaged && let Err(e) = crate::persist::seal::load(&segments) {
+                findings.push(Finding {
+                    offset: entry
+                        .live_segments
+                        .first()
+                        .map_or(HEADER_SIZE as u64, |s| s.offset),
+                    segment_type: None,
+                    collection: Some(entry.name.clone()),
+                    detail: format!("collection state does not reconstruct: {e}"),
+                });
             }
         }
     }

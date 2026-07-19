@@ -263,11 +263,11 @@ fn soak(args: &Args) -> Result<Report, String> {
                     );
                     texts.upsert_text(&id, &text).map_err(|e| e.to_string())?;
                     text_oracle.insert(id, text);
-                    if text_oracle.len() > args.live_cap / 4 {
-                        if let Some(id) = text_oracle.keys().next().cloned() {
-                            texts.delete(&id).map_err(|e| e.to_string())?;
-                            text_oracle.remove(&id);
-                        }
+                    if text_oracle.len() > args.live_cap / 4
+                        && let Some(id) = text_oracle.keys().next().cloned()
+                    {
+                        texts.delete(&id).map_err(|e| e.to_string())?;
+                        text_oracle.remove(&id);
                     }
                     let hits = texts
                         .search_text("durability topic", 5)

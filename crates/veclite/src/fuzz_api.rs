@@ -39,10 +39,10 @@ pub fn run_config(data: &[u8]) {
 
 /// Portable filter document parsing (SPEC-006 §JSON).
 pub fn run_filter(data: &[u8]) {
-    if let Ok(text) = core::str::from_utf8(data) {
-        if let Ok(value) = serde_json::from_str::<serde_json::Value>(text) {
-            let _ = crate::filter::Filter::from_json(&value);
-        }
+    if let Ok(text) = core::str::from_utf8(data)
+        && let Ok(value) = serde_json::from_str::<serde_json::Value>(text)
+    {
+        let _ = crate::filter::Filter::from_json(&value);
     }
 }
 
