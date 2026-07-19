@@ -10,9 +10,9 @@
 |--------|------|----------|-------------|
 | ⬚ | phase6c_release-1-0 | 0/13 | release 1 0 |
 
-## phase6d
+## phase6e
 
 | Status | Task | Progress | Description |
 |--------|------|----------|-------------|
-| ⬚ | phase6d_binding-metric-and-text-search-fixes | 0/5 | binding metric and text search fixes |
+| ⬚ | phase6e_checkpoint-segment-reuse | 0/5 | checkpoint segment reuse |
 
