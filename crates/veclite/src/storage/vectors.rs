@@ -293,6 +293,15 @@ impl<'a> VectorsView<'a> {
 fn stride_for(encoding: Encoding, dimension: u32) -> Result<usize> {
     let dim = usize::try_from(dimension)
         .map_err(|_| VecLiteError::Corrupt("vectors: dimension exceeds usize".to_owned()))?;
+    // A zero dimension yields a zero stride, which leaves `count` unconstrained
+    // by the record-block length (`stride * count == 0` for any count) — an
+    // attacker-controlled `count` up to u64::MAX then drives an unbounded
+    // `vec![None; count]` in `seal::load` (capacity-overflow panic, found by
+    // the SPEC-015 `image` fuzz target). The engine enforces `dimension >= 1`
+    // at create time (CORE-020), so a zero-dimension VECTORS body is corrupt.
+    if dim == 0 {
+        return Err(VecLiteError::Corrupt("vectors: zero dimension".to_owned()));
+    }
     Ok(match encoding {
         Encoding::F32 => dim
             .checked_mul(4)
@@ -511,6 +520,27 @@ mod tests {
         ));
         assert!(matches!(
             VectorsBody::decode(&[]),
+            Err(VecLiteError::Corrupt(_))
+        ));
+    }
+
+    #[test]
+    fn zero_dimension_with_huge_count_is_corrupt_not_capacity_overflow() {
+        // dimension 0 → stride 0, so an arbitrary `count` satisfies the
+        // `stride * count == records.len()` (0 == 0) check. Without the
+        // stride-zero guard this count flows into `vec![None; count]` in
+        // seal::load and overflows Vec's capacity (SPEC-015 image target).
+        let mut bytes = vec![Encoding::F32.to_byte()];
+        bytes.extend_from_slice(&0u32.to_le_bytes()); // dimension 0
+        bytes.extend_from_slice(&u64::MAX.to_le_bytes()); // count
+        bytes.extend_from_slice(&0u64.to_le_bytes()); // first_slot
+        assert!(matches!(
+            VectorsBody::decode(&bytes),
+            Err(VecLiteError::Corrupt(ref m)) if m.contains("zero dimension")
+        ));
+        // The mmap view path shares `stride_for`, so it is guarded too.
+        assert!(matches!(
+            VectorsView::parse(&bytes),
             Err(VecLiteError::Corrupt(_))
         ));
     }

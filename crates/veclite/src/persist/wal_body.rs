@@ -14,8 +14,12 @@ pub(crate) fn encode<T: Serialize + ?Sized>(value: &T) -> Result<Vec<u8>> {
 }
 
 /// Decode a WAL body during replay; a malformed body is treated as `Corrupt`
-/// (it terminates replay like a torn tail — WAL-011).
+/// (it terminates replay like a torn tail — WAL-011). The depth guard bounds
+/// nesting before rmp-serde's unbounded recursion (a fuzzed WAL body decodes
+/// into `Vec<Point>` whose payloads are attacker-controlled `serde_json::Value`
+/// — SPEC-015 `wal` target).
 pub(crate) fn decode<T: for<'de> Deserialize<'de>>(bytes: &[u8], op: &str) -> Result<T> {
+    crate::storage::body::guard_msgpack_depth(bytes)?;
     rmp_serde::from_slice(bytes).map_err(|e| VecLiteError::Corrupt(format!("wal body {op}: {e}")))
 }
 

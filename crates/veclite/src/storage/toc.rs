@@ -65,6 +65,9 @@ impl Toc {
 
     /// Decode a TOC body; any malformation is `Corrupt("toc")` (STG-051).
     pub(crate) fn decode(bytes: &[u8]) -> Result<Toc> {
+        // Bound container nesting before rmp-serde recurses through it (a
+        // fuzzed TOC nests arrays where fixed fields are expected — SPEC-015).
+        crate::storage::body::guard_msgpack_depth(bytes)?;
         rmp_serde::from_slice(bytes).map_err(|e| VecLiteError::Corrupt(format!("toc: {e}")))
     }
 }

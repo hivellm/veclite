@@ -24,6 +24,132 @@ fn slice<'a>(b: &'a [u8], at: usize, len: usize, what: &str) -> Result<&'a [u8]>
         .ok_or_else(|| VecLiteError::Corrupt(format!("{what}: field past end of body")))
 }
 
+/// Maximum MessagePack container nesting accepted from untrusted bytes.
+/// rmp-serde recurses one stack frame per nesting level with no built-in
+/// limit, so a deeply nested array/map (a fuzzed or corrupt file) overflows
+/// the stack before it can be rejected — found by the SPEC-015 `image` and
+/// `wal` fuzz targets, which decode attacker-controlled payloads into
+/// `serde_json::Value`. The bound must be safe on the smallest reasonable
+/// stack (Windows' 1 MiB main thread, debug builds with large frames), not
+/// just an 8 MiB Linux stack. rmp-serde's recursive `Value` decode carries a
+/// heavy per-level frame in debug (~tens of KiB), so the deepest accepted
+/// decode must stay comfortably under 1 MiB: 16 levels clears every real
+/// payload (documents nest a handful deep) with wide margin, and anything
+/// deeper is rejected here before rmp-serde recurses into it.
+pub(crate) const MAX_MSGPACK_DEPTH: usize = 16;
+
+/// Reject MessagePack whose container nesting exceeds [`MAX_MSGPACK_DEPTH`]
+/// before it reaches rmp-serde's unbounded recursive decoder (STG-021). A
+/// single non-recursive pass over the first value: each open container pushes
+/// its child count onto an explicit stack; the live stack height is the depth.
+/// Structurally short/truncated input is left for rmp-serde to report — this
+/// guard only bounds depth, so a well-formed shallow value always passes.
+pub(crate) fn guard_msgpack_depth(bytes: &[u8]) -> Result<()> {
+    fn be_len(b: &[u8], at: usize, n: usize) -> Result<usize> {
+        let raw = slice(b, at, n, "msgpack length")?;
+        Ok(raw
+            .iter()
+            .fold(0usize, |acc, &byte| (acc << 8) | byte as usize))
+    }
+    let too_deep =
+        || VecLiteError::Corrupt(format!("payload: nesting exceeds {MAX_MSGPACK_DEPTH}"));
+
+    // Each stack entry is the number of child elements still expected in an
+    // open container; the top-level value is modeled as one expected child.
+    let mut expected: Vec<u64> = vec![1];
+    let mut at = 0usize;
+    while let Some(&remaining) = expected.last() {
+        if remaining == 0 {
+            expected.pop();
+            continue;
+        }
+        if let Some(top) = expected.last_mut() {
+            *top -= 1;
+        }
+        if expected.len() > MAX_MSGPACK_DEPTH {
+            return Err(too_deep());
+        }
+        let Some(&marker) = bytes.get(at) else {
+            // Truncated: not this guard's job — hand it to rmp-serde, which
+            // reports the precise structural error.
+            return Ok(());
+        };
+        at += 1;
+        let mut skip = 0usize;
+        let mut children = 0u64;
+        match marker {
+            // fixint (pos/neg), nil, false, true — atoms, no body.
+            0x00..=0x7f | 0xe0..=0xff | 0xc0 | 0xc2 | 0xc3 => {}
+            0xc1 => {
+                return Err(VecLiteError::Corrupt(
+                    "payload: reserved msgpack marker".into(),
+                ));
+            }
+            0x80..=0x8f => children = 2 * u64::from(marker & 0x0f), // fixmap
+            0x90..=0x9f => children = u64::from(marker & 0x0f),     // fixarray
+            0xa0..=0xbf => skip = usize::from(marker & 0x1f),       // fixstr
+            0xcc | 0xd0 => skip = 1,                                // u8 / i8
+            0xcd | 0xd1 => skip = 2,                                // u16 / i16
+            0xca | 0xce | 0xd2 => skip = 4,                         // f32 / u32 / i32
+            0xcb | 0xcf | 0xd3 => skip = 8,                         // f64 / u64 / i64
+            0xd4 => skip = 2,                                       // fixext1 (type+1)
+            0xd5 => skip = 3,                                       // fixext2
+            0xd6 => skip = 5,                                       // fixext4
+            0xd7 => skip = 9,                                       // fixext8
+            0xd8 => skip = 17,                                      // fixext16
+            0xc4 | 0xd9 => {
+                skip = be_len(bytes, at, 1)?; // bin8 / str8
+                at += 1;
+            }
+            0xc5 | 0xda => {
+                skip = be_len(bytes, at, 2)?; // bin16 / str16
+                at += 2;
+            }
+            0xc6 | 0xdb => {
+                skip = be_len(bytes, at, 4)?; // bin32 / str32
+                at += 4;
+            }
+            0xc7 => {
+                skip = be_len(bytes, at, 1)? + 1; // ext8 (len + type)
+                at += 1;
+            }
+            0xc8 => {
+                skip = be_len(bytes, at, 2)? + 1; // ext16
+                at += 2;
+            }
+            0xc9 => {
+                skip = be_len(bytes, at, 4)? + 1; // ext32
+                at += 4;
+            }
+            0xdc => {
+                children = be_len(bytes, at, 2)? as u64; // array16
+                at += 2;
+            }
+            0xdd => {
+                children = be_len(bytes, at, 4)? as u64; // array32
+                at += 4;
+            }
+            0xde => {
+                children = 2 * be_len(bytes, at, 2)? as u64; // map16
+                at += 2;
+            }
+            0xdf => {
+                children = 2 * be_len(bytes, at, 4)? as u64; // map32
+                at += 4;
+            }
+        }
+        match at.checked_add(skip) {
+            Some(next) if next <= bytes.len() => at = next,
+            // Body runs past the slice — truncated; leave it for rmp-serde.
+            _ => return Ok(()),
+        }
+        if children > 0 {
+            expected.push(children);
+        }
+    }
+    Ok(())
+}
+
 // ── CONFIG (seg_type 1) ──────────────────────────────────────────────────
 
 /// On-disk collection config (SPEC-002 §3.1). A flat projection of the runtime
@@ -48,6 +174,11 @@ impl StoredConfig {
         rmp_serde::to_vec(self).map_err(|e| corrupt("config", e))
     }
     pub(crate) fn decode(b: &[u8]) -> Result<StoredConfig> {
+        // Even a fixed-shape struct recurses in rmp-serde when the input nests
+        // containers where scalar fields are expected (serde walks and skips
+        // them). Bound the nesting before that recursion (SPEC-015 `config`
+        // fuzz target).
+        guard_msgpack_depth(b)?;
         rmp_serde::from_slice(b).map_err(|e| corrupt("config", e))
     }
 }
@@ -99,6 +230,7 @@ impl PayloadBlock {
             let len = le::u32(b, at, "payload")? as usize;
             at += 4;
             let bytes = slice(b, at, len, "payload")?;
+            guard_msgpack_depth(bytes)?;
             let value: Value = rmp_serde::from_slice(bytes).map_err(|e| corrupt("payload", e))?;
             at += len;
             entries.push((slot, value));
@@ -324,6 +456,42 @@ mod tests {
         );
         assert!(matches!(
             PayloadBlock::decode(&bytes[..bytes.len() - 3]),
+            Err(VecLiteError::Corrupt(_))
+        ));
+    }
+
+    #[test]
+    fn deep_msgpack_payload_is_rejected_not_overflowed() {
+        // Nest fixarrays (0x91 = 1-element array) far past the limit, then a
+        // nil leaf. rmp-serde would recurse per level and overflow the stack;
+        // the guard rejects it as Corrupt in a single non-recursive pass.
+        let depth = MAX_MSGPACK_DEPTH + 5000;
+        let mut deep = vec![0x91u8; depth];
+        deep.push(0xc0); // nil leaf
+        assert!(matches!(
+            guard_msgpack_depth(&deep),
+            Err(VecLiteError::Corrupt(ref m)) if m.contains("nesting")
+        ));
+
+        // A real payload nested well within the limit passes the guard and
+        // decodes identically to a direct rmp round trip.
+        let value = serde_json::json!({"a": {"b": {"c": [1, 2, {"d": true}]}}});
+        let mp = rmp_serde::to_vec(&value).unwrap_or_else(|e| panic!("{e}"));
+        guard_msgpack_depth(&mp).unwrap_or_else(|e| panic!("legit payload rejected: {e}"));
+        let back: Value = rmp_serde::from_slice(&mp).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(back, value);
+
+        // The exact fuzz reproducer that first overflowed the stack: whatever
+        // it is structurally, decode must return a typed error, never panic.
+        let deep_block = {
+            let mut body = Vec::new();
+            body.extend_from_slice(&0u64.to_le_bytes()); // slot
+            body.extend_from_slice(&(deep.len() as u32).to_le_bytes());
+            body.extend_from_slice(&deep);
+            body
+        };
+        assert!(matches!(
+            PayloadBlock::decode(&deep_block),
             Err(VecLiteError::Corrupt(_))
         ));
     }
