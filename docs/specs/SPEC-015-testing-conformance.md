@@ -58,9 +58,12 @@ Requirement IDs `TST-xxx`. Repository layout: `tests/crash/`, `tests/compat/`, `
 
 ## 6. Fuzzing, soak, sanitizers (G6)
 
-- **TST-050** cargo-fuzz targets: file/header/TOC/segment parser, WAL replay, filter document parser, MessagePack option decoding. 72 h accumulated clean before 1.0; corpus committed for regression.
-- **TST-051** 24 h soak: continuous write/search/vacuum/snapshot loop with invariant checks; mmap dataset 4× RAM (memory-pressure path); zero leaks (RSS plateau), zero errors.
-- **TST-052** Sanitizers: ASan + TSan runs of the integration suite; targeted `loom` models for the checkpoint/reader TOC-swap interleavings (CORE-054).
+Machinery implemented in phase6a; the 72 h / 24 h figures are **accumulated
+across runs** (evidence logs committed) and gate the 1.0 release (phase6c).
+
+- **TST-050** cargo-fuzz targets: file/header/TOC/segment parser, WAL replay, filter document parser, MessagePack option decoding. 72 h accumulated clean before 1.0; corpus committed for regression. — `fuzz/` (7 targets over `veclite::fuzz_api`), `cargo xtask fuzz-seed` / `fuzz` (native on Linux, containerized on Windows), committed corpus replayed on stable by the `fuzz_regression` test in the normal gate; accumulation trail in `fuzz/accumulation.log`.
+- **TST-051** 24 h soak: continuous write/search/vacuum/snapshot loop with invariant checks; mmap dataset 4× RAM (memory-pressure path); zero leaks (RSS plateau), zero errors. — `cargo xtask soak [--minutes N] [--mmap-pressure] [--budget-mb M]`: oracle-checked operation mix, verify-clean snapshots, RSS plateau verdict (first/last-quartile medians, 1.15× limit); the pressure mode builds 4× the `memory_budget` and runs on the mmap exact-scan tier; trail in `tests/soak/accumulation.log`.
+- **TST-052** Sanitizers: ASan + TSan runs of the integration suite; targeted `loom` models for the checkpoint/reader TOC-swap interleavings (CORE-054). — `cargo xtask sanitize <asan|tsan>` (nightly `-Zbuild-std`, Linux target; containerized on Windows; `onnx` excluded — prebuilt foreign runtime); loom models in `crates/veclite/tests/loom_toc_swap.rs` (root-pointer publish ordering, checkpoint-snapshot consistency, exactly-once threshold checkpoint — each verified sensitive to a weakened ordering).
 
 ## 7. Acceptance criteria
 
