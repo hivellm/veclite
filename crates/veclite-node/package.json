@@ -1,6 +1,6 @@
 {
   "name": "@hivehub/veclite",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publishConfig": {
     "access": "public"
   },
@@ -26,12 +26,12 @@
   },
   "files": ["veclite.js", "veclite.d.ts", "index.js", "index.d.ts"],
   "optionalDependencies": {
-    "@hivehub/veclite-darwin-arm64": "0.1.0",
-    "@hivehub/veclite-darwin-x64": "0.1.0",
-    "@hivehub/veclite-linux-arm64-gnu": "0.1.0",
-    "@hivehub/veclite-linux-x64-gnu": "0.1.0",
-    "@hivehub/veclite-linux-x64-musl": "0.1.0",
-    "@hivehub/veclite-win32-x64-msvc": "0.1.0"
+    "@hivehub/veclite-darwin-arm64": "0.1.1",
+    "@hivehub/veclite-darwin-x64": "0.1.1",
+    "@hivehub/veclite-linux-arm64-gnu": "0.1.1",
+    "@hivehub/veclite-linux-x64-gnu": "0.1.1",
+    "@hivehub/veclite-linux-x64-musl": "0.1.1",
+    "@hivehub/veclite-win32-x64-msvc": "0.1.1"
   },
   "engines": {
     "node": ">= 18"

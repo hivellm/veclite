@@ -12,7 +12,7 @@ exclude = ["crates/veclite-py", "crates/veclite-node", "crates/veclite-wasm", "f
 default-members = ["crates/veclite"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 # Own MSRV (REL-002, ADR-0001). Edition 2024 floors at 1.85, but the pinned
 # `hnsw_rs =0.3.4` (CORE-030) uses `is_multiple_of` (stable in 1.87), so 1.87 is
@@ -26,7 +26,7 @@ repository = "https://github.com/hivellm/veclite"
 # the sibling crates (`veclite-cli`, `veclite-ffi`) must carry one to be
 # publishable. Declared once here and kept in lockstep with
 # `workspace.package.version` on every release bump.
-veclite = { package = "hivellm-veclite", path = "crates/veclite", version = "0.1.0" }
+veclite = { package = "hivellm-veclite", path = "crates/veclite", version = "0.1.1" }
 thiserror = "2.0"
 dashmap = "6.1"
 parking_lot = "0.12"

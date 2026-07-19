@@ -12,6 +12,7 @@ license.workspace = true
 repository.workspace = true
 keywords = ["vector-database", "embeddings", "search", "embedded", "hnsw"]
 categories = ["database", "data-structures"]
+readme = "../../README.md"
 
 [lib]
 # Decoupled from the org-prefixed package name: consumers keep writing
