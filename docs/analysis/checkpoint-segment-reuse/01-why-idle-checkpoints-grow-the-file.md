@@ -6,12 +6,12 @@ Opening and closing a database with **zero writes** adds a full copy of its
 segments each time:
 
 ```
-inicial            17209
-apos 1 open/close  30316
-apos 2 open/close  43423
-apos 3 open/close  56530
-apos 4 open/close  69641
-apos 5 open/close  82756
+initial            17209
+after 1 open/close 30316
+after 2 open/close 43423
+after 3 open/close 56530
+after 4 open/close 69641
+after 5 open/close 82756
 ```
 
 Explicit checkpoints behave the same: ~21.5 KB per no-op checkpoint on a
