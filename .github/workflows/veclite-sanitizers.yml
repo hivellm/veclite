@@ -1,11 +1,13 @@
 name: VecLite Sanitizers
 
-# ASan/LSan + TSan C smoke tests for the C ABI (SPEC-008 phase4g TST-2.1/2.2).
-# full_smoke.c runs the whole lifecycle under AddressSanitizer + LeakSanitizer
-# (zero leaks); concurrency.c hammers one vl_db from 16 threads under
-# ThreadSanitizer (no data races). TSan needs the Rust library instrumented, so
-# it uses nightly + -Zbuild-std. The gate also runs locally on Linux (Docker on
-# Windows) via `tests/c/sanitize.sh` / `cargo xtask sanitize`.
+# Sanitizer gates (SPEC-008 phase4g TST-2.1/2.2). ASan + LeakSanitizer runs
+# the C ABI smoke programs — full_smoke.c (whole lifecycle, zero leaks) and
+# concurrency.c (one vl_db hammered from 16 threads). TSan runs the crate's
+# test suite with an instrumented std (nightly + -Zbuild-std, rustc-linked):
+# linking the instrumented staticlib into a clang-linked C main SEGVs in
+# __tsan_func_entry regardless of clang/nightly version — see the header of
+# tests/c/sanitize.sh. The gate also runs locally on Linux (Docker on Windows)
+# via `tests/c/sanitize.sh` / `cargo xtask sanitize`.
 
 on:
   push:
@@ -39,7 +41,7 @@ jobs:
         run: tests/c/sanitize.sh asan
 
   tsan:
-    name: ThreadSanitizer (16-thread concurrency)
+    name: ThreadSanitizer (instrumented test suite)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -49,11 +51,5 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: sanitize-tsan
-      # Ubuntu 24.04 runners default to vm.mmap_rnd_bits=32; TSan's shadow
-      # mapping can't cope and the instrumented binary SEGVs on the zero page
-      # at startup, before any test runs (a DEADLYSIGNAL storm, no race
-      # report). 28 bits is the documented sanitizer-compatible setting.
-      - name: Reduce ASLR entropy for TSan
-        run: sudo sysctl -w vm.mmap_rnd_bits=28
       - name: TSan
         run: tests/c/sanitize.sh tsan

@@ -124,9 +124,14 @@ jobs:
             echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
             echo "CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
           else
-            sudo apt-get install -y musl-tools
-            echo "CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=musl-gcc" >> "$GITHUB_ENV"
-            echo "CC_x86_64_unknown_linux_musl=musl-gcc" >> "$GITHUB_ENV"
+            # Not apt's musl-tools: its musl-gcc wrapper has no libgcc_s.so.1
+            # in the musl sysroot, and the napi cdylib links -lgcc_s
+            # dynamically ("/usr/bin/ld: cannot find libgcc_s.so.1"). The
+            # musl.cc cross toolchain ships it (verified in the tarball).
+            curl -fsSL https://musl.cc/x86_64-linux-musl-cross.tgz | sudo tar -xz -C /opt
+            echo "/opt/x86_64-linux-musl-cross/bin" >> "$GITHUB_PATH"
+            echo "CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=x86_64-linux-musl-gcc" >> "$GITHUB_ENV"
+            echo "CC_x86_64_unknown_linux_musl=x86_64-linux-musl-gcc" >> "$GITHUB_ENV"
           fi
 
       - uses: Swatinem/rust-cache@v2
