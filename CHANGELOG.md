@@ -9,6 +9,17 @@ Versions 0.x are pre-release: the public API may change between minors until 1.0
 ## [Unreleased]
 
 ### Fixed
+- **A crash during database creation can no longer leave an unopenable file**
+  (SPEC-002 STG-053). The very first commit writes the gen-0 TOC before the
+  header, and a brand-new file has no previous header→TOC chain to fall back
+  on, so a process killed inside that window left a file with a zeroed header
+  that failed every later open with `Corrupt("header: bad magic")`. Creation
+  now materializes the initial generation in a sibling `-new` temp file and
+  atomically renames it into place: a crash mid-creation leaves nothing at the
+  target path. Found by the kill-9 harness (`cargo xtask crash`), which hit it
+  on the Windows CI runner at iteration 0 — the window is a few fsyncs wide,
+  so slow disks hit it hardest. Existing databases are unaffected; the format
+  is unchanged.
 - **A checkpoint with nothing to persist no longer grows the file** (task
   `phase6e`, SPEC-002 STG-052). Opening and closing a database with zero writes
   added a full copy of its segments each time — ~13 KB per cycle on a small

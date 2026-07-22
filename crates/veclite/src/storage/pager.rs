@@ -35,6 +35,14 @@ fn as_usize(v: u64, ctx: &str) -> Result<usize> {
     usize::try_from(v).map_err(|_| VecLiteError::Corrupt(format!("{ctx}: offset exceeds usize")))
 }
 
+/// Sibling temp path (`<name>-new`) used while materializing a brand-new
+/// database file, mirroring vacuum's `<name>-vac` convention.
+fn creation_temp_path(db: &Path) -> PathBuf {
+    let mut name = db.file_name().unwrap_or_default().to_os_string();
+    name.push("-new");
+    db.with_file_name(name)
+}
+
 /// Read and validate the committed header→TOC chain from a freshly opened file
 /// (STG-010/051): decode the header, CRC-check and decode the TOC it points at,
 /// and compute the next-append tail. Shared by `open` and `replace_with`.
@@ -79,21 +87,35 @@ fn lock_file(file: &std::fs::File, exclusive: bool) -> Result<()> {
 impl Pager {
     /// Create a brand-new file with a fresh v4 uuid and an initial empty
     /// checkpoint (generation 0). Fails if the file already exists.
+    ///
+    /// The initial generation is materialized in a sibling temp file and
+    /// renamed into place. STG-050's crash-safety argument needs a previous
+    /// header→TOC chain to fall back on, and a brand-new file has none: its
+    /// TOC is appended before the header is written, so a kill inside the
+    /// first checkpoint left a zeroed header and a permanently unopenable
+    /// file (caught by the kill-9 harness, `xtask crash`). The rename is
+    /// atomic on the same volume, so a crash mid-creation leaves nothing at
+    /// `path` at all.
     pub(crate) fn create(path: &Path, created_epoch_s: u64) -> Result<Pager> {
-        let file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create_new(true)
-            .open(path)?;
-        lock_file(&file, true)?;
-        let mut pager = Pager {
-            file: Some(file),
-            uuid: *uuid::Uuid::new_v4().as_bytes(),
+        let temp = creation_temp_path(path);
+        // A leftover temp from an interrupted creation is our own artifact.
+        let _ = std::fs::remove_file(&temp);
+        Self::create_compacted(
+            &temp,
+            *uuid::Uuid::new_v4().as_bytes(),
+            0,
+            Vec::new(),
+            Codec::Lz4,
             created_epoch_s,
-            tail: HEADER_SIZE as u64,
-            path: path.to_owned(),
-        };
-        pager.checkpoint(0, Vec::new(), Codec::Lz4, created_epoch_s)?;
+        )?;
+        if path.exists() {
+            // Preserve create-new semantics: never rename over a database some
+            // other process created since the caller's existence check.
+            let _ = std::fs::remove_file(&temp);
+            return Err(std::io::Error::from(std::io::ErrorKind::AlreadyExists).into());
+        }
+        std::fs::rename(&temp, path)?;
+        let (pager, _toc) = Self::open(path, true)?;
         Ok(pager)
     }
 
@@ -323,9 +345,52 @@ mod tests {
         {
             Pager::create(&path, 1000).unwrap_or_else(|e| panic!("{e}"));
         }
+        // No creation temp left behind after a successful create.
+        assert!(!creation_temp_path(&path).exists());
         let (_, toc) = Pager::open(&path, true).unwrap_or_else(|e| panic!("{e}"));
         assert_eq!(toc.generation, 0);
         assert!(toc.collections.is_empty());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// A kill mid-creation leaves only the sibling `-new` temp (never a torn
+    /// file at the target path); the next create must clean it up and succeed.
+    #[test]
+    fn create_cleans_a_stale_creation_temp() {
+        let path = tmp("stale-temp");
+        let _ = std::fs::remove_file(&path);
+        let temp = creation_temp_path(&path);
+        std::fs::write(&temp, b"torn leftover from a killed creation")
+            .unwrap_or_else(|e| panic!("{e}"));
+        {
+            Pager::create(&path, 1000).unwrap_or_else(|e| panic!("{e}"));
+        }
+        assert!(!temp.exists(), "stale creation temp was not cleaned");
+        let (_, toc) = Pager::open(&path, true).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(toc.generation, 0);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// Creation must still refuse an existing database rather than rename over
+    /// it (the pre-rename `create_new` semantics).
+    #[test]
+    fn create_refuses_an_existing_path() {
+        let path = tmp("already-exists");
+        let _ = std::fs::remove_file(&path);
+        {
+            Pager::create(&path, 1000).unwrap_or_else(|e| panic!("{e}"));
+        }
+        match Pager::create(&path, 2000) {
+            Ok(_) => panic!("create over an existing database must fail"),
+            Err(err) => assert!(
+                err.to_string().to_lowercase().contains("exist"),
+                "expected already-exists, got: {err}"
+            ),
+        }
+        assert!(!creation_temp_path(&path).exists());
+        // The original database is untouched.
+        let (_, toc) = Pager::open(&path, true).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(toc.generation, 0);
         let _ = std::fs::remove_file(&path);
     }
 
