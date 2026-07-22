@@ -29,6 +29,6 @@ the property nobody had written down.
 
 ## 4. Tail (docs + tests — check or waive with tailWaiver)
 
-- [x] 4.1 Documentation covered by 3.1/3.2 (SPEC-002 STG-052, CHANGELOG), plus the implementation postmortem appended to docs/analysis/checkpoint-segment-reuse/02-proposed-fix.md. Spec citations in code comments corrected from STG-070 (snapshot) to STG-052
-- [x] 4.2 Tests covered by 1.2/2.2 plus the mixed carry-forward/reseal commit test in tests/persistence.rs
-- [x] 4.3 Full gate green: cargo check, clippy -D warnings, fmt, full workspace suite, and `cargo xtask crash` (see 2.1)
+- [x] 4.1 Update or create documentation covering the implementation — SPEC-002 STG-052 + CHANGELOG (3.1/3.2), plus the implementation postmortem appended to docs/analysis/checkpoint-segment-reuse/02-proposed-fix.md; spec citations in code comments corrected from STG-070 (snapshot) to STG-052
+- [x] 4.2 Write tests covering the new behavior — covered by 1.2/2.2 plus the mixed carry-forward/reseal commit test in tests/persistence.rs
+- [x] 4.3 Run tests and confirm they pass — full gate green: cargo check, clippy -D warnings, fmt, full workspace suite, and `cargo xtask crash` (see 2.1)
