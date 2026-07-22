@@ -136,10 +136,29 @@ struct CollectionData {
     /// memory / materialized collections — every slot lives in `vectors`.
     #[cfg(not(target_arch = "wasm32"))]
     base: Option<BaseTier>,
-    /// Any mutation since load sets this; a clean mmap-tier collection is
-    /// carried forward by segment reference at checkpoint instead of resealed.
+    /// The committed segments this in-memory state matches, for collections
+    /// with no mmap `base` (STG-052). Set at the two moments the state is
+    /// provably in sync with the file — right after a load, and right after a
+    /// checkpoint seals it — so a later checkpoint with no mutations carries
+    /// them forward instead of rewriting every segment. `None` until the
+    /// collection has been committed or loaded, and dropped wherever `base` is
+    /// dropped: the refs are offsets into *this* file, so a vacuum or snapshot
+    /// (fresh file, all offsets invalidated) must invalidate them too.
+    #[cfg(not(target_arch = "wasm32"))]
+    sealed: Option<SealedRefs>,
+    /// Any mutation since load sets this; a clean collection is carried forward
+    /// by segment reference at checkpoint instead of resealed.
     #[cfg(not(target_arch = "wasm32"))]
     dirty: bool,
+}
+
+/// Committed segment references for a collection with no mmap base, plus the
+/// TOC counts that accompany them.
+#[cfg(not(target_arch = "wasm32"))]
+struct SealedRefs {
+    refs: Vec<SegRef>,
+    vector_count: u64,
+    tombstone_count: u64,
 }
 
 /// The mmap tier of a loaded collection (ADR-0004): mapped vector windows plus
@@ -184,6 +203,7 @@ impl CollectionData {
             quant_params: None,
             payload_indexes,
             base: None,
+            sealed: None,
             dirty: false,
         }
     }
@@ -1660,6 +1680,10 @@ impl Collection {
             tombstone_count: base.tombstone_count,
             indexed: base.indexed,
         });
+        // `base` is authoritative on this tier and `clean_reuse` consults it
+        // first; keeping a second copy of the refs around would only be a
+        // chance for the two to disagree.
+        data.sealed = None;
         data.dirty = false;
         Ok(())
     }
@@ -1673,9 +1697,32 @@ impl Collection {
         if data.dirty {
             return None;
         }
+        // The mmap base keeps priority so that tier behaves exactly as before;
+        // `sealed` covers the in-memory tier, which had no way to carry forward
+        // at all and therefore resealed every segment on every checkpoint.
         data.base
             .as_ref()
             .map(|b| (b.seg_refs.clone(), b.vector_count, b.tombstone_count))
+            .or_else(|| {
+                data.sealed
+                    .as_ref()
+                    .map(|s| (s.refs.clone(), s.vector_count, s.tombstone_count))
+            })
+    }
+
+    /// Record the committed segments this state now matches, and mark it clean
+    /// (STG-052). Called at the two moments the collection is provably in sync
+    /// with the file: after a load installs the TOC's points, and after a
+    /// checkpoint seals it. A collection on the mmap tier keeps using `base`.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn mark_sealed(&self, refs: Vec<SegRef>, vector_count: u64, tombstone_count: u64) {
+        let mut data = self.inner.data.write();
+        data.sealed = Some(SealedRefs {
+            refs,
+            vector_count,
+            tombstone_count,
+        });
+        data.dirty = false;
     }
 
     /// Release the mmap base (if any), materializing nothing — used when the
@@ -1683,7 +1730,11 @@ impl Collection {
     /// across a vacuum's rename-over swap (STG-071).
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn drop_base_unchecked(&self) {
-        self.inner.data.write().base = None;
+        let mut data = self.inner.data.write();
+        data.base = None;
+        // Same reasoning as the vacuum rebase: the file is about to be swapped
+        // out from under these offsets.
+        data.sealed = None;
     }
 
     /// Apply a WAL upsert during recovery — validate + apply, no re-logging.
@@ -1769,6 +1820,10 @@ impl Collection {
         // slot addressing is positional) is dropped — this also releases the
         // file mapping before vacuum's rename-over swap (STG-071, Windows).
         data.base = None;
+        // The sealed refs are offsets into the pre-vacuum file, which this
+        // compaction invalidates wholesale — carrying them forward would point
+        // the next TOC at bytes that no longer mean anything.
+        data.sealed = None;
         data.dirty = true;
         // Slots are renumbered, so the payload indexes are rebuilt from scratch
         // (apply_upsert below re-inserts each live point at its fresh slot).

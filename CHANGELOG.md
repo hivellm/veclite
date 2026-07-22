@@ -9,6 +9,20 @@ Versions 0.x are pre-release: the public API may change between minors until 1.0
 ## [Unreleased]
 
 ### Fixed
+- **A checkpoint with nothing to persist no longer grows the file** (task
+  `phase6e`, SPEC-002 STG-052). Opening and closing a database with zero writes
+  added a full copy of its segments each time — ~13 KB per cycle on a small
+  collection, ~21.5 KB per idle explicit checkpoint, growing linearly. Every
+  application opens and closes the database once per run, so a tool run daily
+  grew its file daily with nothing changing, and a process checkpointing on a
+  timer grew without bound while idle. The carry-forward mechanism existed but
+  was keyed on the mmap base, so it only ever helped large mapped collections;
+  an ordinary collection was marked dirty by its own load and never qualified.
+  Collections now record the committed segments their state matches — on load
+  from the TOC, and after each checkpoint — and a checkpoint with every
+  collection carried forward and an empty WAL writes nothing at all. Existing
+  oversized files need no migration: a single `vacuum` reclaims the space, and
+  the format is unchanged in both directions.
 - **The requested metric is no longer discarded when an embedding provider is
   set** (task `phase6d`). Creating a collection with both a `metric` and an
   embedding provider silently forced the default (cosine) and persisted it, so

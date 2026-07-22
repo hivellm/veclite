@@ -6,29 +6,29 @@ Mechanism decided up front — see
 failing test comes first, because "an idle checkpoint does not grow the file" is
 the property nobody had written down.
 
-- [ ] 1.1 Context: read both analysis files, then confirm against the code that the two reuse conditions still read as described (`clean_reuse` gated on `data.base`; `dirty` cleared only by `install_base`)
-- [ ] 1.2 Regression test that fails today: file byte-length is unchanged across (a) N no-op checkpoints and (b) N open/close cycles with no writes, on an ordinary in-memory-tier collection
-- [ ] 1.3 Add `sealed: Option<SealedRefs>` to `CollectionData` — `Vec<SegRef>` plus the `vector_count`/`tombstone_count` the TOC entry records. Independent of `base`, which stays exactly as it is
-- [ ] 1.4 Load path: after `install_points`, install the TOC entry's `live_segments` as `sealed` and clear `dirty`. Do **not** change `apply_upsert` — a write genuinely does dirty the collection; the bug is that a load claims to be one
-- [ ] 1.5 Commit path: return the per-collection refs `pager.checkpoint` already builds while writing, up through `commit` → `checkpoint_inner`, and install them as `sealed` with `dirty` cleared
-- [ ] 1.6 `clean_reuse` falls back to `sealed` when `base` is absent; `base` keeps priority so the mmap tier is untouched
-- [ ] 1.7 Drop `sealed` wherever `base` is dropped today (`collection.rs:1772`, vacuum's rebase). Reused refs are only valid within the same file — snapshot and vacuum write fresh files and already pass `allow_reuse = false`. Missing this points a TOC at pre-vacuum offsets, which is silent corruption and the worst outcome available here
-- [ ] 1.8 Verify through built artefacts, not the source tree: rebuild the wheel, re-run the open/close and checkpoint sequences, confirm the sizes are flat
+- [x] 1.1 Context: confirmed both reuse conditions read as the analysis describes — `clean_reuse` gated on `data.base`, `dirty` cleared only by `install_base`, and `apply_upsert` dirtying on every point the load installs
+- [x] 1.2 Regression test written first and confirmed failing: 25,642 -> 133,368 bytes over five idle checkpoints. Covers both no-op checkpoints and open/close cycles
+- [x] 1.3 `sealed: Option<SealedRefs>` added to `CollectionData`, independent of `base`
+- [x] 1.4 Load path records the TOC entry's `live_segments` after `install_points` and clears `dirty`. `apply_upsert` untouched, as planned — a write does dirty the collection
+- [x] 1.5 Commit path: no signature change needed after all — `pager.checkpoint` already returns the `Toc` and every `CollEntry` carries `coll_id` + `live_segments`; `commit` was discarding it. Threading it out was the whole change
+- [x] 1.6 `clean_reuse` falls back to `sealed` with `base` keeping priority; mmap_tier suite green (6/6, incl. `clean_checkpoint_carries_forward_and_reopens`)
+- [x] 1.7 `sealed` dropped at the vacuum rebase and in `drop_base_unchecked`. Note: `dirty = true` at the rebase already blocks reuse, so this is defence in depth — verified by removing it and watching the test still pass
+- [x] 1.8 Verified through built artefacts: rebuilt wheel and linux-x64 addon both show a flat file across idle checkpoints and open/close cycles
 
 ## 2. Testing
 
-- [ ] 2.1 `cargo xtask crash` — the committed generation must stay self-consistent when some collections are reused and others freshly sealed. That mix exists today only for mmap collections; this change makes it the common case, so recovery is the real risk and a code review does not settle it
-- [ ] 2.2 Explicit test that a vacuum invalidates `sealed`: vacuum, then checkpoint, then reopen and verify — catches the corruption 1.7 guards against
-- [ ] 2.3 Conformance corpus green on Rust, Python and Node — reuse must not change any observable result
-- [ ] 2.4 Cross-version file check: a file written by the fixed build opens on the published 0.1.1 build and vice versa. The format does not change, so this must hold
+- [x] 2.1 `cargo xtask crash` — run and green (in-process suite 5/5 at 10k iters; kill-9 harness 500/500). The first full run FAILED at kill iter 102 with `header: bad magic` — root-caused as a PRE-EXISTING window in `Pager::create` (gen-0 TOC written before the header; no previous chain to fall back on), not a reuse regression: the same failure hit the nightly CI on main (commit cb6545d, before this change) at iter 0 on Windows. Fixed separately as SPEC-002 STG-053 (creation via sibling temp + atomic rename); after that fix the harness is 500/500 clean with carry-forward as the common case
+- [x] 2.2 Vacuum-then-checkpoint-then-reopen test added. It verifies the round-trip to the exact surviving point set; it does NOT isolate the sealed guard (see 1.7) and its comment says so rather than overclaiming
+- [x] 2.3 Conformance 34/34 on Python and Node against rebuilt artefacts
+- [x] 2.4 Cross-version verified both ways: a file from this build passes the published 0.1.1 CLI `verify` (exit 0); a file written by published 0.1.1 opens here with all 50 points and working search. Same data now 9,520 -> 6,811 bytes
 
 ## 3. Documentation
 
-- [ ] 3.1 SPEC-002: a checkpoint with no mutations MUST NOT grow the file
-- [ ] 3.2 CHANGELOG, noting that existing oversized files need no migration — one `vacuum` reclaims them
+- [x] 3.1 SPEC-002 STG-052 added: a checkpoint must not rewrite a collection already matching the file, and one with nothing to persist must leave the byte-length unchanged
+- [x] 3.2 CHANGELOG entry under Fixed, noting no migration is needed — one `vacuum` reclaims existing oversized files
 
 ## 4. Tail (docs + tests — check or waive with tailWaiver)
 
-- [ ] 4.1 Update or create documentation covering the implementation
-- [ ] 4.2 Write tests covering the new behavior
-- [ ] 4.3 Run tests and confirm they pass
+- [x] 4.1 Documentation covered by 3.1/3.2 (SPEC-002 STG-052, CHANGELOG), plus the implementation postmortem appended to docs/analysis/checkpoint-segment-reuse/02-proposed-fix.md. Spec citations in code comments corrected from STG-070 (snapshot) to STG-052
+- [x] 4.2 Tests covered by 1.2/2.2 plus the mixed carry-forward/reseal commit test in tests/persistence.rs
+- [x] 4.3 Full gate green: cargo check, clippy -D warnings, fmt, full workspace suite, and `cargo xtask crash` (see 2.1)

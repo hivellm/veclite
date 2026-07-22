@@ -41,6 +41,8 @@ use crate::storage::pager::Pager;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::storage::segment::SegmentType;
 #[cfg(not(target_arch = "wasm32"))]
+use crate::storage::toc::Toc;
+#[cfg(not(target_arch = "wasm32"))]
 use crate::storage::wal::{Wal, WalEntry, WalOp};
 
 /// Seconds since the Unix epoch, saturating on a pre-1970 clock (never panics).
@@ -194,6 +196,8 @@ impl Persistence {
                                 tombstone_count: entry.tombstone_count,
                                 indexed,
                             }),
+                            // `base` already carries the refs on this tier.
+                            committed: None,
                         },
                     ));
                     continue;
@@ -202,11 +206,21 @@ impl Persistence {
             for r in &vec_refs {
                 segments.push(pager.read_segment(*r)?);
             }
+            let mut loaded = seal::load(&segments)?;
+            // The materialized tier has no mmap `base` to carry its committed
+            // refs, so record the TOC's directly: the state just loaded matches
+            // the file exactly, and a checkpoint before any write must carry it
+            // forward rather than reseal it (STG-052).
+            loaded.committed = Some((
+                entry.live_segments.clone(),
+                entry.vector_count,
+                entry.tombstone_count,
+            ));
             collections.push((
                 entry.name.clone(),
                 entry.coll_id,
                 entry.aliases.clone(),
-                seal::load(&segments)?,
+                loaded,
             ));
         }
 
@@ -300,18 +314,36 @@ impl Persistence {
     /// seal → SPEC-002 §5 commit → fsync WAL (Normal/Off) → truncate. The WAL is
     /// truncated only after the header-swap fsync, so a crash recovers to the
     /// pre- or post-checkpoint state, never between (WAL-032).
-    pub(crate) fn commit(&self, colls: Vec<CheckpointColl>) -> Result<()> {
+    /// Returns the committed TOC, whose entries carry each collection's
+    /// `live_segments` — the caller records them so an unmutated collection can
+    /// be carried forward by reference at the next checkpoint (STG-052).
+    /// `None` for a read-only handle, which writes nothing.
+    pub(crate) fn commit(&self, colls: Vec<CheckpointColl>) -> Result<Option<Toc>> {
         if self.read_only {
-            return Ok(()); // nothing to persist; a reader never mutates the file
+            return Ok(None); // nothing to persist; a reader never mutates the file
         }
         let mut j = self.journal.lock();
+        // Nothing to do: every collection carried its committed segments
+        // forward unchanged and no write is pending in the WAL. Committing
+        // anyway would append a fresh TOC per call, so a process that
+        // checkpoints on a timer would grow the file while completely idle.
+        //
+        // `!colls.is_empty()` guards the vacuous case: `all()` holds on an
+        // empty database. Nothing depends on it today — the header is
+        // established by `open_pager`, and dropping the last collection logs to
+        // the WAL, so the emptiness check below already covers both — but a
+        // condition that is trivially true on no input is a footgun for the
+        // next change to this predicate.
+        if !colls.is_empty() && colls.iter().all(|c| c.reused.is_some()) && j.wal.is_empty()? {
+            return Ok(None);
+        }
         j.generation += 1;
         let generation = j.generation;
         let epoch = now_epoch_s();
-        j.pager.checkpoint(generation, colls, Codec::Lz4, epoch)?;
+        let toc = j.pager.checkpoint(generation, colls, Codec::Lz4, epoch)?;
         // The pager already fsync'd the header swap; now the WAL is safe to drop.
         j.wal.truncate()?;
-        Ok(())
+        Ok(Some(toc))
     }
 
     /// Tombstone ratio that escalates a checkpoint to a vacuum (STG-072).

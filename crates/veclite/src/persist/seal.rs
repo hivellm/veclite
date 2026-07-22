@@ -18,6 +18,8 @@ use crate::storage::body::{PayloadBlock, PayloadIndex, SparsePostings, StoredCon
 use crate::storage::iddir::IdDir;
 use crate::storage::image::CheckpointColl;
 use crate::storage::segment::{Segment, SegmentType};
+#[cfg(not(target_arch = "wasm32"))]
+use crate::storage::toc::SegRef;
 use crate::storage::vectors::{Encoding, VectorsBody};
 
 /// One live point: id, dense vector, optional payload, optional sparse lane
@@ -83,6 +85,12 @@ pub(crate) struct LoadedCollection {
     /// on open so text search needs no rebuild. `None` for BYO collections and
     /// legacy files (whose first search refits from `_text`).
     pub(crate) vocab: Option<Vec<u8>>,
+    /// The TOC entry's committed segments and counts. Recorded on the
+    /// collection so a checkpoint taken before any write carries them forward
+    /// instead of resealing state that already matches the file (STG-052) —
+    /// without this, merely opening and closing a database rewrites it.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) committed: Option<(Vec<SegRef>, u64, u64)>,
 }
 
 /// The mmap tier's load product (ADR-0004): slot metadata in RAM, vector bytes
@@ -354,6 +362,8 @@ pub(crate) fn load(segments: &[Segment]) -> Result<LoadedCollection> {
         #[cfg(not(target_arch = "wasm32"))]
         base: None,
         vocab,
+        #[cfg(not(target_arch = "wasm32"))]
+        committed: None,
     })
 }
 

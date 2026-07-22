@@ -93,7 +93,7 @@ fn install_collection(
     name: String,
     coll_id: u32,
     aliases: Vec<String>,
-    loaded: seal::LoadedCollection,
+    mut loaded: seal::LoadedCollection,
 ) -> Result<()> {
     let sink: Arc<dyn WalSink> = Arc::clone(persistence) as Arc<dyn WalSink>;
     let capacity = loaded
@@ -136,6 +136,7 @@ fn install_collection(
     let handle = Collection {
         inner: Arc::clone(&cinner),
     };
+    let committed = loaded.committed.take();
     let has_points = loaded.base.is_some() || !loaded.points.is_empty();
     // Import the checkpointed VOCAB before replaying points, mirroring the
     // live order (state at checkpoint, then incremental updates per doc). A
@@ -163,6 +164,15 @@ fn install_collection(
         // them, so install WITHOUT vocabulary updates (WAL replay is the path
         // that folds documents in incrementally).
         handle.install_points(points)?;
+        // Installing marks the collection dirty, because `apply_upsert` cannot
+        // tell a load from a write — but the state it just built is exactly
+        // what the file holds. Record the TOC's refs so a checkpoint before any
+        // real write carries them forward instead of rewriting every segment.
+        // WAL replay runs after this and dirties the collection again, which is
+        // correct: those writes are not in the checkpoint.
+        if let Some((refs, vector_count, tombstone_count)) = committed {
+            handle.mark_sealed(refs, vector_count, tombstone_count);
+        }
     }
     inner.collections.insert(name, cinner);
     Ok(())
@@ -195,6 +205,9 @@ fn apply_wal_entry(
                     points: Vec::new(),
                     base: None,
                     vocab: None,
+                    // Created by WAL replay, not read from the TOC: it has no
+                    // committed segments until the next checkpoint seals it.
+                    committed: None,
                 },
             )?;
         }
@@ -329,7 +342,31 @@ fn checkpoint_inner(inner: &Arc<DatabaseInner>) -> Result<()> {
     let Some(persistence) = &inner.persistence else {
         return Ok(());
     };
-    persistence.commit(sealed_live_collections(inner, true)?)
+    let Some(toc) = persistence.commit(sealed_live_collections(inner, true)?)? else {
+        return Ok(()); // read-only handle: nothing was written
+    };
+    // Every collection in the committed TOC now matches the file exactly —
+    // whether it was resealed or carried forward. Recording the refs is what
+    // lets the *next* checkpoint carry it forward instead of rewriting every
+    // segment, which is the difference between an idle checkpoint costing
+    // nothing and costing a full copy of the database (STG-052).
+    for entry in &toc.collections {
+        if let Some(ci) = inner
+            .collections
+            .iter()
+            .find(|e| e.value().coll_id == entry.coll_id)
+        {
+            let handle = Collection {
+                inner: Arc::clone(ci.value()),
+            };
+            handle.mark_sealed(
+                entry.live_segments.clone(),
+                entry.vector_count,
+                entry.tombstone_count,
+            );
+        }
+    }
+    Ok(())
 }
 
 /// Checkpoint, then escalate to a vacuum when a collection has churned past the

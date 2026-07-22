@@ -593,3 +593,200 @@ fn snapshot_is_standalone_and_consistent_under_writes() {
     cleanup(&path);
     cleanup(&snap);
 }
+
+/// A checkpoint that has nothing to persist must not grow the file (SPEC-002
+/// STG-052). The reuse path exists — the pager references committed segments
+/// in place — but was reachable only on the mmap tier, so an ordinary
+/// collection resealed and rewrote every segment on every checkpoint, and a
+/// database that was merely opened and closed grew by a full copy each time.
+#[test]
+fn idle_checkpoints_do_not_grow_the_file() {
+    let path = db_path("idle-checkpoint");
+    cleanup(&path);
+
+    let size = |p: &Path| std::fs::metadata(p).map(|m| m.len()).unwrap_or(0);
+
+    {
+        let db = VecLite::open(&path).unwrap_or_else(|e| panic!("{e}"));
+        let c = db
+            .create_collection("v", CollectionOptions::new(8, Metric::Cosine))
+            .unwrap_or_else(|e| panic!("{e}"));
+        for i in 0..500u32 {
+            let v: Vec<f32> = (0..8)
+                .map(|j| f32::from(((i * 7 + j) % 11) as u8) + 1.0)
+                .collect();
+            c.upsert(Point::new(format!("v{i}"), v))
+                .unwrap_or_else(|e| panic!("{e}"));
+        }
+        db.checkpoint().unwrap_or_else(|e| panic!("{e}"));
+        let after_first = size(&path);
+
+        // Nothing is written between these, so there is nothing to seal.
+        for _ in 0..5 {
+            db.checkpoint().unwrap_or_else(|e| panic!("{e}"));
+        }
+        assert_eq!(
+            size(&path),
+            after_first,
+            "five no-op checkpoints grew the file"
+        );
+    }
+
+    // Closing checkpoints too, so a reopen cycle that writes nothing is the
+    // same property seen from the outside — and it is what every process that
+    // merely reads the database does on every run.
+    let after_close = size(&path);
+    for _ in 0..5 {
+        let db = VecLite::open(&path).unwrap_or_else(|e| panic!("{e}"));
+        drop(db);
+    }
+    assert_eq!(
+        size(&path),
+        after_close,
+        "five open/close cycles with no writes grew the file"
+    );
+
+    cleanup(&path);
+}
+
+/// End-to-end cover for the path segment reuse makes riskiest: seal, delete,
+/// vacuum, checkpoint again, reopen. A vacuum rewrites the file wholesale, so
+/// any surviving carried-forward ref would point the next TOC at bytes that no
+/// longer mean anything (STG-071).
+///
+/// Two things guard that today, and only the first is load-bearing: the vacuum
+/// rebase sets `dirty`, which short-circuits `clean_reuse` before it consults
+/// the sealed refs, and it also clears those refs. Verified by deleting the
+/// second guard — this test still passes — so treat it as defence in depth, not
+/// as the thing under test here. What this test does verify is that the whole
+/// sequence round-trips to the exact surviving point set.
+#[test]
+fn vacuum_invalidates_carried_forward_segment_refs() {
+    let path = db_path("vacuum-invalidates-reuse");
+    cleanup(&path);
+
+    {
+        let db = VecLite::open(&path).unwrap_or_else(|e| panic!("{e}"));
+        let c = db
+            .create_collection("v", CollectionOptions::new(4, Metric::Cosine))
+            .unwrap_or_else(|e| panic!("{e}"));
+        for i in 0..200u32 {
+            let v: Vec<f32> = (0..4)
+                .map(|j| f32::from(((i * 3 + j) % 7) as u8) + 1.0)
+                .collect();
+            c.upsert(Point::new(format!("v{i}"), v))
+                .unwrap_or_else(|e| panic!("{e}"));
+        }
+        // Seal, so the collection is carrying refs into the pre-vacuum file.
+        db.checkpoint().unwrap_or_else(|e| panic!("{e}"));
+        for i in 0..100u32 {
+            c.delete(&format!("v{i}")).unwrap_or_else(|e| panic!("{e}"));
+        }
+        db.vacuum().unwrap_or_else(|e| panic!("{e}"));
+        // The refs recorded before the vacuum are now meaningless; a checkpoint
+        // that reused them would commit a TOC pointing into the old layout.
+        db.checkpoint().unwrap_or_else(|e| panic!("{e}"));
+    }
+
+    // The file must still be readable and hold exactly the surviving points.
+    let db = VecLite::open(&path).unwrap_or_else(|e| panic!("{e}"));
+    let c = db.collection("v").unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(c.len(), 100);
+    for i in 100..200u32 {
+        let id = format!("v{i}");
+        assert!(
+            c.get(&id).unwrap_or_else(|e| panic!("{e}")).is_some(),
+            "{id} should have survived the vacuum"
+        );
+    }
+    for i in 0..100u32 {
+        let id = format!("v{i}");
+        assert!(
+            c.get(&id).unwrap_or_else(|e| panic!("{e}")).is_none(),
+            "{id} was deleted before the vacuum"
+        );
+    }
+    drop(db);
+    cleanup(&path);
+}
+
+/// Carry-forward makes a mixed commit the common case: some collections
+/// referenced in place, others freshly sealed in the same generation. That mix
+/// existed before only for mmap'd collections, so it is worth pinning that the
+/// committed TOC stays self-consistent — the untouched collection must not be
+/// disturbed by its neighbour's reseal, and vice versa.
+#[test]
+fn a_commit_mixing_carried_forward_and_resealed_collections_stays_consistent() {
+    let path = db_path("mixed-carry-forward");
+    cleanup(&path);
+
+    {
+        let db = VecLite::open(&path).unwrap_or_else(|e| panic!("{e}"));
+        let stable = db
+            .create_collection("stable", CollectionOptions::new(4, Metric::Cosine))
+            .unwrap_or_else(|e| panic!("{e}"));
+        // Euclidean here so the stored vector is the one written: a cosine
+        // collection normalizes on ingest (CORE-014), which would obscure the
+        // freshness check below.
+        let churn = db
+            .create_collection("churn", CollectionOptions::new(4, Metric::Euclidean))
+            .unwrap_or_else(|e| panic!("{e}"));
+        for i in 0..100u32 {
+            let v: Vec<f32> = (0..4)
+                .map(|j| f32::from(((i + j) % 6) as u8) + 1.0)
+                .collect();
+            stable
+                .upsert(Point::new(format!("s{i}"), v.clone()))
+                .unwrap_or_else(|e| panic!("{e}"));
+            churn
+                .upsert(Point::new(format!("c{i}"), v))
+                .unwrap_or_else(|e| panic!("{e}"));
+        }
+        db.checkpoint().unwrap_or_else(|e| panic!("{e}"));
+
+        // Only `churn` moves from here on, so every later checkpoint carries
+        // `stable` forward while resealing `churn`.
+        for round in 0..3u32 {
+            for i in 0..20u32 {
+                let v = vec![
+                    f32::from((round + 1) as u8),
+                    2.0,
+                    3.0,
+                    f32::from((i % 4) as u8) + 1.0,
+                ];
+                churn
+                    .upsert(Point::new(format!("c{i}"), v))
+                    .unwrap_or_else(|e| panic!("{e}"));
+            }
+            db.checkpoint().unwrap_or_else(|e| panic!("{e}"));
+        }
+    }
+
+    let db = VecLite::open(&path).unwrap_or_else(|e| panic!("{e}"));
+    let stable = db.collection("stable").unwrap_or_else(|e| panic!("{e}"));
+    let churn = db.collection("churn").unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(stable.len(), 100, "carried-forward collection lost points");
+    assert_eq!(churn.len(), 100, "resealed collection lost points");
+    for i in 0..100u32 {
+        assert!(
+            stable
+                .get(&format!("s{i}"))
+                .unwrap_or_else(|e| panic!("{e}"))
+                .is_some(),
+            "s{i} missing from the carried-forward collection"
+        );
+    }
+    // The last round's values are the ones that survived in the churned one.
+    let p = churn
+        .get("c0")
+        .unwrap_or_else(|e| panic!("{e}"))
+        .unwrap_or_else(|| panic!("c0 missing"));
+    assert!(
+        (p.vector[0] - 3.0).abs() < 1e-6,
+        "stale value: {:?}",
+        p.vector
+    );
+
+    drop(db);
+    cleanup(&path);
+}

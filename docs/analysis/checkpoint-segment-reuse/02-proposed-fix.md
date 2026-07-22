@@ -93,3 +93,53 @@ written down:
 - N no-op checkpoints leave the size unchanged after the first.
 
 Existing oversized files need no migration: a single `vacuum` reclaims them.
+
+---
+
+## What implementation changed about this plan
+
+Two corrections worth recording, both found by doing it rather than by planning
+it harder.
+
+**The refs already come back.** The plan said to return the per-collection refs
+from `pager.checkpoint` up through `commit`. No signature change was needed:
+`pager.checkpoint` already returns the `Toc`, and every `CollEntry` in it carries
+`coll_id` and `live_segments`. `commit` was simply discarding it. Threading the
+`Toc` out was the whole change.
+
+**Carry-forward alone was not enough.** With reuse working, five idle
+checkpoints still added 190 bytes — a fresh TOC per generation, inherent to the
+append-only design. Small, but unbounded: a process checkpointing once a second
+accumulates ~3 MB/day while idle. So a checkpoint whose collections all carried
+forward, with an empty WAL, now commits nothing at all.
+
+That skip is where this went wrong, and it is worth stating plainly because the
+mistake is easy to repeat:
+
+```rust
+if colls.iter().all(|c| c.reused.is_some()) && j.wal.is_empty()? {
+    return Ok(None);
+}
+```
+
+`all()` holds **vacuously** on an empty slice. A brand-new database has no
+collections yet, so its very first commit matched this condition and was
+skipped, leaving a file whose header was never established. Reopening it failed
+with `header: bad magic` or `file shorter than 4 KiB`.
+
+Nothing in the unit suite caught it — 40 suites stayed green, including the new
+size regression tests, because they all close cleanly. The kill-9 harness caught
+it, at iteration 0 of one run and iteration 71 of another, which is exactly the
+signature of a window a deterministic test cannot reach. Confirmed as a
+regression rather than a pre-existing race by running the same harness in a
+worktree at the pre-change commit: 200/200 clean there, failing here. Then
+bisected within the change itself — disabling only the skip, keeping the reuse,
+passed 200/200 — which pinned it on the skip rather than on carry-forward.
+
+The fix is the missing `!colls.is_empty()`, and the condition now carries a
+comment saying it is load-bearing rather than defensive, so nobody deletes it as
+redundant.
+
+**Lesson for the next change to this path:** unit tests here verify the happy
+close. Only the kill harness exercises the states a process can actually die in,
+and it is the gate that matters.
