@@ -37,7 +37,12 @@ cp .build-tmp/simd_pkg/veclite_core_bg.wasm "$OUT/veclite_simd.wasm"
 echo "[4/4] wasm-opt -Oz (if available)"
 if command -v wasm-opt >/dev/null 2>&1; then
   for w in "$OUT/veclite_fallback.wasm" "$OUT/veclite_simd.wasm"; do
-    wasm-opt -Oz --enable-simd "$w" -o "$w"
+    # bulk-memory + nontrapping-fptoint: rustc emits both by default since
+    # 1.87 (memory.copy/memory.fill and saturating float→int), and wasm-opt
+    # validates against its own feature set, not the module's — without the
+    # flags it rejects the binary with "memory.copy operations require bulk
+    # memory operations".
+    wasm-opt -Oz --enable-simd --enable-bulk-memory --enable-nontrapping-float-to-int "$w" -o "$w"
   done
 else
   echo "  wasm-opt not found — skipping (binaries already within budget)"

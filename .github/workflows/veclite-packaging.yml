@@ -5,11 +5,6 @@ name: VecLite Packaging
 # (SPEC-015 §3, gate G4) against each freshly built artifact on its native host.
 # Cross-compiled artifacts (e.g. linux/arm64 on an x64 runner) are built and
 # uploaded but their conformance runs on the release workflow's emulated jobs.
-#
-# NOTE: GitHub Actions is currently disabled for this repo (CI budget); the
-# quality gate runs locally via `cargo xtask conformance`, the Python runner,
-# and the Node runner. This workflow is kept green-by-construction so it can be
-# re-enabled without changes.
 
 on:
   push:
@@ -68,7 +63,9 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install pyyaml
-          python -m pip install --no-index --find-links dist veclite
+          # The distribution is `hivellm-veclite` (plain `veclite` on PyPI is an
+          # unrelated squatted package); the import name stays `veclite`.
+          python -m pip install --no-index --find-links dist hivellm-veclite
           python tests/conformance/runners/python/run.py
 
       - name: pytest on the built wheel (register_embedder, aio, zero-copy, GIL)
@@ -106,11 +103,31 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          # 22, not 20: `npm test` passes a glob to `node --test`, which Node
+          # only expands from 21 on (20 treats it as a literal path and dies
+          # with "Could not find ... *.test.mjs"); Node 20 is EOL besides.
+          node-version: 22
 
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+
+      # The hosted runner ships no cross C toolchain, and zstd-sys/napi need
+      # one for the non-native Linux targets (cc-rs dies with "failed to find
+      # tool aarch64-linux-gnu-gcc" / "x86_64-linux-musl-gcc" otherwise).
+      - name: Install cross C toolchain (Linux cross targets)
+        if: matrix.os == 'ubuntu-latest' && !matrix.native
+        run: |
+          sudo apt-get update
+          if [ "${{ matrix.target }}" = "aarch64-unknown-linux-gnu" ]; then
+            sudo apt-get install -y gcc-aarch64-linux-gnu
+            echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
+            echo "CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
+          else
+            sudo apt-get install -y musl-tools
+            echo "CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=musl-gcc" >> "$GITHUB_ENV"
+            echo "CC_x86_64_unknown_linux_musl=musl-gcc" >> "$GITHUB_ENV"
+          fi
 
       - uses: Swatinem/rust-cache@v2
         with:

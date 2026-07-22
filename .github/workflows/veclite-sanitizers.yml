@@ -4,10 +4,8 @@ name: VecLite Sanitizers
 # full_smoke.c runs the whole lifecycle under AddressSanitizer + LeakSanitizer
 # (zero leaks); concurrency.c hammers one vl_db from 16 threads under
 # ThreadSanitizer (no data races). TSan needs the Rust library instrumented, so
-# it uses nightly + -Zbuild-std.
-#
-# NOTE: GitHub Actions is currently disabled for this repo (CI budget); the gate
-# runs locally on Linux with `tests/c/sanitize.sh`.
+# it uses nightly + -Zbuild-std. The gate also runs locally on Linux (Docker on
+# Windows) via `tests/c/sanitize.sh` / `cargo xtask sanitize`.
 
 on:
   push:
@@ -51,5 +49,11 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: sanitize-tsan
+      # Ubuntu 24.04 runners default to vm.mmap_rnd_bits=32; TSan's shadow
+      # mapping can't cope and the instrumented binary SEGVs on the zero page
+      # at startup, before any test runs (a DEADLYSIGNAL storm, no race
+      # report). 28 bits is the documented sanitizer-compatible setting.
+      - name: Reduce ASLR entropy for TSan
+        run: sudo sysctl -w vm.mmap_rnd_bits=28
       - name: TSan
         run: tests/c/sanitize.sh tsan
